@@ -10,16 +10,20 @@ class MakePattern extends Command
 {
     /**
      * The name and signature of the console command.
+     *
+     * @var string
      */
     protected $signature = 'make:pattern 
-                            {name : The base name of the files (e.g. Ticket, Route)} 
-                            {--force : Overwrite existing layer files if they already exist}
-                            {--only-repo : Only generate the clean data Repository layer}';
+                            {name : The base name of the files (e.g. User, Taxi)} 
+                            {--force : Overwrite existing files}
+                            {--only-repo : Create only the Repository class}';
 
     /**
      * The console command description.
+     *
+     * @var string
      */
-    protected $description = 'Create a Service, Repository, Resource, and Controller stack with integrated UUID support';
+    protected $description = 'Create a Service, Repository, Resource, and Controller with UUID support';
 
     /**
      * The filesystem instance.
@@ -27,211 +31,202 @@ class MakePattern extends Command
     protected Filesystem $files;
 
     /**
-     * Stub layout configuration for the Controller class.
+     * Stub for the Controller class.
      */
     protected const CONTROLLER_STUB = <<<'STUB'
-<?php
+    <?php
 
-namespace App\Http\Controllers;
+    namespace App\Http\Controllers;
 
-use App\Services\DummyService;
-use App\Http\Resources\DummyResource;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use Exception;
+    use App\Service\DummyService;
+    use Illuminate\Http\Request;
+    use Illuminate\Http\JsonResponse;
 
-class DummyController extends Controller
-{
-    private DummyService $dummyService;
-
-    public function __construct(DummyService $dummyService)
+    class DummyController extends Controller
     {
-        $this->dummyService = $dummyService;
-    }
+        private DummyService $dummyService;
 
-    public function index(): JsonResponse
-    {
-        $records = $this->dummyService->getAll();
-        return response()->json(DummyResource::collection(collect($records)));
-    }
+        public function __construct(DummyService $dummyService)
+        {
+            $this->dummyService = $dummyService;
+        }
 
-    public function show(string $uuid): JsonResponse
-    {
-        try {
-            $record = $this->dummyService->getById($uuid);
-            return response()->json(new DummyResource($record));
-        } catch (Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 404);
+        public function index(Request $request)
+        {
+            return $this->dummyService->listDummy($request->input('per_page', 15));
+        }
+
+        public function store(Request $request)
+        {
+            return $this->dummyService->createDummy($request->all());
+        }
+
+        public function show(string $uuid)
+        {
+            return $this->dummyService->getDummy($uuid);
+        }
+
+        public function update(Request $request, string $uuid)
+        {
+            return $this->dummyService->updateDummy($uuid, $request->all());
+        }
+
+        public function destroy(string $uuid)
+        {
+            $this->dummyService->deleteDummy($uuid);
+            return response()->json(['message' => 'Deleted successfully'], 200);
+        }
+        
+        public function restore(string $uuid)
+        {
+            return $this->dummyService->restoreDummy($uuid);
         }
     }
-
-    public function store(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            // Setup explicit manual layout validation properties here
-        ]);
-
-        $result = $this->dummyService->create($request->all());
-        return response()->json(new DummyResource($result), 201);
-    }
-
-    public function update(Request $request, string $uuid): JsonResponse
-    {
-        $validated = $request->validate([
-            // Setup explicit manual layout validation properties here
-        ]);
-
-        try {
-            $result = $this->dummyService->update($uuid, $request->all());
-            return response()->json(new DummyResource($result));
-        } catch (Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 404);
-        }
-    }
-
-    public function destroy(string $uuid): JsonResponse
-    {
-        try {
-            $this->dummyService->delete($uuid);
-            return response()->json(['message' => 'Record safely purged successfully']);
-        } catch (Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 404);
-        }
-    }
-}
-STUB;
+    STUB;
 
     /**
-     * Stub layout configuration for the Service class.
+     * Stub for the service class.
      */
     protected const SERVICE_STUB = <<<'STUB'
-<?php
-
-namespace App\Services;
-
-use App\Repositories\DummyRepository;
-use Exception;
-
-class DummyService
-{
-    private DummyRepository $dummyRepository;
-
-    public function __construct(DummyRepository $dummyRepository) 
+    <?php
+    
+    namespace App\Services;
+    
+    use App\Repository\DummyRepository;
+    use App\Http\Resources\DummyResource;
+    
+    class DummyService
     {
-        $this->dummyRepository = $dummyRepository;
-    }
-
-    public function getAll(): array
-    {
-        return $this->dummyRepository->all();
-    }
-
-    public function getById(string $uuid): array
-    {
-        $record = $this->dummyRepository->find($uuid);
-        if (!$record) {
-            throw new Exception("Record with identifier {$uuid} not found.");
+        private DummyRepository $dummyRepository;
+    
+        public function __construct(DummyRepository $dummyRepository) 
+        {
+            $this->dummyRepository = $dummyRepository;
         }
-        return $record;
-    }
+    
+        public function listDummy(int $perPage = 15)
+        {
+            $collection = $this->dummyRepository->paginate($perPage);
+            return DummyResource::collection($collection);
+        }
+    
+        public function createDummy(array $payload)
+        {
+            $model = $this->dummyRepository->create($payload);
+            
+        }
+    
+        public function getDummy(string $uuid)
+        {
+            $model = $this->dummyRepository->findByUuid($uuid);
+            
+        }
 
-    public function create(array $data): array
-    {
-        return $this->dummyRepository->create($data);
-    }
+        public function getDummyByField(string $field, $value)
+        {
+            $model = $this->dummyRepository->findByField($field, $value);
+            
+        }
+    
+        public function updateDummy(string $uuid, array $payload)
+        {
+            $model = $this->dummyRepository->update($uuid, $payload);
+            
+        }
+    
+        public function deleteDummy(string $uuid)
+        {
+            $this->dummyRepository->delete($uuid);
+            return true;
+        }
 
-    public function update(string $uuid, array $data): array
-    {
-        $this->getById($uuid); // Validate lifecycle integrity
-        return $this->dummyRepository->update($uuid, $data);
+        public function restoreDummy(string $uuid)
+        {
+            $model = $this->dummyRepository->restore($uuid);
+            
+        }
     }
-
-    public function delete(string $uuid): bool
-    {
-        $this->getById($uuid); // Validate lifecycle integrity
-        return $this->dummyRepository->delete($uuid);
-    }
-}
-STUB;
+    STUB;
 
     /**
-     * Stub layout configuration for the Repository class.
+     * Stub for the repository class.
      */
     protected const REPOSITORY_STUB = <<<'STUB'
-<?php
-
-namespace App\Repositories;
-
-use Illuminate\Support\Str;
-
-class DummyRepository
-{
-    public function __construct()
+    <?php
+    
+    namespace App\Repositories;
+    
+    use App\Models\Dummy;
+    use Illuminate\Database\Eloquent\ModelNotFoundException;
+    
+    class DummyRepository
     {
-        // Setup your manual database connection context here
-    }
+        public function paginate(int $perPage = 15)
+        {
+            return Dummy::latest()->paginate($perPage);
+        }
+    
+        public function create(array $payload)
+        {
+            return Dummy::create($payload);
+        }
+    
+        public function findByUuid(string $uuid)
+        {
+            return Dummy::where('uuid', $uuid)->first();
+        }
 
-    public function all(): array
-    {
-        // Manual Fetch Logic
-        return [];
-    }
+        public function findByField(string $field, $value)
+        {
+            return Dummy::where($field, $value)->first();
+        }
+    
+        public function update(string $uuid, array $payload)
+        {
+            $model = $this->findByUuid($uuid);
+            $model->update($payload);
+            return $model;
+        }
+    
+        public function delete(string $uuid)
+        {
+            $model = $this->findByUuid($uuid);
+            return $model->delete();
+        }
 
-    public function find(string $uuid): ?array
-    {
-        // Manual Single Fetch Logic matching UUID string
-        return null;
+        public function restore(string $uuid)
+        {
+            $model = Dummy::withTrashed()->where('uuid', $uuid)->first();
+            $model->restore();
+            return $model;
+        }
     }
-
-    public function create(array $data): array
-    {
-        // Automatically assign a secure UUIDv4 to the incoming dataset
-        $data['id'] = (string) Str::uuid();
-        
-        // Manual creation/database persistence logic here
-        return $data;
-    }
-
-    public function update(string $uuid, array $data): array
-    {
-        // Manual update logic matching UUID string
-        return $data;
-    }
-
-    public function delete(string $uuid): bool
-    {
-        // Manual execution logic matching UUID string
-        return true;
-    }
-}
-STUB;
+    STUB;
 
     /**
-     * Stub layout configuration for the API JSON Resource.
+     * Stub for the resource class.
      */
     protected const RESOURCE_STUB = <<<'STUB'
-<?php
-
-namespace App\Http\Resources;
-
-use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
-
-class DummyResource extends JsonResource
-{
-    /**
-     * Transform the resource into an array.
-     */
-    public function toArray(Request $request): array
+    <?php
+    
+    namespace App\Http\Resources;
+    
+    use Illuminate\Http\Request;
+    use Illuminate\Http\Resources\Json\JsonResource;
+    
+    class DummyResource extends JsonResource
     {
-        return [
-            'id' => $this['id'] ?? null,
-            // Maps structural keys from manual array results into clean response blocks
-            'created_at' => $this['created_at'] ?? now()->toIso8601String(),
-        ];
+        /**
+         * Transform the resource into an array.
+         *
+         * @return array<string, mixed>
+         */
+        public function toArray(Request $request): array
+        {
+            return parent::toArray($request);
+        }
     }
-}
-STUB;
+    STUB;
 
     public function __construct()
     {
@@ -243,24 +238,24 @@ STUB;
     {
         $baseName = Str::studly($this->argument('name'));
 
-        // Handle isolated repository execution
+        // Logic Flag: Just Repository?
         if ($this->option('only-repo')) {
-            $this->components->info("Creating ONLY Repository for {$baseName}...");
+            $this->info("Creating ONLY Repository for {$baseName}...");
             $this->createRepository($baseName);
+            $this->info('Repository created successfully.');
+
             return 0;
         }
 
-        // Handle full structural orchestration stack
-        $this->components->info("Creating End-to-End API Layer for {$baseName}...");
+        // Default: Create The Whole Stack
+        $this->info("Creating API layer (Controller, Service, Repository, Resource) for {$baseName}...");
 
         $this->createRepository($baseName);
         $this->createResource($baseName);
         $this->createService($baseName);
         $this->createController($baseName);
 
-        $this->newLine();
-        $this->components->info("Success! Extended layers generated for {$baseName}.");
-        $this->line("👉 Remember to append your resource route to routes/api.php:\n   Route::apiResource('" . Str::snake(Str::plural($baseName)) . "', \\App\\Http\\Controllers\\{$baseName}Controller::class);");
+        $this->info('API layer created successfully.');
 
         return 0;
     }
@@ -269,62 +264,72 @@ STUB;
     {
         $className = "{$baseName}Controller";
         $serviceClass = "{$baseName}Service";
-        $resourceClass = "{$baseName}Resource";
         $serviceVariable = lcfirst($serviceClass);
 
-        $targetFile = app_path("Http/Controllers/{$className}.php");
+        $subPath = 'Http/Controllers';
+        $targetDir = app_path($subPath);
+        $targetFile = "{$targetDir}/{$className}.php";
 
         if (!$this->option('force') && $this->files->exists($targetFile)) {
-            $this->components->error("File already exists: {$className}.php (Pass --force to overwrite)");
+            $this->error("File already exists: {$targetFile}");
+
             return;
         }
 
+        $this->files->ensureDirectoryExists($targetDir);
+
         $stub = str_replace(
-            ['DummyController', 'DummyService', 'dummyService', 'DummyResource', 'Dummy'],
-            [$className, $serviceClass, $serviceVariable, $resourceClass, $baseName],
+            ['DummyController', 'DummyService', 'dummyService', 'Dummy'],
+            [$className, $serviceClass, $serviceVariable, $baseName],
             static::CONTROLLER_STUB
         );
 
         $this->files->put($targetFile, $stub);
-        $this->components->info("Created controller: App\Http\Controllers\\{$className}");
+        $this->info("Created controller: {$targetFile}");
     }
 
     protected function createService(string $baseName)
     {
         $className = "{$baseName}Service";
         $repoClass = "{$baseName}Repository";
+        $resourceClass = "{$baseName}Resource";
         $repoVariable = lcfirst($repoClass);
-
-        $targetFile = app_path("Services/{$className}.php");
+        $subPath = 'Services';
+        $targetDir = app_path($subPath);
+        $targetFile = "{$targetDir}/{$className}.php";
 
         if (!$this->option('force') && $this->files->exists($targetFile)) {
-            $this->components->error("File already exists: {$className}.php (Pass --force to overwrite)");
+            $this->error("File already exists: {$targetFile}");
+
             return;
         }
 
-        $this->files->ensureDirectoryExists(app_path('Services'));
+        $this->files->ensureDirectoryExists($targetDir);
 
         $stub = str_replace(
-            ['DummyService', 'DummyRepository', 'dummyRepository', 'Dummy'],
-            [$className, $repoClass, $repoVariable, $baseName],
+            ['DummyService', 'DummyRepository', 'DummyResource', 'dummyRepository', 'Dummy'],
+            [$className, $repoClass, $resourceClass, $repoVariable, $baseName],
             static::SERVICE_STUB
         );
 
         $this->files->put($targetFile, $stub);
-        $this->components->info("Created service: App\Services\\{$className}");
+        $this->info("Created service: {$targetFile}");
     }
 
     protected function createRepository(string $baseName)
     {
         $className = "{$baseName}Repository";
-        $targetFile = app_path("Repositories/{$className}.php");
+        $subPath = 'Repositories';
+        $targetDir = app_path($subPath);
+        $targetFile = "{$targetDir}/{$className}.php";
 
         if (!$this->option('force') && $this->files->exists($targetFile)) {
-            $this->components->error("File already exists: {$className}.php (Pass --force to overwrite)");
+            $this->error("File already exists: {$targetFile}");
+
             return;
         }
 
-        $this->files->ensureDirectoryExists(app_path('Repositories'));
+        $this->files->ensureDirectoryExists($targetDir);
 
         $stub = str_replace(
             ['DummyRepository', 'Dummy'],
@@ -333,28 +338,31 @@ STUB;
         );
 
         $this->files->put($targetFile, $stub);
-        $this->components->info("Created repository: App\Repositories\\{$className}");
+        $this->info("Created repository: {$targetFile}");
     }
 
     protected function createResource(string $baseName)
     {
         $className = "{$baseName}Resource";
-        $targetFile = app_path("Http/Resources/{$className}.php");
+        $subPath = 'Http/Resources';
+        $targetDir = app_path($subPath);
+        $targetFile = "{$targetDir}/{$className}.php";
 
         if (!$this->option('force') && $this->files->exists($targetFile)) {
-            $this->components->error("File already exists: {$className}.php (Pass --force to overwrite)");
+            $this->error("File already exists: {$targetFile}");
+
             return;
         }
 
-        $this->files->ensureDirectoryExists(app_path('Http/Resources'));
+        $this->files->ensureDirectoryExists($targetDir);
 
         $stub = str_replace(
-            ['DummyResource', 'Dummy'],
-            [$className, $baseName],
+            ['DummyResource'],
+            [$className],
             static::RESOURCE_STUB
         );
 
         $this->files->put($targetFile, $stub);
-        $this->components->info("Created resource: App\Http\Resources\\{$className}");
+        $this->info("Created resource: {$targetFile}");
     }
 }

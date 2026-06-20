@@ -1,47 +1,53 @@
 <?php
 
-namespace App\Services;
+namespace App\Services; // Double-check if your folder is named 'Service' or 'Services'
 
 use App\Repositories\PassengerRepository;
-use Exception;
 
 class PassengerService
 {
     private PassengerRepository $passengerRepository;
 
-    public function __construct(PassengerRepository $passengerRepository) 
+    public function __construct(PassengerRepository $passengerRepository)
     {
         $this->passengerRepository = $passengerRepository;
     }
 
-    public function getAll(): array
+    public function listPassenger(int $perPage = 15)
     {
-        return $this->passengerRepository->all();
+        return $this->passengerRepository->paginate($perPage);
     }
 
-    public function getById(string $uuid): array
+    public function createPassenger(array $payload)
     {
-        $record = $this->passengerRepository->find($uuid);
-        if (!$record) {
-            throw new Exception("Record with identifier {$uuid} not found.");
-        }
-        return $record;
+        // Great place to add business logic/mutations later if needed!
+        return $this->passengerRepository->create($payload);
     }
 
-    public function create(array $data): array
+    public function getPassenger(string $uuid)
     {
-        return $this->passengerRepository->create($data);
+        return $this->passengerRepository->findByUuid($uuid);
     }
 
-    public function update(string $uuid, array $data): array
+    public function getPassengerByField(string $field, $value)
     {
-        $this->getById($uuid); // Validate lifecycle integrity
-        return $this->passengerRepository->update($uuid, $data);
+        return $this->passengerRepository->findByField($field, $value);
     }
 
-    public function delete(string $uuid): bool
+    public function updatePassenger(string $uuid, array $payload)
     {
-        $this->getById($uuid); // Validate lifecycle integrity
-        return $this->passengerRepository->delete($uuid);
+        return $this->passengerRepository->update($uuid, $payload);
+    }
+
+    public function deletePassenger(string $uuid): bool
+    {
+        $this->passengerRepository->delete($uuid);
+
+        return true;
+    }
+
+    public function restorePassenger(string $uuid)
+    {
+        return $this->passengerRepository->restore($uuid);
     }
 }

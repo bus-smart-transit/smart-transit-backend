@@ -11,16 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // 1. The Core Users Table from your ERD
         Schema::create('users', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
+            $table->id('user_id'); // int8 Primary Key matching your diagram
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
+            $table->string('username')->unique();
             $table->string('password');
-            $table->rememberToken();
+            $table->string('role'); // e.g., 'passenger', 'admin', 'conductor'
             $table->timestamps();
         });
 
+        // 2. Laravel Security Tables (Required for system features)
         Schema::create('password_reset_tokens', function (Blueprint $table) {
             $table->string('email')->primary();
             $table->string('token');

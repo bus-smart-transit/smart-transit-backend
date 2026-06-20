@@ -2,45 +2,50 @@
 
 namespace App\Repositories;
 
-use Illuminate\Support\Str;
+use App\Models\PassengerUser;
 
 class PassengerRepository
 {
-    public function __construct()
+    public function paginate(int $perPage = 15)
     {
-        // Setup your manual database connection context here
+        return PassengerUser::latest()->paginate($perPage);
     }
 
-    public function all(): array
+    public function create(array $payload)
     {
-        // Manual Fetch Logic
-        return [];
+        return PassengerUser::create($payload);
     }
 
-    public function find(string $uuid): ?array
+    public function findByUuid(string $uuid)
     {
-        // Manual Single Fetch Logic matching UUID string
-        return null;
+        return PassengerUser::where('uuid', $uuid)->first();
     }
 
-    public function create(array $data): array
+    public function findByField(string $field, $value)
     {
-        // Automatically assign a secure UUIDv4 to the incoming dataset
-        $data['id'] = (string) Str::uuid();
-        
-        // Manual creation/database persistence logic here
-        return $data;
+        return PassengerUser::where($field, $value)->first();
     }
 
-    public function update(string $uuid, array $data): array
+    public function update(string $uuid, array $payload)
     {
-        // Manual update logic matching UUID string
-        return $data;
+        $model = $this->findByUuid($uuid);
+        $model->update($payload);
+
+        return $model;
     }
 
-    public function delete(string $uuid): bool
+    public function delete(string $uuid)
     {
-        // Manual execution logic matching UUID string
-        return true;
+        $model = $this->findByUuid($uuid);
+
+        return $model->delete();
+    }
+
+    public function restore(string $uuid)
+    {
+        $model = PassengerUser::withTrashed()->where('uuid', $uuid)->first();
+        $model->restore();
+
+        return $model;
     }
 }
