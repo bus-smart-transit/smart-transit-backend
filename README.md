@@ -57,3 +57,126 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+# SmartTransit Git Cheat Sheet
+
+This guide outlines our standard Git workflow. Because the `main` branch is protected, **direct pushes to `main` are blocked**. All features, hotfixes, and updates must go through feature branches and Pull Requests (PRs).
+
+---
+
+## 1. Feature Branch Workflow
+
+Always develop features on a dedicated branch instead of working directly on `main`.
+
+- **Create and switch to a new feature branch:**
+    ```bash
+    git checkout -b feature/your-feature-name
+    ```
+    _Example: `git checkout -b feature/passenger-api`_
+- **Switch back to an existing branch:**
+    ```bash
+    git checkout branch-name
+    ```
+- **List all local branches:**
+    ```bash
+    git branch
+    ```
+
+---
+
+## 2. Saving Changes
+
+Track and save your progress locally before sharing it with the team.
+
+- **Check the status of your files (unstaged, staged, or modified):**
+    ```bash
+    git status
+    ```
+- **Stage specific files for a commit:**
+    ```bash
+    git add path/to/file.php
+    ```
+- **Stage ALL modified and new files at once:**
+    ```bash
+    git add .
+    ```
+- **Commit your staged changes with a clear description:**
+    ```bash
+    git commit -m "feat: implement passenger model mass assignment fix"
+    ```
+
+---
+
+## 3. Pushing Code & Handling Protected Branches
+
+Because direct pushes to `main` fail, use this workflow to get your code reviewed and merged.
+
+1.  **Push your local feature branch to GitHub for the first time:**
+    ```bash
+    git push origin feature/your-feature-name
+    ```
+2.  **Open a Pull Request (PR):** Go to GitHub, click **"Compare & pull request"**, and assign a teammate to review it.
+3.  **Approve a Peer's PR:** If a teammate asks you to review their code, go to their PR on GitHub, click **"Review changes"** (top right), select **"Approve"**, and submit.
+4.  **Merge:** Once approved, hit the green **"Merge pull request"** button on GitHub!
+
+---
+
+## 4. Keeping Your Code Up-to-Date
+
+Before starting new work, always pull the latest updates from the team.
+
+- **Download the latest changes from GitHub without merging them:**
+    ```bash
+    git fetch --all
+    ```
+- **Pull and merge the latest `main` branch changes into your current branch:**
+    ```bash
+    git pull origin main
+    ```
+
+---
+
+## 5. Cleaning Up Old Branches
+
+Keep your workspace clean by removing branches that have already been merged or are no longer needed.
+
+- **Delete a branch locally (safely):**
+    ```bash
+    git branch -d branch-name
+    ```
+- **Force-delete a local branch (even if unmerged):**
+    ```bash
+    git branch -D branch-name
+    ```
+- **Delete a branch on GitHub (the remote server):**
+    ```bash
+    git push origin --delete branch-name
+    ```
+    _(Note: If you get an error stating the remote ref does not exist, the branch is already gone from GitHub!)_
+- **Prune your local tracking cache (removes dead remote branch references):**
+    ```bash
+    git fetch --prune
+    ```
+
+---
+
+## 6. Emergency Undo Buttons
+
+Did something break? Use these to safely step back.
+
+- **Discard uncommitted changes in a specific file:**
+    ```bash
+    git checkout -- path/to/file.php
+    ```
+- **Discard ALL uncommitted changes in your current directory:**
+    ```bash
+    git reset --hard HEAD
+    ```
+- **Undo your last local commit while keeping your code intact in your text editor:**
+    ```bash
+    git reset --soft HEAD~1
+    ```
+
+---
+
+> 💡 **Commit Message Tip:** Let's keep our history organized! Use prefixes like `feat:` for new features, `fix:` for bug fixes, `chore:` for configuration updates, and `refactor:` for code cleanups.
