@@ -57,3 +57,45 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## 🚀 Team Development Workflow
+
+Our `main` branch is protected. You cannot push code directly to it. Please follow these steps to add your work:
+
+## 1. Update your local project
+
+Before starting new work, sync your computer with the latest online code:
+
+```bash
+git checkout main
+git pull origin main
+```
+
+## 2. Create a feature branch
+
+Create a new branch for the specific task you are working on:
+
+```bash
+git checkout -b feature-yourname-taskname
+```
+
+### 3. Save and commit your code
+
+Work on your files, then save your progress locally:
+
+```bash
+git add .
+git commit -m "Briefly explain what you changed"
+```
+
+## 4. Push your branch to GitHub
+
+Send your branch up to the server:
+
+```bash
+git push origin feature-yourname-taskname
+```
+
+## 5. Merge via Pull Request
+
+Go to our repository on GitHub.com, click **"Compare & pull request"**, and assign a teammate to review your code. **Exactly 1 approval is required to merge into the main project.**
