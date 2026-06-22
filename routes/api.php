@@ -11,6 +11,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::delete('logout', [AuthController::class, 'logout']);
 
-    Route::apiResources(['passengers' => PassengerController::class]);
+    Route::apiResource('passengers', PassengerController::class)->except(['store']);
 });
 
