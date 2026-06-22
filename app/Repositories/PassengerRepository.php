@@ -18,7 +18,8 @@ class PassengerRepository
 
     public function findByUuid(string $uuid)
     {
-        return PassengerUser::where('uuid', $uuid)->first();
+        // FIX: Match the column declaration from your PassengerUser model
+        return PassengerUser::where('passenger_uuid', $uuid)->first();
     }
 
     public function findByField(string $field, $value)

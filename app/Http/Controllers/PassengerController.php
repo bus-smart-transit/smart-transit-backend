@@ -29,7 +29,13 @@ class PassengerController extends Controller
     {
         $model = $this->passengerService->createPassenger($request->validated());
 
-        return response()->json(new PassengerResource($model), 201);
+        $model->load('user');
+        $token = $model->user->createToken('passenger-token')->plainTextToken;
+
+        return response()->json([
+            'passenger' => new PassengerResource($model),
+            'token' => $token,
+        ], 201);
     }
 
     public function show(string $uuid): JsonResponse
