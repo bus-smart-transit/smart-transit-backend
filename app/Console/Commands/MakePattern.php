@@ -38,7 +38,7 @@ class MakePattern extends Command
 
     namespace App\Http\Controllers;
 
-    use App\Service\DummyService;
+    use App\Services\DummyService;
     use Illuminate\Http\Request;
     use Illuminate\Http\JsonResponse;
 
@@ -92,7 +92,7 @@ class MakePattern extends Command
     
     namespace App\Services;
     
-    use App\Repository\DummyRepository;
+    use App\Repositories\DummyRepository;
     use App\Http\Resources\DummyResource;
     
     class DummyService

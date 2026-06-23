@@ -23,11 +23,18 @@ class PassengerStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => 'required|exists:users,user_id',
+            'email' => ['required', 'email', 'unique:users,email'],
+            'password' => [
+                'required',
+                'string',
+                'min:8',
+                'regex:/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/',
+            ],
+
             'name' => 'required|string|max:255',
             'phone_num' => 'required|string|max:20',
+            'birthdate' => 'required|date',
             'address' => 'required|string|max:255',
-            'reward_points' => 'nullable|numeric|min:0',
         ];
     }
 }
