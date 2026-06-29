@@ -16,7 +16,7 @@ class UserService
         $this->userRepository = $userRepository;
     }
 
-    public function createUser(object $payload)
+    public function createUser(array $payload)
     {
         $user = $this->userRepository->create($payload);
 
@@ -44,6 +44,11 @@ class UserService
             'user' => $user,
             'token' => $user->createToken('passenger-session-token')->plainTextToken
         ];
+    }
+
+    public function getPassengerProfile(object $user)
+    {
+        return $this->userRepository->getPassengerProfile($user->id);
     }
 
     public function logoutUser(object $user)

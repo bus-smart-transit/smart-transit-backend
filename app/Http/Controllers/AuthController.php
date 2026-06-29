@@ -6,6 +6,7 @@ use App\Http\Requests\LoginRequest;
 use App\Services\UserService;
 use Illuminate\Http\Request;
 use App\Traits\ApiResponse;
+use App\Http\Resources\PassengerResource;
 
 class AuthController extends Controller
 {
@@ -23,6 +24,19 @@ class AuthController extends Controller
 
         // Matches the updated trait signature
         return $this->success($response, 'Logged in successfully');
+    }
+    public function profile(Request $request)
+    {
+        $passengerProfile = $this->userService->getPassengerProfile($request->user());
+
+        if (!$passengerProfile) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
+        return $this->success(
+            new PassengerResource($passengerProfile),
+            'Profile retrieved successfully'
+        );
     }
 
     public function logout(Request $request)

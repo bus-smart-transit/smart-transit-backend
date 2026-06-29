@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -13,8 +12,7 @@ return new class extends Migration
     {
         Schema::create('company_users', function (Blueprint $table) {
             $table->id('company_user_id');
-            $table->uuid('company_user_uuid');
-            $table->foreignId('company_id')->constrained('company_fleets', 'company_id')->onDelete('cascade');
+            $table->uuid('company_user_uuid')->unique();
             $table->foreignId('user_id')->constrained('users', 'user_id')->onDelete('cascade');
             $table->string('phone_num');
             $table->string('name');

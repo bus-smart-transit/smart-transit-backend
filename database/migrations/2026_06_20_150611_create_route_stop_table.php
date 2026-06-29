@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -15,6 +14,8 @@ return new class extends Migration
             $table->id();
             $table->foreignId('stop_id')->constrained('stops', 'stop_id')->onDelete('cascade');
             $table->foreignId('route_id')->constrained('routes', 'route_id')->onDelete('cascade');
+            $table->bigInteger('stop_order');
+            $table->decimal('distance_from_origin_km');
             $table->timestamps();
         });
     }

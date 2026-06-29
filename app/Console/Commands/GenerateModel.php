@@ -13,14 +13,46 @@ class GenerateModel extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'db:generate-models 
+    protected $signature = 'db:generate-models
                             {--table= : Specify a single table to convert (defaults to all tables)}
-                            {--force : Overwrite models if they already exist}';
+                            {--force : Overwrite models if they already exist}
+                            {--no-relations : Skip generating belongsTo relationship methods from foreign keys}
+                            {--no-casts : Skip generating the $casts property}';
 
     /**
      * The console command description.
      */
     protected $description = 'Inspect database tables and reverse-engineer them into clean Eloquent models';
+
+    /**
+     * Tables that are excluded from a "generate all" run.
+     */
+    protected array $excludedTables = ['migrations', 'failed_jobs', 'password_reset_tokens', 'personal_access_tokens'];
+
+    /**
+     * Columns that are never added to $fillable.
+     */
+    protected array $excludedColumns = ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at'];
+
+    /**
+     * Maps Doctrine/Schema column types to Eloquent cast types.
+     */
+    protected array $castMap = [
+        'boolean' => 'boolean',
+        'integer' => 'integer',
+        'bigint' => 'integer',
+        'smallint' => 'integer',
+        'tinyint' => 'integer',
+        'float' => 'float',
+        'double' => 'float',
+        'decimal' => 'decimal:2',
+        'date' => 'date',
+        'datetime' => 'datetime',
+        'datetimetz' => 'datetime',
+        'timestamp' => 'datetime',
+        'json' => 'array',
+        'jsonb' => 'array',
+    ];
 
     /**
      * Execute the console command.
@@ -29,9 +61,7 @@ class GenerateModel extends Command
     {
         $this->info('Connecting to database and scanning schema fields...');
 
-        // 1. Get the list of tables based on your database driver
-        $driver = DB::getDriverName();
-        $tables = $this->getDatabaseTables($driver);
+        $tables = $this->getDatabaseTables();
 
         $specificTable = $this->option('table');
         if ($specificTable) {
@@ -43,11 +73,8 @@ class GenerateModel extends Command
             $tables = [$specificTable];
         }
 
-        // Exclude default internal system migrations/tokens tables unless requested
-        $excludedTables = ['migrations', 'failed_jobs', 'password_reset_tokens', 'personal_access_tokens'];
-
         foreach ($tables as $table) {
-            if (!$specificTable && in_array($table, $excludedTables)) {
+            if (!$specificTable && in_array($table, $this->excludedTables)) {
                 continue;
             }
 
@@ -61,18 +88,18 @@ class GenerateModel extends Command
     }
 
     /**
-     * Fetch all raw table names from the current database connection instance.
+     * Fetch all table names from the current database connection, regardless of driver.
+     *
+     * Schema::getTables() returns an array of associative arrays (name, schema, size, comment, ...),
+     * not plain strings — pluck('name') is required to normalize across MySQL, SQLite, and Postgres.
      */
-    protected function getDatabaseTables(string $driver): array
+    protected function getDatabaseTables(): array
     {
-        if ($driver === 'pgsql') {
-            return collect(DB::select("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"))
-                ->pluck('table_name')
-                ->toArray();
-        }
-
-        // Fallback standard default mapping for MySQL / SQLite
-        return Schema::getTables() ?? [];
+        return collect(Schema::getTables())
+            ->pluck('name')
+            ->filter()
+            ->values()
+            ->toArray();
     }
 
     /**
@@ -84,34 +111,33 @@ class GenerateModel extends Command
         $targetFile = app_path("Models/{$modelName}.php");
 
         if (!$this->option('force') && File::exists($targetFile)) {
-            $this->components->warn("Skipping table '{$table}': Model App\Models\\{$modelName} already exists. (Use --force to overwrite)");
+            $this->components->warn("Skipping table '{$table}': Model App\\Models\\{$modelName} already exists. (Use --force to overwrite)");
 
             return;
         }
 
-        // 2. Fetch the columns of the table to populate the fillable property array
         $columns = Schema::getColumnListing($table);
 
-        // Exclude auto-managed primary keys or standard tracking stamps from mass assignment templates
-        $excludedColumns = ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at'];
-        $fillableColumns = array_filter($columns, function ($column) use ($excludedColumns) {
-            return !in_array($column, $excludedColumns);
+        $fillableColumns = array_filter($columns, function ($column) {
+            return !in_array($column, $this->excludedColumns);
         });
 
-        // 3. Construct the clean fillable array blueprint text layout
-        $fillableString = '';
-        foreach ($fillableColumns as $col) {
-            $fillableString .= "        '{$col}',\n";
-        }
-        $fillableString = rtrim($fillableString, "\n");
+        $fillableString = $this->buildArrayBlock($fillableColumns);
 
-        // 4. Check if the table has standard auto-incrementing id keys or UUID setups
+        $castsString = $this->option('no-casts')
+            ? ''
+            : $this->buildCastsBlock($table, $fillableColumns);
+
+        // Check if the table uses a UUID primary key instead of an auto-incrementing id
         $primaryKeyOverride = '';
         if (in_array('uuid', $columns) && !in_array('id', $columns)) {
             $primaryKeyOverride = "\n    protected \$primaryKey = 'uuid';\n    public \$incrementing = false;\n    protected \$keyType = 'string';\n";
         }
 
-        // 5. Generate template string
+        $relationsString = $this->option('no-relations')
+            ? ''
+            : $this->buildRelationsBlock($table);
+
         $template = "<?php
 
 namespace App\Models;
@@ -131,11 +157,84 @@ class {$modelName} extends Model
     protected \$fillable = [
 {$fillableString}
     ];
-}
+{$castsString}{$relationsString}}
 ";
 
         File::ensureDirectoryExists(app_path('Models'));
         File::put($targetFile, $template);
-        $this->components->info("Generated model: App\Models\\{$modelName} ➜ (Table: '{$table}')");
+        $this->components->info("Generated model: App\\Models\\{$modelName} ➜ (Table: '{$table}')");
+    }
+
+    /**
+     * Render an indented PHP array body, one entry per line.
+     */
+    protected function buildArrayBlock(array $items, int $indent = 8): string
+    {
+        $pad = str_repeat(' ', $indent);
+        $lines = array_map(fn($item) => "{$pad}'{$item}',", $items);
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Build a $casts property block based on actual column types, when any are castable.
+     */
+    protected function buildCastsBlock(string $table, array $columns): string
+    {
+        $casts = [];
+
+        foreach ($columns as $column) {
+            try {
+                $type = Schema::getColumnType($table, $column);
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            if (isset($this->castMap[$type])) {
+                $casts[] = "        '{$column}' => '{$this->castMap[$type]}',";
+            }
+        }
+
+        if (empty($casts)) {
+            return '';
+        }
+
+        $castsLines = implode("\n", $casts);
+
+        return "\n    /**\n     * The attributes that should be cast.\n     *\n     * @return array<string, string>\n     */\n    protected function casts(): array\n    {\n        return [\n{$castsLines}\n        ];\n    }\n";
+    }
+
+    /**
+     * Build belongsTo() relationship methods from the table's foreign key constraints.
+     */
+    protected function buildRelationsBlock(string $table): string
+    {
+        try {
+            $foreignKeys = Schema::getForeignKeys($table);
+        } catch (\Throwable $e) {
+            return '';
+        }
+
+        if (empty($foreignKeys)) {
+            return '';
+        }
+
+        $methods = '';
+
+        foreach ($foreignKeys as $fk) {
+            $localColumn = $fk['columns'][0] ?? null;
+            $foreignTable = $fk['foreign_table'] ?? null;
+
+            if (!$localColumn || !$foreignTable) {
+                continue;
+            }
+
+            $relatedModel = Str::studly(Str::singular($foreignTable));
+            $methodName = Str::camel(Str::singular(Str::replaceLast('_id', '', $localColumn)));
+
+            $methods .= "\n    /**\n     * Get the {$methodName} that owns this record.\n     */\n    public function {$methodName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$localColumn}');\n    }\n";
+        }
+
+        return $methods;
     }
 }

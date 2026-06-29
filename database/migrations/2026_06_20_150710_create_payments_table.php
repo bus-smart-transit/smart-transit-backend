@@ -4,8 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
@@ -13,16 +12,14 @@ return new class extends Migration
     {
         Schema::create('payments', function (Blueprint $table) {
             $table->id('payment_id');
-            $table->double('amount');
+            $table->double('amount'); // total for the whole transaction
             $table->timestamp('payment_created');
-            $table->string('transaction_reference');
+            $table->string('transaction_reference'); // one per checkout
             $table->string('payment_method');
-            $table->foreignId('fare_id')->constrained('fare_matrix', 'fare_id');
-            $table->foreignId('ticket_id')->constrained('tickets', 'ticket_id');
             $table->string('payment_channel');
             $table->string('status');
             $table->string('payment_uuid')->unique();
-            $table->string('is_valid');
+            $table->boolean('is_valid')->default(true);
             $table->timestamps();
         });
     }

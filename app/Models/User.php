@@ -34,6 +34,10 @@ class User extends Authenticatable
         ];
     }
 
+    public function getIdAttribute()
+    {
+        return $this->user_id;
+    }
     public function passengerProfile(): HasOne
     {
         return $this->hasOne(PassengerUser::class, 'user_id', 'user_id');
