@@ -2,15 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\FareRuleService;
+use App\Services\FareService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
-class FareRuleController extends Controller
+class FareController extends Controller
 {
-    private FareRuleService $fareRuleService;
+    private FareService $fareRuleService;
 
-    public function __construct(FareRuleService $fareRuleService)
+    public function __construct(FareService $fareRuleService)
     {
         $this->fareRuleService = $fareRuleService;
     }
@@ -40,7 +40,7 @@ class FareRuleController extends Controller
         $this->fareRuleService->deleteFareRule($uuid);
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
-    
+
     public function restore(string $uuid)
     {
         return $this->fareRuleService->restoreFareRule($uuid);

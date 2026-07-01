@@ -2,47 +2,47 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\StopsService;
+use App\Services\StopService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
-class StopsController extends Controller
+class StopController extends Controller
 {
-    private StopsService $stopsService;
+    private StopService $stopService;
 
-    public function __construct(StopsService $stopsService)
+    public function __construct(StopService $stopService)
     {
-        $this->stopsService = $stopsService;
+        $this->stopService = $stopService;
     }
 
     public function index(Request $request)
     {
-        return $this->stopsService->listStops($request->input('per_page', 15));
+        return $this->stopService->listStops($request->input('per_page', 15));
     }
 
     public function store(Request $request)
     {
-        return $this->stopsService->createStops($request->all());
+        return $this->stopService->createStops($request->all());
     }
 
     public function show(string $uuid)
     {
-        return $this->stopsService->getStops($uuid);
+        return $this->stopService->getStops($uuid);
     }
 
     public function update(Request $request, string $uuid)
     {
-        return $this->stopsService->updateStops($uuid, $request->all());
+        return $this->stopService->updateStops($uuid, $request->all());
     }
 
     public function destroy(string $uuid)
     {
-        $this->stopsService->deleteStops($uuid);
+        $this->stopService->deleteStops($uuid);
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
-    
+
     public function restore(string $uuid)
     {
-        return $this->stopsService->restoreStops($uuid);
+        return $this->stopService->restoreStops($uuid);
     }
 }

@@ -2,29 +2,29 @@
 
 namespace App\Repositories;
 
-use App\Models\FleetRoute;
+use App\Models\FareRule;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class FleetRouteRepository
+class FareRepository
 {
     public function paginate(int $perPage = 15)
     {
-        return FleetRoute::latest()->paginate($perPage);
+        return FareRule::latest()->paginate($perPage);
     }
 
     public function create(array $payload)
     {
-        return FleetRoute::create($payload);
+        return FareRule::create($payload);
     }
 
     public function findByUuid(string $uuid)
     {
-        return FleetRoute::where('uuid', $uuid)->first();
+        return FareRule::where('uuid', $uuid)->first();
     }
 
     public function findByField(string $field, $value)
     {
-        return FleetRoute::where($field, $value)->first();
+        return FareRule::where($field, $value)->first();
     }
 
     public function update(string $uuid, array $payload)
@@ -42,7 +42,7 @@ class FleetRouteRepository
 
     public function restore(string $uuid)
     {
-        $model = FleetRoute::withTrashed()->where('uuid', $uuid)->first();
+        $model = FareRule::withTrashed()->where('uuid', $uuid)->first();
         $model->restore();
         return $model;
     }

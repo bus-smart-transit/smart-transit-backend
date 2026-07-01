@@ -2,29 +2,29 @@
 
 namespace App\Repositories;
 
-use App\Models\Stops;
+use App\Models\Stop;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class StopsRepository
+class StopRepository
 {
     public function paginate(int $perPage = 15)
     {
-        return Stops::latest()->paginate($perPage);
+        return Stop::latest()->paginate($perPage);
     }
 
     public function create(array $payload)
     {
-        return Stops::create($payload);
+        return Stop::create($payload);
     }
 
     public function findByUuid(string $uuid)
     {
-        return Stops::where('uuid', $uuid)->first();
+        return Stop::where('uuid', $uuid)->first();
     }
 
     public function findByField(string $field, $value)
     {
-        return Stops::where($field, $value)->first();
+        return Stop::where($field, $value)->first();
     }
 
     public function update(string $uuid, array $payload)

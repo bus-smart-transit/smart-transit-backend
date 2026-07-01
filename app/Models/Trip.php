@@ -23,6 +23,8 @@ class Trip extends Model
         'current_seated_capacity',
         'current_standing_capacity',
         'total_occupancy',
+        'driver_id',
+        'conducter_id',
     ];
 
     /**
@@ -33,7 +35,7 @@ class Trip extends Model
     protected function casts(): array
     {
         return [
-        'trip_date' => 'date',
+            'trip_date' => 'date',
         ];
     }
 
@@ -42,7 +44,7 @@ class Trip extends Model
      */
     public function companyUser()
     {
-        return $this->belongsTo(CompanyUser::class, 'company_user_id');
+        return $this->belongsTo(StaffUser::class, 'company_user_id');
     }
 
     /**

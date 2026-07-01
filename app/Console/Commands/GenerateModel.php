@@ -15,6 +15,7 @@ class GenerateModel extends Command
      */
     protected $signature = 'db:generate-models
                             {--table= : Specify a single table to convert (defaults to all tables)}
+                            {--schema=public : The database schema to inspect (PostgreSQL only, defaults to public)}
                             {--force : Overwrite models if they already exist}
                             {--no-relations : Skip generating belongsTo relationship methods from foreign keys}
                             {--no-casts : Skip generating the $casts property}';
@@ -88,13 +89,36 @@ class GenerateModel extends Command
     }
 
     /**
-     * Fetch all table names from the current database connection, regardless of driver.
+     * Fetch all table names from the current database connection, filtered by schema.
      *
-     * Schema::getTables() returns an array of associative arrays (name, schema, size, comment, ...),
-     * not plain strings — pluck('name') is required to normalize across MySQL, SQLite, and Postgres.
+     * On PostgreSQL (including Supabase), Schema::getTables() returns tables from ALL schemas
+     * (auth, storage, realtime, extensions, etc.). We query information_schema directly so we
+     * only get tables belonging to the target schema (defaults to "public").
+     *
+     * On MySQL and SQLite there is only one schema, so we fall back to the standard approach.
      */
     protected function getDatabaseTables(): array
     {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'pgsql') {
+            $schema = $this->option('schema') ?: 'public';
+
+            return collect(
+                DB::select(
+                    "SELECT table_name FROM information_schema.tables
+                     WHERE table_schema = ? AND table_type = 'BASE TABLE'
+                     ORDER BY table_name",
+                    [$schema]
+                )
+            )
+                ->pluck('table_name')
+                ->filter()
+                ->values()
+                ->toArray();
+        }
+
+        // MySQL / SQLite — single schema, no filtering needed
         return collect(Schema::getTables())
             ->pluck('name')
             ->filter()
@@ -232,7 +256,7 @@ class {$modelName} extends Model
             $relatedModel = Str::studly(Str::singular($foreignTable));
             $methodName = Str::camel(Str::singular(Str::replaceLast('_id', '', $localColumn)));
 
-            $methods .= "\n    /**\n     * Get the {$methodName} that owns this record.\n     */\n    public function {$methodName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$localColumn}');\n    }\n";
+            $methods .= "\n    /**\n     * Get the {$methodName} that owns this record.\n     */\n    public function {$methodName}()\n    {\n        return \$this->belongsTo(\\App\\Models\\{$relatedModel}::class, '{$localColumn}');\n    }\n";
         }
 
         return $methods;

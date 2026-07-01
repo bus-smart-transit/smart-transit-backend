@@ -11,7 +11,7 @@ use App\Http\Resources\PassengerResource;
 class AuthController extends Controller
 {
     use ApiResponse;
-    private $userService;
+    private UserService $userService;
 
     public function __construct(UserService $userService)
     {
@@ -22,7 +22,6 @@ class AuthController extends Controller
     {
         $response = $this->userService->loginUser($request->validated());
 
-        // Matches the updated trait signature
         return $this->success($response, 'Logged in successfully');
     }
     public function profile(Request $request)

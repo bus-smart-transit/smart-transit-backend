@@ -2,29 +2,29 @@
 
 namespace App\Repositories;
 
-use App\Models\FareMatrix;
+use App\Models\Route;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class FareMatrixRepository
+class RouteRepository
 {
     public function paginate(int $perPage = 15)
     {
-        return FareMatrix::latest()->paginate($perPage);
+        return Route::latest()->paginate($perPage);
     }
 
     public function create(array $payload)
     {
-        return FareMatrix::create($payload);
+        return Route::create($payload);
     }
 
     public function findByUuid(string $uuid)
     {
-        return FareMatrix::where('uuid', $uuid)->first();
+        return Route::where('uuid', $uuid)->first();
     }
 
     public function findByField(string $field, $value)
     {
-        return FareMatrix::where($field, $value)->first();
+        return Route::where($field, $value)->first();
     }
 
     public function update(string $uuid, array $payload)
@@ -42,7 +42,7 @@ class FareMatrixRepository
 
     public function restore(string $uuid)
     {
-        $model = FareMatrix::withTrashed()->where('uuid', $uuid)->first();
+        $model = Route::withTrashed()->where('uuid', $uuid)->first();
         $model->restore();
         return $model;
     }
