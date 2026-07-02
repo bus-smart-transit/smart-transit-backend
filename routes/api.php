@@ -5,8 +5,8 @@ use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\RouteController;
-use App\Http\Controllers\FleetsController;
-use App\Http\Controllers\FareController;
+use App\Http\Controllers\FleetController;
+use App\Http\Controllers\FareRuleController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\PaymentController;
@@ -33,7 +33,7 @@ Route::prefix('passengers')
         Route::put('profile', [PassengerController::class, 'update']);
 
         Route::get('tickets', [TicketController::class, 'myTickets']);
-        Route::get('fare/quote', [FareController::class, 'quote']);
+        Route::get('fare/quote', [FareRuleController::class, 'quote']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
     });
 
@@ -56,13 +56,13 @@ Route::prefix('operator')
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
 
         // Fleet management
-        Route::get('fleets', [FleetsController::class, 'index']);
-        Route::post('fleets', [FleetsController::class, 'store']);
-        Route::post('fleets/{fleetId}/routes', [FleetsController::class, 'assignRoute']);
+        Route::get('fleets', [FleetController::class, 'index']);
+        Route::post('fleets', [FleetController::class, 'store']);
+        Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
         // Fare rules
-        Route::post('fare-rules', [FareController::class, 'storeRule']);
-        Route::post('fare/recalculate/{fleetRouteId}', [FareController::class, 'recalculate']);
+        Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
+        Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
 
         // Trip scheduling + staff assignment
         Route::post('trips', [TripController::class, 'store']);
@@ -133,12 +133,12 @@ Route::prefix('admin')
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
 
         // Fleets
-        Route::apiResource('fleets', FleetsController::class);
-        Route::post('fleets/{fleetId}/routes', [FleetsController::class, 'assignRoute']);
+        Route::apiResource('fleets', FleetController::class);
+        Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
         // Fare rules + recalculation
-        Route::post('fare-rules', [FareController::class, 'storeRule']);
-        Route::post('fare/recalculate/{fleetRouteId}', [FareController::class, 'recalculate']);
+        Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
+        Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
 
         // Trips — full control
         Route::post('trips', [TripController::class, 'store']);

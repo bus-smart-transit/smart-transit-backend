@@ -25,6 +25,11 @@ class TripRepository
             ->first();
     }
 
+    public function listPaginated(int $perPage = 15): object
+    {
+        return Trip::with('fleetRoute')->latest('trip_date')->paginate($perPage);
+    }
+
     public function listForDate(string $date): Collection
     {
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
@@ -76,7 +81,7 @@ class TripRepository
     public function incrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
         $trip = Trip::find($tripId);
-        if (!$trip) {
+        if (! $trip) {
             return false;
         }
 

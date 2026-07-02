@@ -23,7 +23,7 @@ class Trip extends Model
         'current_standing_capacity',
         'total_occupancy',
         'driver_id',
-        'conducter_id',
+        'conductor_id',
     ];
 
     /**

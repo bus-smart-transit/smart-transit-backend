@@ -3,12 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Services\TripService;
-use Illuminate\Http\Request;
 use App\Traits\ApiResponse;
+use Illuminate\Http\Request;
 
 class TripController extends Controller
 {
     use ApiResponse;
+
     private TripService $tripService;
 
     public function __construct(TripService $tripService)
@@ -18,8 +19,12 @@ class TripController extends Controller
 
     public function index(Request $request)
     {
-        return $this->tripService->listTrip($request->input('per_page', 15));
+        return $this->success(
+            $this->tripService->listTrip($request->input('per_page', 15)),
+            'Trips retrieved successfully'
+        );
     }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -45,7 +50,10 @@ class TripController extends Controller
             'driver_id' => 'required|integer|exists:company_users,company_user_id',
         ]);
 
-        $this->tripService->assignDriver($tripId, $validated['driver_id']);
+        $this->tripService->assignDriver([
+            'trip_id' => $tripId,
+            'driver_id' => $validated['driver_id'],
+        ]);
 
         return $this->success(null, 'Driver assigned successfully');
     }
@@ -57,7 +65,10 @@ class TripController extends Controller
             'conductor_id' => 'required|integer|exists:company_users,company_user_id',
         ]);
 
-        $this->tripService->assignConductor($tripId, $validated['conductor_id']);
+        $this->tripService->assignConductor([
+            'trip_id' => $tripId,
+            'conductor_id' => $validated['conductor_id'],
+        ]);
 
         return $this->success(null, 'Conductor assigned successfully');
     }
@@ -106,7 +117,7 @@ class TripController extends Controller
         $companyUser = $request->user()->companyProfile;
         $trip = $this->tripService->getCurrentTripForDriver($companyUser->company_user_id);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 
@@ -119,7 +130,7 @@ class TripController extends Controller
         $companyUser = $request->user()->companyProfile;
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 

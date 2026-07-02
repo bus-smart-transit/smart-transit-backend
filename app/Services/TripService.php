@@ -2,20 +2,27 @@
 
 namespace App\Services;
 
-use App\Repositories\TripRepository;
 use App\Repositories\StaffRepository;
+use App\Repositories\TripRepository;
 use Illuminate\Validation\ValidationException;
 
 class TripService
 {
     private TripRepository $tripRepository;
+
     private StaffRepository $staffRepository;
+
     public function __construct(
         TripRepository $tripRepository,
         StaffRepository $staffRepository,
     ) {
         $this->tripRepository = $tripRepository;
         $this->staffRepository = $staffRepository;
+    }
+
+    public function listTrip(int $perPage = 15): object
+    {
+        return $this->tripRepository->listPaginated($perPage);
     }
 
     public function scheduleTrip(array $payload): object
@@ -34,18 +41,21 @@ class TripService
     public function startBoarding(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'boarding');
+
         return $this->tripRepository->findById($tripId);
     }
 
     public function departTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'departed');
+
         return $this->tripRepository->findById($tripId);
     }
 
     public function completeTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'completed');
+
         return $this->tripRepository->findById($tripId);
     }
 
@@ -54,7 +64,7 @@ class TripService
         // Confirm the company_user being assigned is actually a driver
         $driver = $this->staffRepository->findById($payload['driver_id']);
 
-        if (!$driver || $driver->user->role !== 'driver') {
+        if (! $driver || $driver->user->role !== 'driver') {
             throw ValidationException::withMessages([
                 'driver_id' => ['The selected user is not a driver.'],
             ]);
@@ -68,7 +78,7 @@ class TripService
         // Confirm the company_user being assigned is actually a conductor
         $conductor = $this->staffRepository->findById($payload['conductor_id']);
 
-        if (!$conductor || $conductor->user->role !== 'conductor') {
+        if (! $conductor || $conductor->user->role !== 'conductor') {
             throw ValidationException::withMessages([
                 'conductor_id' => ['The selected user is not a conductor.'],
             ]);
@@ -96,7 +106,7 @@ class TripService
     {
         $trip = $this->tripRepository->findById($payload['trip_id']);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'trip' => ['Trip not found.'],
             ]);
@@ -117,6 +127,7 @@ class TripService
         }
 
         $this->tripRepository->incrementOccupancy($payload['trip_id'], $seatedDelta, $standingDelta);
+
         return $this->tripRepository->findById($payload['trip_id']);
     }
 }

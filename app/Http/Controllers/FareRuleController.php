@@ -7,7 +7,7 @@ use App\Services\FareRuleService;
 use Illuminate\Http\Request;
 use App\Traits\ApiResponse;
 
-class FareController extends Controller
+class FareRuleController extends Controller
 {
     use ApiResponse;
     private FareCalculationService $fareCalculationService;

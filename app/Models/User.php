@@ -3,10 +3,10 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class User extends Authenticatable
 {
@@ -38,8 +38,14 @@ class User extends Authenticatable
     {
         return $this->user_id;
     }
+
     public function passengerProfile(): HasOne
     {
         return $this->hasOne(PassengerUser::class, 'user_id', 'user_id');
+    }
+
+    public function companyProfile(): HasOne
+    {
+        return $this->hasOne(StaffUser::class, 'user_id', 'user_id');
     }
 }
