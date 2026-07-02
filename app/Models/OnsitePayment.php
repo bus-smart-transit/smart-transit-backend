@@ -15,7 +15,6 @@ class OnsitePayment extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'onsite_pay_id',
         'payment_id',
         'conductor_id',
     ];
@@ -25,7 +24,7 @@ class OnsitePayment extends Model
      */
     public function conductor()
     {
-        return $this->belongsTo(CompanyUser::class, 'conductor_id');
+        return $this->belongsTo(StaffUser::class, 'conductor_id');
     }
 
     /**

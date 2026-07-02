@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PassengerUser extends Model
 {
@@ -18,7 +17,7 @@ class PassengerUser extends Model
 
     protected $fillable = [
         'user_id',
-        'passenger_uuid', // Make sure this tracks alongside UUID setups
+        'passenger_uuid',
         'name',
         'birthdate',
         'phone_num',
@@ -34,7 +33,7 @@ class PassengerUser extends Model
         return ['passenger_uuid'];
     }
 
-    public function user(): BelongsTo
+    public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
     }

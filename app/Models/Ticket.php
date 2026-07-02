@@ -15,7 +15,6 @@ class Ticket extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'ticket_id',
         'fleet_route_id',
         'trip_id',
         'fare_id',
@@ -35,7 +34,7 @@ class Ticket extends Model
     protected function casts(): array
     {
         return [
-        'boarded_at' => 'datetime',
+            'boarded_at' => 'datetime',
         ];
     }
 
@@ -44,7 +43,7 @@ class Ticket extends Model
      */
     public function fare()
     {
-        return $this->belongsTo(\App\Models\FareMatrix::class, 'fare_id');
+        return $this->belongsTo(FareMatrix::class, 'fare_id');
     }
 
     /**
@@ -52,7 +51,7 @@ class Ticket extends Model
      */
     public function fleetRoute()
     {
-        return $this->belongsTo(\App\Models\FleetsRoute::class, 'fleet_route_id');
+        return $this->belongsTo(FleetRoute::class, 'fleet_route_id');
     }
 
     /**
@@ -60,7 +59,7 @@ class Ticket extends Model
      */
     public function passenger()
     {
-        return $this->belongsTo(\App\Models\PassengerUser::class, 'passenger_id');
+        return $this->belongsTo(PassengerUser::class, 'passenger_id');
     }
 
     /**
@@ -68,7 +67,7 @@ class Ticket extends Model
      */
     public function payment()
     {
-        return $this->belongsTo(\App\Models\Payment::class, 'payment_id');
+        return $this->belongsTo(Payment::class, 'payment_id');
     }
 
     /**
@@ -76,6 +75,6 @@ class Ticket extends Model
      */
     public function trip()
     {
-        return $this->belongsTo(\App\Models\Trip::class, 'trip_id');
+        return $this->belongsTo(Trip::class, 'trip_id');
     }
 }

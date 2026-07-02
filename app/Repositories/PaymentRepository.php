@@ -3,47 +3,27 @@
 namespace App\Repositories;
 
 use App\Models\Payment;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
 
 class PaymentRepository
 {
-    public function paginate(int $perPage = 15)
+    public function create(array $payload): Payment
     {
-        return Payment::latest()->paginate($perPage);
-    }
-
-    public function create(array $payload)
-    {
+        $payload['payment_uuid'] = $payload['payment_uuid'] ?? (string) Str::uuid();
+        $payload['payment_created'] = $payload['payment_created'] ?? now();
         return Payment::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findById(int $paymentId): ?Payment
     {
-        return Payment::where('uuid', $uuid)->first();
+        return Payment::with('tickets')->find($paymentId);
     }
 
-    public function findByField(string $field, $value)
+    public function markStatus(int $paymentId, string $status, bool $isValid = true): bool
     {
-        return Payment::where($field, $value)->first();
-    }
-
-    public function update(string $uuid, array $payload)
-    {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
-    }
-
-    public function delete(string $uuid)
-    {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Payment::withTrashed()->where('uuid', $uuid)->first();
-        $model->restore();
-        return $model;
+        return Payment::where('payment_id', $paymentId)->update([
+            'status' => $status,
+            'is_valid' => $isValid,
+        ]) > 0;
     }
 }

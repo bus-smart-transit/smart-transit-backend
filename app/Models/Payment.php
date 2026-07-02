@@ -15,7 +15,6 @@ class Payment extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'payment_id',
         'amount',
         'payment_created',
         'transaction_reference',
@@ -34,7 +33,21 @@ class Payment extends Model
     protected function casts(): array
     {
         return [
-        'payment_created' => 'datetime',
+            'payment_created' => 'datetime',
         ];
+    }
+    public function tickets()
+    {
+        return $this->hasMany(Ticket::class, 'payment_id', 'payment_id');
+    }
+
+    public function onlinePayment()
+    {
+        return $this->hasOne(OnlinePayment::class, 'payment_id', 'payment_id');
+    }
+
+    public function onsitePayment()
+    {
+        return $this->hasOne(OnsitePayment::class, 'payment_id', 'payment_id');
     }
 }

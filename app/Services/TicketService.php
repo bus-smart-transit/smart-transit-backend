@@ -3,56 +3,86 @@
 namespace App\Services;
 
 use App\Repositories\TicketRepository;
-use App\Http\Resources\TicketResource;
+use App\Repositories\TripRepository;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
 
 class TicketService
 {
     private TicketRepository $ticketRepository;
-
-    public function __construct(TicketRepository $ticketRepository) 
-    {
+    private TripRepository $tripRepository;
+    private FareRuleService $fareService;
+    private TripService $tripService;
+    private RewardService $rewardService;
+    public function __construct(
+        TicketRepository $ticketRepository,
+        TripRepository $tripRepository,
+        FareRuleService $fareRuleService,
+        TripService $tripService,
+        RewardService $rewardService,
+    ) {
         $this->ticketRepository = $ticketRepository;
+        $this->tripRepository = $tripRepository;
+        $this->tripService = $tripService;
+        $this->fareService = $fareRuleService;
+        $this->rewardService = $rewardService;
     }
 
-    public function listTicket(int $perPage = 15)
+    /**
+     * Issues one ticket against an existing payment. For a multi-ticket
+     * purchase, call this once per ticket, all sharing the same $paymentId
+     * (see PaymentService::checkout()).
+     */
+    public function issueTicket(array $payload)
     {
-        $collection = $this->ticketRepository->paginate($perPage);
-        return TicketResource::collection($collection);
+        $trip = $this->tripRepository->findById($payload['trip_id']);
+
+        if (!$trip || !in_array($trip->status, ['scheduled', 'boarding'])) {
+            throw ValidationException::withMessages(['trip' => ['This trip is not accepting tickets.']]);
+        }
+
+        $fare = $this->fareService->getFareRecordForSegment($payload['origin_stop_id'], $payload['destination_stop_id'], $payload['seat_type']);
+
+        return DB::transaction(function () use ($trip, $payload, $fare) {
+            // Reserve capacity before issuing — throws if full.
+            $this->tripService->recordBoarding($trip->trip_id, $payload['seat_type']);
+
+            $ticket = $this->ticketRepository->create([
+                'fleet_route_id' => $trip->fleet_route_id,
+                'trip_id' => $trip->trip_id,
+                'fare_id' => $fare->fare_id,
+                'payment_id' => $payload['payment_id'],
+                'passenger_id' => $payload['passenger_id'],
+                'status' => 'issued',
+                'amount' => $fare->amount,
+            ]);
+
+            if ($payload['passenger_id']) {
+                $this->rewardService->awardPoints($payload['passenger_id'], $fare->amount);
+            }
+
+            return $ticket;
+        });
     }
 
-    public function createTicket(array $payload)
+    public function validateScan(string $ticketUuid)
     {
-        $model = $this->ticketRepository->create($payload);
-        
+        $ticket = $this->ticketRepository->findByUuid($ticketUuid);
+
+        if (!$ticket) {
+            throw ValidationException::withMessages(['ticket' => ['Ticket not found.']]);
+        }
+
+        if ($ticket->status !== 'issued') {
+            throw ValidationException::withMessages(['ticket' => ["Ticket already {$ticket->status}."]]);
+        }
+
+        $this->ticketRepository->markBoarded($ticket->ticket_id);
+        return $this->ticketRepository->findByUuid($ticketUuid);
     }
 
-    public function getTicket(string $uuid)
+    public function getPassengerTickets(int $passengerId)
     {
-        $model = $this->ticketRepository->findByUuid($uuid);
-        
-    }
-
-    public function getTicketByField(string $field, $value)
-    {
-        $model = $this->ticketRepository->findByField($field, $value);
-        
-    }
-
-    public function updateTicket(string $uuid, array $payload)
-    {
-        $model = $this->ticketRepository->update($uuid, $payload);
-        
-    }
-
-    public function deleteTicket(string $uuid)
-    {
-        $this->ticketRepository->delete($uuid);
-        return true;
-    }
-
-    public function restoreTicket(string $uuid)
-    {
-        $model = $this->ticketRepository->restore($uuid);
-        
+        return $this->ticketRepository->findByPassenger($passengerId);
     }
 }

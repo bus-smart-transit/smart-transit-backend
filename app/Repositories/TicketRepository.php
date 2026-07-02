@@ -3,47 +3,40 @@
 namespace App\Repositories;
 
 use App\Models\Ticket;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class TicketRepository
 {
-    public function paginate(int $perPage = 15)
+    public function create(array $payload): Ticket
     {
-        return Ticket::latest()->paginate($perPage);
-    }
-
-    public function create(array $payload)
-    {
+        $payload['ticket_uuid'] = $payload['ticket_uuid'] ?? (string) Str::uuid();
         return Ticket::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findByUuid(string $uuid): ?Ticket
     {
-        return Ticket::where('uuid', $uuid)->first();
+        return Ticket::with(['trip', 'fare', 'payment'])->where('ticket_uuid', $uuid)->first();
     }
 
-    public function findByField(string $field, $value)
+    public function findByPassenger(int $passengerId): Collection
     {
-        return Ticket::where($field, $value)->first();
+        return Ticket::with(['trip.fleetRoute.route', 'fare'])
+            ->where('passenger_id', $passengerId)
+            ->latest()
+            ->get();
     }
 
-    public function update(string $uuid, array $payload)
+    public function findByPayment(int $paymentId): Collection
     {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
+        return Ticket::where('payment_id', $paymentId)->get();
     }
 
-    public function delete(string $uuid)
+    public function markBoarded(int $ticketId): bool
     {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Ticket::withTrashed()->where('uuid', $uuid)->first();
-        $model->restore();
-        return $model;
+        return Ticket::where('ticket_id', $ticketId)->update([
+            'status' => 'boarded',
+            'boarded_at' => now(),
+        ]) > 0;
     }
 }

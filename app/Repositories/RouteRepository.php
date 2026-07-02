@@ -3,47 +3,32 @@
 namespace App\Repositories;
 
 use App\Models\Route;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Collection;
 
 class RouteRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return Route::latest()->paginate($perPage);
-    }
-
-    public function create(array $payload)
+    public function create(array $payload): Route
     {
         return Route::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findWithStops(int $routeId): ?Route
     {
-        return Route::where('uuid', $uuid)->first();
+        return Route::with('routeStops.stop')->find($routeId);
     }
 
-    public function findByField(string $field, $value)
+    public function all(): Collection
     {
-        return Route::where($field, $value)->first();
+        return Route::all();
     }
 
-    public function update(string $uuid, array $payload)
+    public function update(int $routeId, array $payload): bool
     {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
+        return Route::where('route_id', $routeId)->update($payload) > 0;
     }
 
-    public function delete(string $uuid)
+    public function delete(int $routeId): bool
     {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Route::withTrashed()->where('uuid', $uuid)->first();
-        $model->restore();
-        return $model;
+        return Route::where('route_id', $routeId)->delete() > 0;
     }
 }

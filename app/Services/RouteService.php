@@ -3,56 +3,48 @@
 namespace App\Services;
 
 use App\Repositories\RouteRepository;
-use App\Http\Resources\RouteResource;
+use App\Repositories\RouteStopRepository;
 
 class RouteService
 {
     private RouteRepository $routeRepository;
-
-    public function __construct(RouteRepository $routeRepository) 
-    {
+    private RouteStopRepository $routeStopRepository;
+    public function __construct(
+        RouteRepository $routeRepository,
+        RouteStopRepository $routeStopRepository,
+    ) {
         $this->routeRepository = $routeRepository;
-    }
-
-    public function listRoute(int $perPage = 15)
-    {
-        $collection = $this->routeRepository->paginate($perPage);
-        return RouteResource::collection($collection);
+        $this->routeStopRepository = $routeStopRepository;
     }
 
     public function createRoute(array $payload)
     {
-        $model = $this->routeRepository->create($payload);
-        
+        return $this->routeRepository->create($payload);
     }
 
-    public function getRoute(string $uuid)
+    public function getRouteWithStops(int $routeId)
     {
-        $model = $this->routeRepository->findByUuid($uuid);
-        
+        return $this->routeRepository->findWithStops($routeId);
     }
 
-    public function getRouteByField(string $field, $value)
+    public function listRoutes()
     {
-        $model = $this->routeRepository->findByField($field, $value);
-        
+        return $this->routeRepository->all();
     }
 
-    public function updateRoute(string $uuid, array $payload)
+    // route_stop_table is folded in here — no separate controller/service for it.
+    public function addStopToRoute(int $routeId, int $stopId, int $stopOrder, float $distanceFromOriginKm)
     {
-        $model = $this->routeRepository->update($uuid, $payload);
-        
+        return $this->routeStopRepository->create([
+            'route_id' => $routeId,
+            'stop_id' => $stopId,
+            'stop_order' => $stopOrder,
+            'distance_from_origin_km' => $distanceFromOriginKm,
+        ]);
     }
 
-    public function deleteRoute(string $uuid)
+    public function removeStopFromRoute(int $routeStopId)
     {
-        $this->routeRepository->delete($uuid);
-        return true;
-    }
-
-    public function restoreRoute(string $uuid)
-    {
-        $model = $this->routeRepository->restore($uuid);
-        
+        return $this->routeStopRepository->delete($routeStopId);
     }
 }

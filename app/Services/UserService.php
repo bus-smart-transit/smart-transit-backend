@@ -34,11 +34,11 @@ class UserService
         }
 
         // Enforce implicit check safeguarding your system dashboard routes 
-        if ($user->role !== 'passenger') {
-            throw ValidationException::withMessages([
-                'email' => ['Access unauthorized via passenger terminal app.'],
-            ]);
-        }
+        // if ($user->role !== 'passenger') {
+        //     throw ValidationException::withMessages([
+        //         'email' => ['Access unauthorized via passenger terminal app.'],
+        //     ]);
+        // }
 
         return [
             'user' => $user,

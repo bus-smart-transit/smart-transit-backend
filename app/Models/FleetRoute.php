@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class FleetsRoute extends Model
+class FleetRoute extends Model
 {
     /**
      * The table associated with the model data layout.
@@ -15,7 +15,6 @@ class FleetsRoute extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'fleet_route_id',
         'fleet_id',
         'route_id',
         'start_time',
@@ -37,5 +36,9 @@ class FleetsRoute extends Model
     public function route()
     {
         return $this->belongsTo(Route::class, 'route_id');
+    }
+    public function trips()
+    {
+        return $this->hasMany(Trip::class, 'fleet_route_id', 'fleet_route_id');
     }
 }

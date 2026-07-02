@@ -10,20 +10,19 @@ use Illuminate\Support\Str;
 
 class StaffService
 {
-    // All non-passenger roles that can log into the staff terminal
+    private UserRepository $userRepository;
+    private StaffRepository $staffRepository;
     private const STAFF_ROLES = ['operator', 'driver', 'conductor', 'admin'];
 
-    // Roles an operator is allowed to create — cannot create other
-    // operators or admins, only the staff under them
     private const OPERATOR_CREATABLE_ROLES = ['driver', 'conductor'];
 
     public function __construct(
-        private UserRepository $userRepository,
-        private StaffRepository $staffRepository,
+        UserRepository $userRepository,
+        StaffRepository $staffRepository,
     ) {
+        $this->userRepository = $userRepository;
+        $this->staffRepository = $staffRepository;
     }
-
-    // ── Authentication ──────────────────────────────────────────────
 
     public function loginStaff(array $credentials): array
     {

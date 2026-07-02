@@ -4,10 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Services\PaymentService;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Traits\ApiResponse;
 
 class PaymentController extends Controller
 {
+    use ApiResponse;
     private PaymentService $paymentService;
 
     public function __construct(PaymentService $paymentService)
@@ -15,34 +16,40 @@ class PaymentController extends Controller
         $this->paymentService = $paymentService;
     }
 
-    public function index(Request $request)
+    // Passenger checkout — one or more tickets in one transaction.
+    public function checkoutOnline(Request $request)
     {
-        return $this->paymentService->listPayment($request->input('per_page', 15));
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
+            'items.*.seat_type' => 'required|string|in:seated,standing',
+            'items.*.origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'items.*.destination_stop_id' => 'required|integer|exists:stops,stop_id',
+        ]);
+
+        $passenger = $request->user()->passengerProfile; // adjust to your actual relation
+
+        $result = $this->paymentService->checkoutOnline($passenger->passenger_id, $validated['items']);
+
+        return $this->success($result, 'Checkout successful');
     }
 
-    public function store(Request $request)
+    // Conductor onsite sale — same cart shape, plus optional passenger_id per item for walk-ups.
+    public function checkoutOnsite(Request $request)
     {
-        return $this->paymentService->createPayment($request->all());
-    }
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
+            'items.*.seat_type' => 'required|string|in:seated,standing',
+            'items.*.origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'items.*.destination_stop_id' => 'required|integer|exists:stops,stop_id',
+            'items.*.passenger_id' => 'nullable|integer|exists:passenger_users,passenger_id',
+        ]);
 
-    public function show(string $uuid)
-    {
-        return $this->paymentService->getPayment($uuid);
-    }
+        $conductor = $request->user()->companyProfile; // adjust to your actual relation
 
-    public function update(Request $request, string $uuid)
-    {
-        return $this->paymentService->updatePayment($uuid, $request->all());
-    }
+        $result = $this->paymentService->checkoutOnsite($conductor->company_user_id, $validated['items']);
 
-    public function destroy(string $uuid)
-    {
-        $this->paymentService->deletePayment($uuid);
-        return response()->json(['message' => 'Deleted successfully'], 200);
-    }
-    
-    public function restore(string $uuid)
-    {
-        return $this->paymentService->restorePayment($uuid);
+        return $this->success($result, 'Onsite sale recorded successfully');
     }
 }

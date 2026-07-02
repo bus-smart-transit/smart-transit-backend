@@ -3,56 +3,33 @@
 namespace App\Services;
 
 use App\Repositories\StopRepository;
-use App\Http\Resources\StopResource;
 
 class StopService
 {
     private StopRepository $stopRepository;
-
     public function __construct(StopRepository $stopRepository)
     {
         $this->stopRepository = $stopRepository;
     }
 
-    public function listStops(int $perPage = 15)
+    public function createStop(array $payload)
     {
-        $collection = $this->stopRepository->paginate($perPage);
-        return StopResource::collection($collection);
+        return $this->stopRepository->create($payload);
     }
 
-    public function createStops(array $payload)
+    public function listStops()
     {
-        $model = $this->stopRepository->create($payload);
-
+        return $this->stopRepository->all();
     }
 
-    public function getStops(string $uuid)
+    public function updateStop(int $stopId, array $payload)
     {
-        $model = $this->stopRepository->findByUuid($uuid);
-
+        $this->stopRepository->update($stopId, $payload);
+        return $this->stopRepository->findById($stopId);
     }
 
-    public function getStopsByField(string $field, $value)
+    public function deleteStop(int $stopId)
     {
-        $model = $this->stopRepository->findByField($field, $value);
-
-    }
-
-    public function updateStops(string $uuid, array $payload)
-    {
-        $model = $this->stopRepository->update($uuid, $payload);
-
-    }
-
-    public function deleteStops(string $uuid)
-    {
-        $this->stopRepository->delete($uuid);
-        return true;
-    }
-
-    public function restoreStops(string $uuid)
-    {
-        $model = $this->stopRepository->restore($uuid);
-
+        return $this->stopRepository->delete($stopId);
     }
 }

@@ -15,7 +15,6 @@ class FareMatrix extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'fare_id',
         'origin_stop_id',
         'destination_stop_id',
         'amount',
@@ -30,7 +29,7 @@ class FareMatrix extends Model
      */
     public function destinationStop()
     {
-        return $this->belongsTo(\App\Models\Stop::class, 'destination_stop_id');
+        return $this->belongsTo(Stop::class, 'destination_stop_id');
     }
 
     /**
@@ -38,7 +37,7 @@ class FareMatrix extends Model
      */
     public function fareRule()
     {
-        return $this->belongsTo(\App\Models\FareRule::class, 'fare_rule_id');
+        return $this->belongsTo(FareRule::class, 'fare_rule_id');
     }
 
     /**
@@ -46,7 +45,7 @@ class FareMatrix extends Model
      */
     public function fleet()
     {
-        return $this->belongsTo(\App\Models\Fleet::class, 'fleet_id');
+        return $this->belongsTo(Fleet::class, 'fleet_id');
     }
 
     /**
@@ -54,6 +53,6 @@ class FareMatrix extends Model
      */
     public function originStop()
     {
-        return $this->belongsTo(\App\Models\Stop::class, 'origin_stop_id');
+        return $this->belongsTo(Stop::class, 'origin_stop_id');
     }
 }

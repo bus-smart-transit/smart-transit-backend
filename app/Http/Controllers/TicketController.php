@@ -4,10 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Services\TicketService;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Traits\ApiResponse;
 
 class TicketController extends Controller
 {
+    use ApiResponse;
     private TicketService $ticketService;
 
     public function __construct(TicketService $ticketService)
@@ -15,34 +16,18 @@ class TicketController extends Controller
         $this->ticketService = $ticketService;
     }
 
-    public function index(Request $request)
+    // Passenger's own ticket history.
+    public function myTickets(Request $request)
     {
-        return $this->ticketService->listTicket($request->input('per_page', 15));
+        $passenger = $request->user()->passengerProfile; // adjust to your actual User->PassengerUser relation
+        return $this->success($this->ticketService->getPassengerTickets($passenger->passenger_id), 'Tickets retrieved successfully');
     }
 
-    public function store(Request $request)
+    // Conductor scans a QR code at boarding.
+    public function scan(Request $request)
     {
-        return $this->ticketService->createTicket($request->all());
-    }
-
-    public function show(string $uuid)
-    {
-        return $this->ticketService->getTicket($uuid);
-    }
-
-    public function update(Request $request, string $uuid)
-    {
-        return $this->ticketService->updateTicket($uuid, $request->all());
-    }
-
-    public function destroy(string $uuid)
-    {
-        $this->ticketService->deleteTicket($uuid);
-        return response()->json(['message' => 'Deleted successfully'], 200);
-    }
-    
-    public function restore(string $uuid)
-    {
-        return $this->ticketService->restoreTicket($uuid);
+        $validated = $request->validate(['ticket_uuid' => 'required|string']);
+        $ticket = $this->ticketService->validateScan($validated['ticket_uuid']);
+        return $this->success($ticket, 'Ticket validated and boarded successfully');
     }
 }

@@ -15,7 +15,6 @@ class Fleet extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'fleet_id',
         'company_user_id',
         'plate_number',
         'capacity',
@@ -29,6 +28,15 @@ class Fleet extends Model
      */
     public function companyUser()
     {
-        return $this->belongsTo(CompanyUser::class, 'company_user_id');
+        return $this->belongsTo(StaffUser::class, 'company_user_id');
+    }
+    public function fleetRoutes()
+    {
+        return $this->hasMany(FleetRoute::class, 'fleet_id', 'fleet_id');
+    }
+
+    public function fareRules()
+    {
+        return $this->hasMany(FareRule::class, 'fleet_id', 'fleet_id');
     }
 }

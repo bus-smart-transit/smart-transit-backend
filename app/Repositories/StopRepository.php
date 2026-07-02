@@ -3,47 +3,32 @@
 namespace App\Repositories;
 
 use App\Models\Stop;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Collection;
 
 class StopRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return Stop::latest()->paginate($perPage);
-    }
-
-    public function create(array $payload)
+    public function create(array $payload): Stop
     {
         return Stop::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findById(int $stopId): ?Stop
     {
-        return Stop::where('uuid', $uuid)->first();
+        return Stop::find($stopId);
     }
 
-    public function findByField(string $field, $value)
+    public function all(): Collection
     {
-        return Stop::where($field, $value)->first();
+        return Stop::orderBy('stop_name')->get();
     }
 
-    public function update(string $uuid, array $payload)
+    public function update(int $stopId, array $payload): bool
     {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
+        return Stop::where('stop_id', $stopId)->update($payload) > 0;
     }
 
-    public function delete(string $uuid)
+    public function delete(int $stopId): bool
     {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
-    }
-
-    public function restore(string $uuid)
-    {
-        $model = Stops::withTrashed()->where('uuid', $uuid)->first();
-        $model->restore();
-        return $model;
+        return Stop::where('stop_id', $stopId)->delete() > 0;
     }
 }

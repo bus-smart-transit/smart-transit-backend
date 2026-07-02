@@ -15,7 +15,6 @@ class Trip extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'trip_id',
         'fleet_route_id',
         'company_user_id',
         'trip_date',
@@ -52,6 +51,6 @@ class Trip extends Model
      */
     public function fleetRoute()
     {
-        return $this->belongsTo(FleetsRoute::class, 'fleet_route_id');
+        return $this->belongsTo(FleetRoute::class, 'fleet_route_id');
     }
 }

@@ -15,7 +15,6 @@ class OnlinePayment extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'online_payment_id',
         'passenger_id',
         'payment_id',
     ];

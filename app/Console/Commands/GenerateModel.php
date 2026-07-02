@@ -256,7 +256,7 @@ class {$modelName} extends Model
             $relatedModel = Str::studly(Str::singular($foreignTable));
             $methodName = Str::camel(Str::singular(Str::replaceLast('_id', '', $localColumn)));
 
-            $methods .= "\n    /**\n     * Get the {$methodName} that owns this record.\n     */\n    public function {$methodName}()\n    {\n        return \$this->belongsTo(\\App\\Models\\{$relatedModel}::class, '{$localColumn}');\n    }\n";
+            $methods .= "\n    /**\n     * Get the {$methodName} that owns this record.\n     */\n    public function {$methodName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$localColumn}');\n    }\n";
         }
 
         return $methods;

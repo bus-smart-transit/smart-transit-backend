@@ -15,7 +15,6 @@ class FareRule extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'fare_rule_id',
         'fleet_id',
         'base_fare',
         'fare_per_km',
@@ -28,6 +27,6 @@ class FareRule extends Model
      */
     public function fleet()
     {
-        return $this->belongsTo(\App\Models\Fleet::class, 'fleet_id');
+        return $this->belongsTo(Fleet::class, 'fleet_id');
     }
 }

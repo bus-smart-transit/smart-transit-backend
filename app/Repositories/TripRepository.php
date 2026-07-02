@@ -3,47 +3,87 @@
 namespace App\Repositories;
 
 use App\Models\Trip;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Collection;
 
 class TripRepository
 {
-    public function paginate(int $perPage = 15)
-    {
-        return Trip::latest()->paginate($perPage);
-    }
-
-    public function create(array $payload)
+    public function create(array $payload): Trip
     {
         return Trip::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findById(int $tripId): ?Trip
     {
-        return Trip::where('uuid', $uuid)->first();
+        return Trip::with('fleetRoute.fleet')->find($tripId);
     }
 
-    public function findByField(string $field, $value)
+    public function findActiveByFleetRoute(int $fleetRouteId): ?Trip
     {
-        return Trip::where($field, $value)->first();
+        return Trip::where('fleet_route_id', $fleetRouteId)
+            ->whereIn('status', ['scheduled', 'boarding'])
+            ->latest('trip_date')
+            ->first();
     }
 
-    public function update(string $uuid, array $payload)
+    public function listForDate(string $date): Collection
     {
-        $model = $this->findByUuid($uuid);
-        $model->update($payload);
-        return $model;
+        return Trip::with('fleetRoute')->where('trip_date', $date)->get();
     }
 
-    public function delete(string $uuid)
+    public function listByDriver(int $driverCompanyUserId): Collection
     {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where('driver_id', $driverCompanyUserId)
+            ->where('trip_date', today())
+            ->get();
     }
 
-    public function restore(string $uuid)
+    public function findCurrentByDriver(int $driverCompanyUserId): ?Trip
     {
-        $model = Trip::withTrashed()->where('uuid', $uuid)->first();
-        $model->restore();
-        return $model;
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where('driver_id', $driverCompanyUserId)
+            ->whereIn('status', ['boarding', 'departed'])
+            ->where('trip_date', today())
+            ->first();
+    }
+
+    public function findCurrentByConductor(int $conductorCompanyUserId): ?Trip
+    {
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where('conductor_id', $conductorCompanyUserId)
+            ->whereIn('status', ['boarding', 'departed'])
+            ->where('trip_date', today())
+            ->first();
+    }
+
+    public function updateStatus(int $tripId, string $status): bool
+    {
+        return Trip::where('trip_id', $tripId)->update(['status' => $status]) > 0;
+    }
+
+    public function assignDriver(int $tripId, int $driverCompanyUserId): bool
+    {
+        return Trip::where('trip_id', $tripId)
+            ->update(['driver_id' => $driverCompanyUserId]) > 0;
+    }
+
+    public function assignConductor(int $tripId, int $conductorCompanyUserId): bool
+    {
+        return Trip::where('trip_id', $tripId)
+            ->update(['conductor_id' => $conductorCompanyUserId]) > 0;
+    }
+
+    public function incrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
+    {
+        $trip = Trip::find($tripId);
+        if (!$trip) {
+            return false;
+        }
+
+        $trip->current_seated_capacity += $seatedDelta;
+        $trip->current_standing_capacity += $standingDelta;
+        $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
+
+        return $trip->save();
     }
 }

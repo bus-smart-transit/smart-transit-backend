@@ -4,10 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Services\RouteService;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use App\Traits\ApiResponse;
 
 class RouteController extends Controller
 {
+    use ApiResponse;
     private RouteService $routeService;
 
     public function __construct(RouteService $routeService)
@@ -15,34 +16,49 @@ class RouteController extends Controller
         $this->routeService = $routeService;
     }
 
-    public function index(Request $request)
+    public function index()
     {
-        return $this->routeService->listRoute($request->input('per_page', 15));
+        return $this->success($this->routeService->listRoutes(), 'Routes retrieved successfully');
+    }
+
+    public function show(int $routeId)
+    {
+        return $this->success($this->routeService->getRouteWithStops($routeId), 'Route retrieved successfully');
     }
 
     public function store(Request $request)
     {
-        return $this->routeService->createRoute($request->all());
+        $validated = $request->validate([
+            'origin' => 'required|string',
+            'destination' => 'required|string',
+            'route_name' => 'required|string',
+        ]);
+
+        return $this->success($this->routeService->createRoute($validated), 'Route created successfully');
     }
 
-    public function show(string $uuid)
+    // route_stop_table endpoints — folded into RouteController, no standalone controller.
+    public function addStop(Request $request, int $routeId)
     {
-        return $this->routeService->getRoute($uuid);
+        $validated = $request->validate([
+            'stop_id' => 'required|integer|exists:stops,stop_id',
+            'stop_order' => 'required|integer',
+            'distance_from_origin_km' => 'required|numeric',
+        ]);
+
+        $routeStop = $this->routeService->addStopToRoute(
+            $routeId,
+            $validated['stop_id'],
+            $validated['stop_order'],
+            $validated['distance_from_origin_km'],
+        );
+
+        return $this->success($routeStop, 'Stop added to route successfully');
     }
 
-    public function update(Request $request, string $uuid)
+    public function removeStop(int $routeId, int $routeStopId)
     {
-        return $this->routeService->updateRoute($uuid, $request->all());
-    }
-
-    public function destroy(string $uuid)
-    {
-        $this->routeService->deleteRoute($uuid);
-        return response()->json(['message' => 'Deleted successfully'], 200);
-    }
-    
-    public function restore(string $uuid)
-    {
-        return $this->routeService->restoreRoute($uuid);
+        $this->routeService->removeStopFromRoute($routeStopId);
+        return $this->success(null, 'Stop removed from route successfully');
     }
 }

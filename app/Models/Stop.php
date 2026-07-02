@@ -15,7 +15,10 @@ class Stop extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'stop_id',
         'stop_name',
     ];
+    public function routeStops()
+    {
+        return $this->hasMany(RouteStop::class, 'stop_id', 'stop_id');
+    }
 }

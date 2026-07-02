@@ -15,9 +15,17 @@ class Route extends Model
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
-        'route_id',
         'origin',
         'destination',
         'route_name',
     ];
+    public function routeStops()
+    {
+        return $this->hasMany(RouteStop::class, 'route_id', 'route_id')->orderBy('stop_order');
+    }
+
+    public function fleetRoutes()
+    {
+        return $this->hasMany(FleetRoute::class, 'route_id', 'route_id');
+    }
 }
