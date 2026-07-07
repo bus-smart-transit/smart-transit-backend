@@ -1,23 +1,17 @@
 <?php
-
 namespace App\Http\Controllers;
-
 use App\Services\StaffService;
 use App\Http\Requests\LoginRequest;
-use Illuminate\Http\Request;
+use App\Http\Requests\CreateStaffAccountRequest;
 use App\Traits\ApiResponse;
+use Illuminate\Http\Request;
 
 class StaffAuthController extends Controller
 {
     use ApiResponse;
-    private StaffService $staffService;
-
-    public function __construct(StaffService $staffService)
+    public function __construct(private StaffService $staffService)
     {
-        $this->staffService = $staffService;
     }
-
-    // ── Auth ────────────────────────────────────────────────────────
 
     public function login(LoginRequest $request)
     {
@@ -37,47 +31,25 @@ class StaffAuthController extends Controller
         return $this->success(null, 'Logged out successfully');
     }
 
-    // ── Account creation ────────────────────────────────────────────
-    // Admin hits POST /admin/accounts    → can create operators
-    // Operator hits POST /operator/accounts → can create drivers/conductors
-    // Both use this same method; StaffService enforces what each role can create
-
-    public function createAccount(Request $request)
+    // Admin hits POST /admin/accounts   → creates operator
+    // Operator hits POST /operator/accounts → creates driver or conductor
+    // StaffService enforces which roles each creator is allowed to assign
+    public function createAccount(CreateStaffAccountRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string',
-            'email' => 'required|email',
-            'password' => 'required|string|min:8',
-            'phone_num' => 'required|string',
-            'address' => 'nullable|string',
-            'username' => 'nullable|string',
-            'role' => 'required|string|in:operator,driver,conductor',
-        ]);
-
         $result = $this->staffService->createStaffAccount(
-            $validated,
-            $request->user()->role  // who is making the request — enforced in service
+            $request->validated(),
+            $request->user()->role
         );
-
         return $this->success($result, 'Account created successfully');
     }
 
-    // ── Staff listings ───────────────────────────────────────────────
-    // Operator/Admin can see all drivers and conductors to assign to trips
-
     public function listDrivers()
     {
-        return $this->success(
-            $this->staffService->listDrivers(),
-            'Drivers retrieved successfully'
-        );
+        return $this->success($this->staffService->listDrivers(), 'Drivers retrieved successfully');
     }
 
     public function listConductors()
     {
-        return $this->success(
-            $this->staffService->listConductors(),
-            'Conductors retrieved successfully'
-        );
+        return $this->success($this->staffService->listConductors(), 'Conductors retrieved successfully');
     }
 }

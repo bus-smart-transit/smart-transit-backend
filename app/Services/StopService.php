@@ -1,34 +1,32 @@
 <?php
-
 namespace App\Services;
-
 use App\Repositories\StopRepository;
 
 class StopService
 {
-    private StopRepository $stopRepository;
-    public function __construct(StopRepository $stopRepository)
+    public function __construct(private StopRepository $stopRepository)
     {
-        $this->stopRepository = $stopRepository;
     }
 
-    public function createStop(array $payload)
+    // $payload = ['stop_name','latitude','longitude']
+    public function createStop(array $payload): object
     {
         return $this->stopRepository->create($payload);
     }
 
-    public function listStops()
+    public function listStops(): object
     {
         return $this->stopRepository->all();
     }
 
-    public function updateStop(int $stopId, array $payload)
+    // $payload = ['stop_name','latitude','longitude'] (all optional via sometimes)
+    public function updateStop(int $stopId, array $payload): ?object
     {
         $this->stopRepository->update($stopId, $payload);
         return $this->stopRepository->findById($stopId);
     }
 
-    public function deleteStop(int $stopId)
+    public function deleteStop(int $stopId): bool
     {
         return $this->stopRepository->delete($stopId);
     }

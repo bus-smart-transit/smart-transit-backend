@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Repositories;
-
 use App\Models\FleetRoute;
 use Illuminate\Support\Collection;
 
@@ -12,6 +10,11 @@ class FleetRouteRepository
         return FleetRoute::create($payload);
     }
 
+    public function findById(int $fleetRouteId): ?FleetRoute
+    {
+        return FleetRoute::find($fleetRouteId);
+    }
+
     public function findWithRoute(int $fleetRouteId): ?FleetRoute
     {
         return FleetRoute::with(['route', 'fleet'])->find($fleetRouteId);
@@ -19,11 +22,14 @@ class FleetRouteRepository
 
     public function listByRoute(int $routeId): Collection
     {
-        return FleetRoute::where('route_id', $routeId)->where('status', 'active')->get();
+        return FleetRoute::where('route_id', $routeId)
+            ->where('status', 'active')
+            ->get();
     }
 
     public function updateStatus(int $fleetRouteId, string $status): bool
     {
-        return FleetRoute::where('fleet_route_id', $fleetRouteId)->update(['status' => $status]) > 0;
+        return FleetRoute::where('fleet_route_id', $fleetRouteId)
+            ->update(['status' => $status]) > 0;
     }
 }

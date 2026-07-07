@@ -11,6 +11,7 @@ class FareRule extends Model
      */
     protected $table = 'fare_rules';
 
+    protected $primaryKey = 'fare_rule_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

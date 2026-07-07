@@ -11,6 +11,7 @@ class Ticket extends Model
      */
     protected $table = 'tickets';
 
+    protected $primaryKey = 'ticket_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

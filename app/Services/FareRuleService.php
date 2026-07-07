@@ -1,46 +1,46 @@
 <?php
-
 namespace App\Services;
-
 use App\Repositories\FareMatrixRepository;
 use App\Repositories\FareRuleRepository;
 
 class FareRuleService
 {
-    private FareMatrixRepository $fareMatrixRepository;
-    private FareRuleRepository $fareRuleRepository;
-
     public function __construct(
-        FareMatrixRepository $fareMatrixRepository,
-        FareRuleRepository $fareRuleRepository,
+        private FareMatrixRepository $fareMatrixRepository,
+        private FareRuleRepository $fareRuleRepository,
     ) {
     }
 
-    // Fast read path — the only fare method TicketService should call.
-    public function getFareForSegment(int $originStopId, int $destinationStopId, string $seatType): float
+    // $payload = ['origin_stop_id','destination_stop_id','seat_type']
+    // Fast indexed lookup — the only fare method TicketService calls at booking time
+    public function getFareRecord(array $payload): object
     {
-        $fare = $this->fareMatrixRepository->findFare($originStopId, $destinationStopId, $seatType);
+        $fare = $this->fareMatrixRepository->findFare(
+            $payload['origin_stop_id'],
+            $payload['destination_stop_id'],
+            $payload['seat_type'],
+        );
 
         if (!$fare) {
             throw new \RuntimeException('No fare configured for this route segment and seat type.');
         }
 
-        return $fare->amount;
+        return $fare; // returns fare_id + amount — both needed by TicketService
     }
 
-    public function getFareRecordForSegment(int $originStopId, int $destinationStopId, string $seatType)
+    // $payload = ['origin_stop_id','destination_stop_id','seat_type']
+    // Passenger-facing quote — returns amount only
+    public function getQuote(array $payload): float
     {
-        $fare = $this->fareMatrixRepository->findFare($originStopId, $destinationStopId, $seatType);
-
-        if (!$fare) {
-            throw new \RuntimeException('No fare configured for this route segment and seat type.');
-        }
-
-        return $fare; // gives TicketService the fare_id too, not just the amount
+        return $this->getFareRecord($payload)->amount;
     }
 
-    public function createFareRule(array $payload)
+    // $payload = ['fleet_id','base_fare','fare_per_km','seat_type']
+    public function createFareRule(array $payload): object
     {
-        return $this->fareRuleRepository->create($payload);
+        return $this->fareRuleRepository->create(array_merge(
+            $payload,
+            ['status' => 'active']
+        ));
     }
 }

@@ -11,6 +11,7 @@ class OnlinePayment extends Model
      */
     protected $table = 'online_payment';
 
+    protected $primaryKey = 'online_payment_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

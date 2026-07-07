@@ -10,6 +10,7 @@ use App\Http\Controllers\FareRuleController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\FleetLocationController;
 use Illuminate\Support\Facades\Route;
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33,8 +34,10 @@ Route::prefix('passengers')
         Route::put('profile', [PassengerController::class, 'update']);
 
         Route::get('tickets', [TicketController::class, 'myTickets']);
-        Route::get('fare/quote', [FareRuleController::class, 'quote']);
+        Route::post('fare/quote', [FareRuleController::class, 'quote']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
+        Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
+        Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
     });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -89,6 +92,7 @@ Route::prefix('driver')
         Route::get('trips/current', [TripController::class, 'currentTripDriver']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
+        Route::post('location', [FleetLocationController::class, 'updateLocation']);
     });
 
 // ══════════════════════════════════════════════════════════════════════

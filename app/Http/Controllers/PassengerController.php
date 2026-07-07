@@ -1,34 +1,27 @@
 <?php
-
 namespace App\Http\Controllers;
 
-use App\Http\Requests\PassengerStoreRequest;
+use App\Http\Requests\RegisterPassengerRequest;
+use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
-use App\Services\PassengerService; // Import the Resource here instead!
+use App\Services\PassengerService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class PassengerController extends Controller
 {
-    private PassengerService $passengerService;
-
-    public function __construct(PassengerService $passengerService)
+    public function __construct(private PassengerService $passengerService)
     {
-        $this->passengerService = $passengerService;
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(): JsonResponse
     {
-        $paginatedModels = $this->passengerService->listPassenger($request->input('per_page', 15));
-
-        // Transforms the paginated collection and automatically appends metadata
-        return response()->json(PassengerResource::collection($paginatedModels)->response()->getData(true));
+        $paginated = $this->passengerService->listPassenger(request()->input('per_page', 15));
+        return response()->json(PassengerResource::collection($paginated)->response()->getData(true));
     }
 
-    public function store(PassengerStoreRequest $request): JsonResponse
+    public function store(RegisterPassengerRequest $request): JsonResponse
     {
         $model = $this->passengerService->createPassenger($request->validated());
-
         $model->load('user');
         $token = $model->user->createToken('passenger-token')->plainTextToken;
 
@@ -41,28 +34,25 @@ class PassengerController extends Controller
     public function show(string $uuid): JsonResponse
     {
         $model = $this->passengerService->getPassenger($uuid);
-
         return response()->json(new PassengerResource($model), 200);
     }
 
-    public function update(Request $request, string $uuid): JsonResponse
+    public function update(UpdatePassengerProfileRequest $request, string $uuid): JsonResponse
     {
-        $model = $this->passengerService->updatePassenger($uuid, $request->all());
-
+        // Fixed: was $request->all() — now uses validated data only
+        $model = $this->passengerService->updatePassenger($uuid, $request->validated());
         return response()->json(new PassengerResource($model), 200);
     }
 
     public function destroy(string $uuid): JsonResponse
     {
         $this->passengerService->deletePassenger($uuid);
-
         return response()->json(['message' => 'Deleted successfully'], 200);
     }
 
     public function restore(string $uuid): JsonResponse
     {
         $model = $this->passengerService->restorePassenger($uuid);
-
         return response()->json([
             'message' => 'Restored successfully',
             'data' => new PassengerResource($model),

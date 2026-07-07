@@ -1,17 +1,15 @@
 <?php
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PassengerUser extends Model
 {
-    use HasUuids;
-
     protected $primaryKey = 'passenger_id';
 
-    // Keep incrementing true since your primary key is an auto-incrementing integer id
+    // Standard int PK — no HasUuids trait needed since passenger_uuid
+    // is generated manually in the repository, not by this trait
     public $incrementing = true;
     protected $keyType = 'int';
 
@@ -25,16 +23,8 @@ class PassengerUser extends Model
         'reward_points',
     ];
 
-    /**
-     * Set the custom column name for your system UUIDs
-     */
-    public function uniqueIds(): array
-    {
-        return ['passenger_uuid'];
-    }
-
     public function user()
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(User::class, 'user_id', 'user_id');
     }
 }

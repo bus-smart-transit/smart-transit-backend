@@ -10,6 +10,7 @@ class Fleet extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'fleets';
+    protected $primaryKey = 'fleet_id';
 
     /**
      * The attributes that are mass assignable from structural payloads.

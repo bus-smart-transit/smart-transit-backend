@@ -1,19 +1,15 @@
 <?php
-
 namespace App\Http\Controllers;
-
 use App\Services\RouteService;
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreRouteRequest;
+use App\Http\Requests\AddRouteStopRequest;
 use App\Traits\ApiResponse;
 
 class RouteController extends Controller
 {
     use ApiResponse;
-    private RouteService $routeService;
-
-    public function __construct(RouteService $routeService)
+    public function __construct(private RouteService $routeService)
     {
-        $this->routeService = $routeService;
     }
 
     public function index()
@@ -26,34 +22,18 @@ class RouteController extends Controller
         return $this->success($this->routeService->getRouteWithStops($routeId), 'Route retrieved successfully');
     }
 
-    public function store(Request $request)
+    public function store(StoreRouteRequest $request)
     {
-        $validated = $request->validate([
-            'origin' => 'required|string',
-            'destination' => 'required|string',
-            'route_name' => 'required|string',
-        ]);
-
-        return $this->success($this->routeService->createRoute($validated), 'Route created successfully');
+        return $this->success($this->routeService->createRoute($request->validated()), 'Route created successfully');
     }
 
-    // route_stop_table endpoints — folded into RouteController, no standalone controller.
-    public function addStop(Request $request, int $routeId)
+    // route_stop_table management — folded into RouteController, no separate controller
+    public function addStop(AddRouteStopRequest $request, int $routeId)
     {
-        $validated = $request->validate([
-            'stop_id' => 'required|integer|exists:stops,stop_id',
-            'stop_order' => 'required|integer',
-            'distance_from_origin_km' => 'required|numeric',
-        ]);
-
-        $routeStop = $this->routeService->addStopToRoute(
-            $routeId,
-            $validated['stop_id'],
-            $validated['stop_order'],
-            $validated['distance_from_origin_km'],
+        return $this->success(
+            $this->routeService->addStopToRoute($routeId, $request->validated()),
+            'Stop added to route successfully'
         );
-
-        return $this->success($routeStop, 'Stop added to route successfully');
     }
 
     public function removeStop(int $routeId, int $routeStopId)

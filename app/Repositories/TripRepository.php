@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Repositories;
-
 use App\Models\Trip;
 use Illuminate\Support\Collection;
 
@@ -15,19 +13,6 @@ class TripRepository
     public function findById(int $tripId): ?Trip
     {
         return Trip::with('fleetRoute.fleet')->find($tripId);
-    }
-
-    public function findActiveByFleetRoute(int $fleetRouteId): ?Trip
-    {
-        return Trip::where('fleet_route_id', $fleetRouteId)
-            ->whereIn('status', ['scheduled', 'boarding'])
-            ->latest('trip_date')
-            ->first();
-    }
-
-    public function listPaginated(int $perPage = 15): object
-    {
-        return Trip::with('fleetRoute')->latest('trip_date')->paginate($perPage);
     }
 
     public function listForDate(string $date): Collection
@@ -81,14 +66,11 @@ class TripRepository
     public function incrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
         $trip = Trip::find($tripId);
-        if (! $trip) {
+        if (!$trip)
             return false;
-        }
-
         $trip->current_seated_capacity += $seatedDelta;
         $trip->current_standing_capacity += $standingDelta;
         $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
-
         return $trip->save();
     }
 }

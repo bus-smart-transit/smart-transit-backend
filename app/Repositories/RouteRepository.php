@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Repositories;
-
 use App\Models\Route;
 use Illuminate\Support\Collection;
 
@@ -10,6 +8,11 @@ class RouteRepository
     public function create(array $payload): Route
     {
         return Route::create($payload);
+    }
+
+    public function findById(int $routeId): ?Route
+    {
+        return Route::find($routeId);
     }
 
     public function findWithStops(int $routeId): ?Route

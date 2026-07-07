@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -34,7 +33,9 @@ class User extends Authenticatable
         ];
     }
 
-    public function getIdAttribute()
+    // Accessor kept — makes Sanctum and any third-party packages that
+    // expect ->id work correctly with the custom PK column
+    public function getIdAttribute(): int
     {
         return $this->user_id;
     }

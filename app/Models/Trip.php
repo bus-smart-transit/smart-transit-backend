@@ -11,6 +11,7 @@ class Trip extends Model
      */
     protected $table = 'trips';
 
+    protected $primaryKey = 'trip_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

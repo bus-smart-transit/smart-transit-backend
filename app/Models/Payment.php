@@ -11,7 +11,9 @@ class Payment extends Model
      */
     protected $table = 'payments';
 
-    /**
+    protected $primaryKey = 'payment_id';
+
+    /** 
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [

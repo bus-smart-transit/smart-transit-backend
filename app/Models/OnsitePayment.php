@@ -11,6 +11,7 @@ class OnsitePayment extends Model
      */
     protected $table = 'onsite_payment';
 
+    protected $primaryKey = 'onsite_payment_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

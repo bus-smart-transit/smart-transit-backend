@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Repositories;
-
 use App\Models\FareRule;
 use Illuminate\Support\Collection;
 

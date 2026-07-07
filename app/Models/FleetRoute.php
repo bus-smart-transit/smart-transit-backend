@@ -10,6 +10,7 @@ class FleetRoute extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'fleets_routes';
+    protected $primaryKey = 'fleet_route_id';
 
     /**
      * The attributes that are mass assignable from structural payloads.

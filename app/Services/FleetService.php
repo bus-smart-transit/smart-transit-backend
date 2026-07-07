@@ -1,49 +1,37 @@
 <?php
-
 namespace App\Services;
-
 use App\Repositories\FleetRepository;
 use App\Repositories\FleetRouteRepository;
 
 class FleetService
 {
-    private FleetRepository $fleetRepository;
-    private FleetRouteRepository $fleetRouteRepository;
     public function __construct(
-        FleetRepository $fleetRepository,
-        FleetRouteRepository $fleetRouteRepository,
+        private FleetRepository $fleetRepository,
+        private FleetRouteRepository $fleetRouteRepository,
     ) {
-        $this->fleetRepository = $fleetRepository;
-        $this->fleetRouteRepository = $fleetRouteRepository;
     }
 
-    public function registerFleet(array $payload)
+    // $payload = ['company_user_id','plate_number','capacity','seated_capacity','standing_capacity']
+    public function registerFleet(array $payload, int $staffId): object
     {
-        return $this->fleetRepository->create([
-            'company_user_id' => $payload['company_user_id'],
-            'plate_number' => $payload['plate_number'],
-            'capacity' => $payload['capacity'],
-            'seated_capacity' => $payload['seated_capacity'],
-            'standing_capacity' => $payload['standing_capacity'],
-            'status' => 'active',
-        ]);
+        return $this->fleetRepository->create(array_merge(
+            $payload,
+            ['company_user_id' => $staffId],
+            ['status' => 'active']
+        ));
     }
 
-    public function listFleets()
+    public function listFleets(): object
     {
         return $this->fleetRepository->all();
     }
 
-    public function assignRouteToFleet(int $fleetId, int $routeId, string $startTime, string $endTime)
+    // $payload = ['route_id','start_time','end_time']
+    public function assignRouteToFleet(int $fleetId, array $payload): object
     {
-        return $this->fleetRouteRepository->create([
-            'fleet_id' => $fleetId,
-            'route_id' => $routeId,
-            'start_time' => $startTime,
-            'end_time' => $endTime,
-            'status' => 'active',
-        ]);
-        // After this, call FareCalculationService::recalculateForFleetRoute()
-        // with the new fleet_route_id so fares exist before trips run.
+        return $this->fleetRouteRepository->create(array_merge(
+            $payload,
+            ['fleet_id' => $fleetId, 'status' => 'active']
+        ));
     }
 }

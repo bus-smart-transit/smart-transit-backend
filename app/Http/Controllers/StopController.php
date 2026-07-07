@@ -1,19 +1,15 @@
 <?php
-
 namespace App\Http\Controllers;
-
 use App\Services\StopService;
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreStopRequest;
+use App\Http\Requests\UpdateStopRequest;
 use App\Traits\ApiResponse;
 
 class StopController extends Controller
 {
     use ApiResponse;
-    private StopService $stopService;
-
-    public function __construct(StopService $stopService)
+    public function __construct(private StopService $stopService)
     {
-        $this->stopService = $stopService;
     }
 
     public function index()
@@ -21,26 +17,14 @@ class StopController extends Controller
         return $this->success($this->stopService->listStops(), 'Stops retrieved successfully');
     }
 
-    public function store(Request $request)
+    public function store(StoreStopRequest $request)
     {
-        $validated = $request->validate([
-            'stop_name' => 'required|string',
-            'latitude' => 'required|numeric',
-            'longitude' => 'required|numeric',
-        ]);
-
-        return $this->success($this->stopService->createStop($validated), 'Stop created successfully');
+        return $this->success($this->stopService->createStop($request->validated()), 'Stop created successfully');
     }
 
-    public function update(Request $request, int $stopId)
+    public function update(UpdateStopRequest $request, int $stopId)
     {
-        $validated = $request->validate([
-            'stop_name' => 'sometimes|string',
-            'latitude' => 'sometimes|numeric',
-            'longitude' => 'sometimes|numeric',
-        ]);
-
-        return $this->success($this->stopService->updateStop($stopId, $validated), 'Stop updated successfully');
+        return $this->success($this->stopService->updateStop($stopId, $request->validated()), 'Stop updated successfully');
     }
 
     public function destroy(int $stopId)

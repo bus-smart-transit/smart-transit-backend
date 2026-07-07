@@ -85,7 +85,7 @@ class StaffService
         $user = $this->userRepository->create([
             'username' => $payload['username'] ?? explode('@', $payload['email'])[0],
             'email' => $payload['email'],
-            'password' => Hash::make($payload['password']),
+            'password' => $payload['password'],
             'role' => $targetRole,
         ]);
 

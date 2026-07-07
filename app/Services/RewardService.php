@@ -1,26 +1,39 @@
 <?php
-
 namespace App\Services;
 
-use App\Models\PassengerUser;
 use App\Repositories\RewardRepository;
 
 class RewardService
 {
-    private RewardRepository $rewardRepository;
-    public function __construct(RewardRepository $rewardRepository)
+    private const PESOS_PER_POINT = 20; // 1 point per ₱20 spent
+
+    public function __construct(private RewardRepository $rewardRepository)
     {
-        $this->rewardRepository = $rewardRepository;
     }
 
+    /**
+     * Called automatically inside TicketService::issueTicket()
+     * after a successful ticket purchase. Never called from a controller directly.
+     */
     public function awardPoints(int $passengerId, float $amountSpent): void
     {
-        $this->rewardRepository->awardPoints($passengerId, $amountSpent);
+        $points = (int) floor($amountSpent / self::PESOS_PER_POINT);
+
+        if ($points <= 0)
+            return;
+
+        $this->rewardRepository->incrementPoints($passengerId, $points);
     }
 
     public function redeemPoints(int $passengerId, int $points): bool
     {
-        return $this->rewardRepository->redeemPoints($passengerId, $points);
+        $currentPoints = $this->rewardRepository->getPoints($passengerId);
+
+        if ($currentPoints < $points) {
+            return false;
+        }
+
+        $this->rewardRepository->decrementPoints($passengerId, $points);
         return true;
     }
 }

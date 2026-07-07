@@ -20,6 +20,7 @@ return new class extends Migration {
             $table->string('status');
             $table->string('payment_uuid')->unique();
             $table->boolean('is_valid')->default(true);
+            $table->string('gateway_reference')->nullable()->unique()->after('transaction_reference');
             $table->timestamps();
         });
     }

@@ -11,6 +11,7 @@ class FareMatrix extends Model
      */
     protected $table = 'fare_matrix';
 
+    protected $primaryKey = 'fare_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

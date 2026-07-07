@@ -10,7 +10,7 @@ class Route extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'routes';
-
+    protected $primaryKey = 'route_id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

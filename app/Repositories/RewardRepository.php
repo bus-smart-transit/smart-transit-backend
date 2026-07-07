@@ -1,34 +1,25 @@
 <?php
-
 namespace App\Repositories;
 
 use App\Models\PassengerUser;
 
 class RewardRepository
 {
-    private const PESOS_PER_POINT = 20; // 1 point per ₱20 spent — adjust as needed
-
-    public function awardPoints(int $passengerId, float $amountSpent): void
+    public function incrementPoints(int $passengerId, int $points): void
     {
-        $points = floor($amountSpent / self::PESOS_PER_POINT);
-        if ($points <= 0) {
-            return;
-        }
-
-        $passenger = PassengerUser::where('passenger_id', $passengerId)->first();
-        if ($passenger) {
-            $passenger->increment('reward_points', $points);
-        }
+        PassengerUser::where('passenger_id', $passengerId)
+            ->increment('reward_points', $points);
     }
 
-    public function redeemPoints(int $passengerId, int $points): bool
+    public function decrementPoints(int $passengerId, int $points): void
     {
-        $passenger = PassengerUser::where('passenger_id', $passengerId)->first();
-        if (!$passenger || $passenger->reward_points < $points) {
-            return false;
-        }
+        PassengerUser::where('passenger_id', $passengerId)
+            ->decrement('reward_points', $points);
+    }
 
-        $passenger->decrement('reward_points', $points);
-        return true;
+    public function getPoints(int $passengerId): float
+    {
+        return PassengerUser::where('passenger_id', $passengerId)
+            ->value('reward_points') ?? 0;
     }
 }

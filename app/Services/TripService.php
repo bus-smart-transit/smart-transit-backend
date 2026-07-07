@@ -1,133 +1,112 @@
 <?php
-
 namespace App\Services;
-
-use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
+use App\Repositories\StaffRepository;
 use Illuminate\Validation\ValidationException;
 
 class TripService
 {
-    private TripRepository $tripRepository;
-
-    private StaffRepository $staffRepository;
-
     public function __construct(
-        TripRepository $tripRepository,
-        StaffRepository $staffRepository,
+        private TripRepository $tripRepository,
+        private StaffRepository $StaffRepository,
     ) {
-        $this->tripRepository = $tripRepository;
-        $this->staffRepository = $staffRepository;
     }
 
-    public function listTrip(int $perPage = 15): object
-    {
-        return $this->tripRepository->listPaginated($perPage);
-    }
-
+    // $payload = ['fleet_route_id','trip_date','company_user_id']
     public function scheduleTrip(array $payload): object
     {
-        return $this->tripRepository->create([
-            'fleet_route_id' => $payload['fleet_route_id'],
-            'company_user_id' => $payload['company_user_id'],
-            'trip_date' => $payload['trip_date'],
+        return $this->tripRepository->create(array_merge($payload, [
             'status' => 'scheduled',
             'current_seated_capacity' => 0,
             'current_standing_capacity' => 0,
             'total_occupancy' => 0,
-        ]);
+        ]));
     }
 
     public function startBoarding(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'boarding');
-
         return $this->tripRepository->findById($tripId);
     }
 
     public function departTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'departed');
-
         return $this->tripRepository->findById($tripId);
     }
 
     public function completeTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'completed');
-
         return $this->tripRepository->findById($tripId);
     }
 
-    public function assignDriver(array $payload): void
+    // $payload = ['driver_id']
+    public function assignDriver(int $tripId, array $payload): void
     {
-        // Confirm the company_user being assigned is actually a driver
-        $driver = $this->staffRepository->findById($payload['driver_id']);
+        $driver = $this->StaffRepository->findById($payload['driver_id']);
 
-        if (! $driver || $driver->user->role !== 'driver') {
+        if (!$driver || $driver->user->role !== 'driver') {
             throw ValidationException::withMessages([
                 'driver_id' => ['The selected user is not a driver.'],
             ]);
         }
 
-        $this->tripRepository->assignDriver($payload['trip_id'], $payload['driver_id']);
+        $this->tripRepository->assignDriver($tripId, $payload['driver_id']);
     }
 
-    public function assignConductor(array $payload): void
+    // $payload = ['conductor_id']
+    public function assignConductor(int $tripId, array $payload): void
     {
-        // Confirm the company_user being assigned is actually a conductor
-        $conductor = $this->staffRepository->findById($payload['conductor_id']);
+        $conductor = $this->StaffRepository->findById($payload['conductor_id']);
 
-        if (! $conductor || $conductor->user->role !== 'conductor') {
+        if (!$conductor || $conductor->user->role !== 'conductor') {
             throw ValidationException::withMessages([
                 'conductor_id' => ['The selected user is not a conductor.'],
             ]);
         }
 
-        $this->tripRepository->assignConductor($payload['trip_id'], $payload['conductor_id']);
+        $this->tripRepository->assignConductor($tripId, $payload['conductor_id']);
     }
 
-    public function getDriverTrips(int $driverId): object
+    public function getDriverTrips(int $driverCompanyUserId): object
     {
-        return $this->tripRepository->listByDriver($driverId);
+        return $this->tripRepository->listByDriver($driverCompanyUserId);
     }
 
-    public function getCurrentTripForDriver(int $driverId): ?object
+    public function getCurrentTripForDriver(int $driverCompanyUserId): ?object
     {
-        return $this->tripRepository->findCurrentByDriver($driverId);
+        return $this->tripRepository->findCurrentByDriver($driverCompanyUserId);
     }
 
-    public function getCurrentTripForConductor(int $conductorId): ?object
+    public function getCurrentTripForConductor(int $conductorCompanyUserId): ?object
     {
-        return $this->tripRepository->findCurrentByConductor($conductorId);
+        return $this->tripRepository->findCurrentByConductor($conductorCompanyUserId);
     }
 
-    public function recordBoarding(array $payload): object
+    // Called internally by TicketService — not from any controller
+    // $seatType = 'seated' | 'standing'
+    public function recordBoarding(int $tripId, string $seatType): object
     {
-        $trip = $this->tripRepository->findById($payload['trip_id']);
+        $trip = $this->tripRepository->findById($tripId);
 
-        if (! $trip) {
-            throw ValidationException::withMessages([
-                'trip' => ['Trip not found.'],
-            ]);
+        if (!$trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
 
         $fleet = $trip->fleetRoute->fleet;
-        $seatedDelta = $payload['seat_type'] === 'seated' ? 1 : 0;
-        $standingDelta = $payload['seat_type'] === 'standing' ? 1 : 0;
+        $seatedDelta = $seatType === 'seated' ? 1 : 0;
+        $standingDelta = $seatType === 'standing' ? 1 : 0;
 
-        $wouldExceed = $payload['seat_type'] === 'seated'
+        $wouldExceed = $seatType === 'seated'
             ? $trip->current_seated_capacity + 1 > $fleet->seated_capacity
             : $trip->current_standing_capacity + 1 > $fleet->standing_capacity;
 
         if ($wouldExceed) {
-            throw ValidationException::withMessages([
-                'capacity' => ['This trip is full.'],
-            ]);
+            throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
         }
 
-        $this->tripRepository->incrementOccupancy($payload['trip_id'], $seatedDelta, $standingDelta);
-
-        return $this->tripRepository->findById($payload['trip_id']);
+        $this->tripRepository->incrementOccupancy($tripId, $seatedDelta, $standingDelta);
+        return $this->tripRepository->findById($tripId);
     }
 }

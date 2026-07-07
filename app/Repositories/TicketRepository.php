@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Repositories;
-
 use App\Models\Ticket;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -16,7 +14,9 @@ class TicketRepository
 
     public function findByUuid(string $uuid): ?Ticket
     {
-        return Ticket::with(['trip', 'fare', 'payment'])->where('ticket_uuid', $uuid)->first();
+        return Ticket::with(['trip.fleetRoute.route', 'fare', 'payment'])
+            ->where('ticket_uuid', $uuid)
+            ->first();
     }
 
     public function findByPassenger(int $passengerId): Collection

@@ -1,49 +1,43 @@
 <?php
-
 namespace App\Services;
-
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 
 class RouteService
 {
-    private RouteRepository $routeRepository;
-    private RouteStopRepository $routeStopRepository;
     public function __construct(
-        RouteRepository $routeRepository,
-        RouteStopRepository $routeStopRepository,
+        private RouteRepository $routeRepository,
+        private RouteStopRepository $routeStopRepository,
     ) {
-        $this->routeRepository = $routeRepository;
-        $this->routeStopRepository = $routeStopRepository;
     }
 
-    public function createRoute(array $payload)
+    // $payload = ['origin','destination','route_name']
+    public function createRoute(array $payload): object
     {
         return $this->routeRepository->create($payload);
     }
 
-    public function getRouteWithStops(int $routeId)
-    {
-        return $this->routeRepository->findWithStops($routeId);
-    }
-
-    public function listRoutes()
+    public function listRoutes(): object
     {
         return $this->routeRepository->all();
     }
 
-    // route_stop_table is folded in here — no separate controller/service for it.
-    public function addStopToRoute(int $routeId, int $stopId, int $stopOrder, float $distanceFromOriginKm)
+    public function getRouteWithStops(int $routeId): ?object
     {
-        return $this->routeStopRepository->create([
-            'route_id' => $routeId,
-            'stop_id' => $stopId,
-            'stop_order' => $stopOrder,
-            'distance_from_origin_km' => $distanceFromOriginKm,
-        ]);
+        return $this->routeRepository->findWithStops($routeId);
     }
 
-    public function removeStopFromRoute(int $routeStopId)
+    // $payload = ['stop_id','stop_order','distance_from_origin_km']
+    // route_stop_table is folded into RouteService — no separate service/controller
+    public function addStopToRoute(int $routeId, array $payload): object
+    {
+        return $this->routeStopRepository->create(array_merge(
+            $payload,
+            ['route_id' => $routeId]
+        ));
+    }
+
+    public function removeStopFromRoute(int $routeStopId): bool
     {
         return $this->routeStopRepository->delete($routeStopId);
     }

@@ -1,7 +1,5 @@
 <?php
-
 namespace App\Services;
-
 use App\Repositories\FleetRouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\FareRuleRepository;
@@ -9,26 +7,19 @@ use App\Repositories\FareMatrixRepository;
 
 class FareCalculationService
 {
-    private FleetRouteRepository $fleetRouteRepository;
-    private RouteStopRepository $routeStopRepository;
-    private FareRuleRepository $fareRuleRepository;
-    private FareMatrixRepository $fareMatrixRepository;
     public function __construct(
-        FleetRouteRepository $fleetRouteRepository,
-        RouteStopRepository $routeStopRepository,
-        FareRuleRepository $fareRuleRepository,
-        FareMatrixRepository $fareMatrixRepository,
+        private FleetRouteRepository $fleetRouteRepository,
+        private RouteStopRepository $routeStopRepository,
+        private FareRuleRepository $fareRuleRepository,
+        private FareMatrixRepository $fareMatrixRepository,
     ) {
-        $this->fleetRouteRepository = $fleetRouteRepository;
-        $this->routeStopRepository = $routeStopRepository;
-        $this->fareRuleRepository = $fareRuleRepository;
-        $this->fareMatrixRepository = $fareMatrixRepository;
     }
 
     /**
-     * Recomputes every stop-pair fare for one fleet's assignment to one
-     * route. Call when a fleet-route is created, or when that fleet's
-     * fare_rules change — never at booking time.
+     * Precomputes every stop-pair fare for one fleet-route.
+     * Called by FleetController::assignRoute() automatically after assignment,
+     * and manually by FareController::recalculate().
+     * NEVER call this at booking time.
      */
     public function recalculateForFleetRoute(int $fleetRouteId): void
     {
@@ -39,12 +30,13 @@ class FareCalculationService
         foreach ($rules as $rule) {
             foreach ($stops as $origin) {
                 foreach ($stops as $destination) {
-                    if ($origin->stop_id === $destination->stop_id) {
+                    if ($origin->stop_id === $destination->stop_id)
                         continue;
-                    }
 
-                    $distanceKm = abs($destination->distance_from_origin_km - $origin->distance_from_origin_km);
-                    $amount = $this->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm);
+                    $distanceKm = abs(
+                        $destination->distance_from_origin_km -
+                        $origin->distance_from_origin_km
+                    );
 
                     $this->fareMatrixRepository->upsert([
                         'origin_stop_id' => $origin->stop_id,
@@ -52,7 +44,7 @@ class FareCalculationService
                         'seat_type' => $rule->seat_type,
                         'fleet_id' => $fleetRoute->fleet_id,
                         'fare_rule_id' => $rule->fare_rule_id,
-                        'amount' => $amount,
+                        'amount' => $this->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm),
                         'status' => 'active',
                     ]);
                 }
@@ -60,6 +52,8 @@ class FareCalculationService
         }
     }
 
+    // Continuous per-km model. To use stepped 5km blocks instead:
+    // return round($baseFare + (ceil($distanceKm / 5) * $farePerKm), 2);
     private function computeFare(float $baseFare, float $farePerKm, float $distanceKm): float
     {
         return round($baseFare + ($distanceKm * $farePerKm), 2);

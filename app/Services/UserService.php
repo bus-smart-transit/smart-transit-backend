@@ -1,62 +1,50 @@
 <?php
-
 namespace App\Services;
 
-use App\Http\Resources\UserResource;
 use App\Repositories\UserRepository;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class UserService
 {
-    private UserRepository $userRepository;
-
-    public function __construct(UserRepository $userRepository)
+    public function __construct(private UserRepository $userRepository)
     {
-        $this->userRepository = $userRepository;
     }
 
-    public function createUser(array $payload)
+    // $payload = ['email', 'password']
+    public function loginUser(array $payload): array
     {
-        $user = $this->userRepository->create($payload);
+        $user = $this->userRepository->findByField('email', $payload['email']);
 
-        return new UserResource($user);
-    }
-
-    public function loginUser(array $credentials)
-    {
-        $user = $this->userRepository->findByField('email', $credentials['email']);
-
-        if (!$user || !Hash::check($credentials['password'], $user->password)) {
+        if (!$user || !Hash::check($payload['password'], $user->password)) {
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password credentials provided.'],
             ]);
         }
 
-        // Enforce implicit check safeguarding your system dashboard routes 
-        // if ($user->role !== 'passenger') {
-        //     throw ValidationException::withMessages([
-        //         'email' => ['Access unauthorized via passenger terminal app.'],
-        //     ]);
-        // }
+        if ($user->role !== 'passenger') {
+            throw ValidationException::withMessages([
+                'email' => ['Access unauthorized via passenger terminal app.'],
+            ]);
+        }
 
         return [
             'user' => $user,
-            'token' => $user->createToken('passenger-session-token')->plainTextToken
+            'token' => $user->createToken('passenger-session-token')->plainTextToken,
         ];
     }
 
-    public function getPassengerProfile(object $user)
+    public function getPassengerProfile(object $user): ?object
     {
-        return $this->userRepository->getPassengerProfile($user->id);
+        // Uses user_id explicitly — does not rely on the id accessor
+        return $this->userRepository->getPassengerProfile($user->user_id);
     }
 
-    public function logoutUser(object $user)
+    public function logoutUser(object $user): void
     {
+        // Returns void — HTTP response is the controller's job, not the service's
         if ($user->currentAccessToken()) {
             $user->currentAccessToken()->delete();
         }
-
-        return response()->json(['message' => 'Logged out successfully'], 200);
     }
 }
