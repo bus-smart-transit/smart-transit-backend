@@ -7,24 +7,31 @@ use App\Http\Controllers\StopController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FareRuleController;
+use App\Http\Controllers\PayMongoController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\FleetLocationController;
 use Illuminate\Support\Facades\Route;
 
-// ══════════════════════════════════════════════════════════════════════
 // PUBLIC — no auth required
-// ══════════════════════════════════════════════════════════════════════
 
 Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/register', [PassengerController::class, 'store']);
 Route::post('staff/login', [StaffAuthController::class, 'login']);
+Route::post('fare/quote', [FareRuleController::class, 'quote']);
+Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
+Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
 
-// ══════════════════════════════════════════════════════════════════════
+//PAYMONGO / PAYMENT 
+
+Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
+    ->middleware('auth.optional');
+Route::get('tickets/lookup', [TicketController::class, 'guestLookup']);
+Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
+
 // PASSENGER
 // Can: view own profile, get fare quotes, buy tickets, view own tickets
-// ══════════════════════════════════════════════════════════════════════
 
 Route::prefix('passengers')
     ->middleware(['auth:sanctum', 'role:passenger'])
@@ -34,18 +41,16 @@ Route::prefix('passengers')
         Route::put('profile', [PassengerController::class, 'update']);
 
         Route::get('tickets', [TicketController::class, 'myTickets']);
-        Route::post('fare/quote', [FareRuleController::class, 'quote']);
-        Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
-        Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
-        Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
+        // Route::post('fare/quote', [FareRuleController::class, 'quote']);
+        // Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
+        // Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
+        // Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
     });
 
-// ══════════════════════════════════════════════════════════════════════
 // BUS OPERATOR
 // Can: manage fleets, assign routes, set fares, schedule trips,
 //      assign drivers and conductors, create driver/conductor accounts,
 //      view drivers and conductors under them
-// ══════════════════════════════════════════════════════════════════════
 
 Route::prefix('operator')
     ->middleware(['auth:sanctum', 'role:operator'])
@@ -76,11 +81,9 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
     });
 
-// ══════════════════════════════════════════════════════════════════════
 // DRIVER
 // Can: view their assigned trips, update trip status (depart / complete)
 // Cannot: create accounts, manage fleets, sell tickets
-// ══════════════════════════════════════════════════════════════════════
 
 Route::prefix('driver')
     ->middleware(['auth:sanctum', 'role:driver'])
@@ -95,11 +98,9 @@ Route::prefix('driver')
         Route::post('location', [FleetLocationController::class, 'updateLocation']);
     });
 
-// ══════════════════════════════════════════════════════════════════════
 // CONDUCTOR
 // Can: view current trip, scan/validate QR tickets, record onsite cash sales
 // Cannot: create accounts, manage fleets, change trip status
-// ══════════════════════════════════════════════════════════════════════
 
 Route::prefix('conductor')
     ->middleware(['auth:sanctum', 'role:conductor'])
@@ -112,10 +113,8 @@ Route::prefix('conductor')
         Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);
     });
 
-// ══════════════════════════════════════════════════════════════════════
 // ADMIN (developers)
 // Full access to everything — no restrictions
-// ══════════════════════════════════════════════════════════════════════
 
 Route::prefix('admin')
     ->middleware(['auth:sanctum', 'role:admin'])

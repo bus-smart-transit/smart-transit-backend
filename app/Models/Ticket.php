@@ -25,6 +25,7 @@ class Ticket extends Model
         'status',
         'amount',
         'boarded_at',
+        'seat_type',
     ];
 
     /**

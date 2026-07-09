@@ -17,6 +17,16 @@ class PaymentRepository
         return Payment::with('tickets')->find($paymentId);
     }
 
+    public function findByGatewayReference(string $gatewayReference): ?Payment
+    {
+        return Payment::where('gateway_reference', $gatewayReference)->first();
+    }
+
+    public function findByPaymentIntentId(string $paymentIntentId): ?Payment
+    {
+        return Payment::where('payment_intent_id', $paymentIntentId)->first();
+    }
+
     public function markStatus(int $paymentId, string $status, bool $isValid = true): bool
     {
         return Payment::where('payment_id', $paymentId)->update([

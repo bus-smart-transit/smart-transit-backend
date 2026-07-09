@@ -3,6 +3,7 @@ namespace App\Services;
 use App\Repositories\TripRepository;
 use App\Repositories\StaffRepository;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
 
 class TripService
 {
@@ -84,29 +85,59 @@ class TripService
         return $this->tripRepository->findCurrentByConductor($conductorCompanyUserId);
     }
 
-    // Called internally by TicketService — not from any controller
-    // $seatType = 'seated' | 'standing'
+    /**
+     * Called internally by TicketService — not from any controller.
+     * $seatType = 'seated' | 'standing'
+     *
+     * Wrapped in its own transaction with a row lock (findByIdForUpdate) so
+     * concurrent reservations against the same trip can't both read stale
+     * capacity and both pass the "would exceed" check.
+     */
     public function recordBoarding(int $tripId, string $seatType): object
     {
-        $trip = $this->tripRepository->findById($tripId);
+        return DB::transaction(function () use ($tripId, $seatType) {
+            $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
-        if (!$trip) {
-            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
-        }
+            if (!$trip) {
+                throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+            }
 
-        $fleet = $trip->fleetRoute->fleet;
-        $seatedDelta = $seatType === 'seated' ? 1 : 0;
-        $standingDelta = $seatType === 'standing' ? 1 : 0;
+            $fleet = $trip->fleetRoute->fleet;
+            $seatedDelta = $seatType === 'seated' ? 1 : 0;
+            $standingDelta = $seatType === 'standing' ? 1 : 0;
 
-        $wouldExceed = $seatType === 'seated'
-            ? $trip->current_seated_capacity + 1 > $fleet->seated_capacity
-            : $trip->current_standing_capacity + 1 > $fleet->standing_capacity;
+            $wouldExceed = $seatType === 'seated'
+                ? $trip->current_seated_capacity + 1 > $fleet->seated_capacity
+                : $trip->current_standing_capacity + 1 > $fleet->standing_capacity;
 
-        if ($wouldExceed) {
-            throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
-        }
+            if ($wouldExceed) {
+                throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
+            }
 
-        $this->tripRepository->incrementOccupancy($tripId, $seatedDelta, $standingDelta);
-        return $this->tripRepository->findById($tripId);
+            $this->tripRepository->incrementOccupancy($tripId, $seatedDelta, $standingDelta);
+            return $this->tripRepository->findById($tripId);
+        });
+    }
+
+    /**
+     * Inverse of recordBoarding() — releases a previously held seat/standing
+     * slot. Called when a pending online payment fails or its hold expires
+     * without ever becoming a ticket.
+     */
+    public function releaseBoarding(int $tripId, string $seatType): object
+    {
+        return DB::transaction(function () use ($tripId, $seatType) {
+            $trip = $this->tripRepository->findByIdForUpdate($tripId);
+
+            if (!$trip) {
+                throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+            }
+
+            $seatedDelta = $seatType === 'seated' ? 1 : 0;
+            $standingDelta = $seatType === 'standing' ? 1 : 0;
+
+            $this->tripRepository->decrementOccupancy($tripId, $seatedDelta, $standingDelta);
+            return $this->tripRepository->findById($tripId);
+        });
     }
 }

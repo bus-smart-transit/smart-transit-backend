@@ -19,6 +19,7 @@ return new class extends Migration {
             $table->foreignId('passenger_id')->nullable()->constrained('passenger_users', 'passenger_id');
             $table->string('ticket_uuid')->unique(); // already your per-ticket reference number
             $table->string('status');
+            $table->string('seat_type');
             $table->decimal('amount'); // this ticket's individual frozen price
             $table->timestamp('boarded_at')->nullable();
             $table->timestamps();

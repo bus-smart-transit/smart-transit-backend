@@ -15,12 +15,18 @@ class PaymentController extends Controller
     // Passenger: buy one or more tickets in one transaction
     public function checkoutOnline(OnlineCheckoutRequest $request)
     {
-        $passenger = $request->user()->passengerProfile;
-        $result = $this->paymentService->checkoutOnline(
-            $passenger->passenger_id,
-            $request->validated()
-        );
-        return $this->success($result, 'Checkout successful');
+        $passenger = $request->user()?->passengerProfile;
+        $passengerId = $passenger?->passenger_id;
+
+        if ($request->user() && !$passengerId) {
+            //TEST
+            return $this->error("Account is invalid. Please log out and try again.");
+        }
+
+        $guestEmail = $passengerId ? null : $request->validated('guest_email');
+
+        $result = $this->paymentService->checkoutOnline($passengerId, $guestEmail, $request->validated());
+        return $this->success($result, 'Checkout initiated');
     }
 
     // Conductor: record an onsite cash sale (one or more tickets)

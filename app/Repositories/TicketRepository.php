@@ -39,4 +39,14 @@ class TicketRepository
             'boarded_at' => now(),
         ]) > 0;
     }
+
+    public function findByTransactionAndEmail(string $transactionReference, string $email): Collection
+    {
+        return Ticket::with('payment')
+            ->whereHas('payment', function ($q) use ($transactionReference, $email) {
+                $q->where('transaction_reference', $transactionReference)
+                    ->where('guest_email', $email);
+            })
+            ->get();
+    }
 }

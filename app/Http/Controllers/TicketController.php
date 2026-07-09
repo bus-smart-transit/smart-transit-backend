@@ -2,6 +2,7 @@
 namespace App\Http\Controllers;
 use App\Services\TicketService;
 use App\Http\Requests\ScanTicketRequest;
+use App\Http\Requests\GuestTicketLookupRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -27,5 +28,21 @@ class TicketController extends Controller
     {
         $ticket = $this->ticketService->validateScan($request->validated());
         return $this->success($ticket, 'Ticket validated and boarded successfully');
+    }
+
+    // Public route — lets a guest (no account) recover their ticket(s)
+    // using the transaction reference + email they provided at checkout.
+    public function guestLookup(GuestTicketLookupRequest $request)
+    {
+        $tickets = $this->ticketService->findByTransactionAndEmail(
+            $request->validated('transaction_reference'),
+            $request->validated('email'),
+        );
+
+        if ($tickets->isEmpty()) {
+            return $this->error('No tickets found for that reference and email.', 404);
+        }
+
+        return $this->success($tickets, 'Tickets retrieved successfully');
     }
 }

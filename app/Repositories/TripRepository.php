@@ -15,6 +15,16 @@ class TripRepository
         return Trip::with('fleetRoute.fleet')->find($tripId);
     }
 
+    /**
+     * Same as findById(), but locks the row (SELECT ... FOR UPDATE) so
+     * concurrent capacity checks against the same trip serialize instead of
+     * racing. Must be called inside a DB::transaction().
+     */
+    public function findByIdForUpdate(int $tripId): ?Trip
+    {
+        return Trip::with('fleetRoute.fleet')->lockForUpdate()->find($tripId);
+    }
+
     public function listForDate(string $date): Collection
     {
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
@@ -70,6 +80,21 @@ class TripRepository
             return false;
         $trip->current_seated_capacity += $seatedDelta;
         $trip->current_standing_capacity += $standingDelta;
+        $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
+        return $trip->save();
+    }
+
+    /**
+     * Inverse of incrementOccupancy() — releases previously held capacity.
+     * Floored at 0 so a duplicate release call can't push counts negative.
+     */
+    public function decrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
+    {
+        $trip = Trip::find($tripId);
+        if (!$trip)
+            return false;
+        $trip->current_seated_capacity = max(0, $trip->current_seated_capacity - $seatedDelta);
+        $trip->current_standing_capacity = max(0, $trip->current_standing_capacity - $standingDelta);
         $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
         return $trip->save();
     }

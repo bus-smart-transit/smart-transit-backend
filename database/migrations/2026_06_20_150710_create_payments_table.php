@@ -21,6 +21,9 @@ return new class extends Migration {
             $table->string('payment_uuid')->unique();
             $table->boolean('is_valid')->default(true);
             $table->string('gateway_reference')->nullable()->unique()->after('transaction_reference');
+            $table->string('payment_intent_id')->nullable();
+            $table->json('items_payload')->nullable();
+            $table->timestamp('hold_expires_at')->nullable();
             $table->timestamps();
         });
     }

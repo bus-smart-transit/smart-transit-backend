@@ -25,6 +25,11 @@ class Payment extends Model
         'status',
         'payment_uuid',
         'is_valid',
+        'guest_email',
+        'gateway_reference',
+        'payment_intent_id',
+        'items_payload',
+        'hold_expires_at'
     ];
 
     /**
@@ -36,6 +41,8 @@ class Payment extends Model
     {
         return [
             'payment_created' => 'datetime',
+            'hold_expires_at' => 'datetime',
+            'items_payload' => 'json'
         ];
     }
     public function tickets()
