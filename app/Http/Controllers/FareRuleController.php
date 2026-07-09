@@ -4,6 +4,7 @@ use App\Services\FareCalculationService;
 use App\Services\FareRuleService;
 use App\Http\Requests\StoreFareRuleRequest;
 use App\Http\Requests\FareQuoteRequest;
+use App\Http\Requests\FareQuoteFromCoordinatesRequest;
 use App\Traits\ApiResponse;
 
 class FareRuleController extends Controller
@@ -33,5 +34,15 @@ class FareRuleController extends Controller
     {
         $amount = $this->fareRuleService->getQuote($request->validated());
         return $this->success(['amount' => $amount], 'Fare retrieved successfully');
+    }
+
+    public function quoteByLocation(FareQuoteFromCoordinatesRequest $request)
+    {
+        try {
+            $amount = $this->fareRuleService->getQuoteFromCoordinates($request->validated());
+            return $this->success(['amount' => $amount], 'Fare retrieved successfully');
+        } catch (\RuntimeException $e) {
+            return $this->error($e->getMessage(), 422);
+        }
     }
 }

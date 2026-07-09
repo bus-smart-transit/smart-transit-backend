@@ -20,6 +20,7 @@ Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/register', [PassengerController::class, 'store']);
 Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
+Route::post('fare/quote-by-location', [FareRuleController::class, 'quoteByLocation']);
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
 

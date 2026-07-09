@@ -14,6 +14,8 @@ return new class extends Migration {
             $table->id('trip_id');
             $table->foreignId('fleet_route_id')->constrained('fleets_routes', 'fleet_route_id');
             $table->foreignId('company_user_id')->constrained('company_users', 'company_user_id');
+            $table->foreignId('driver_id')->constrained('company_users', 'company_user_id');
+            $table->foreign('conductor_id')->constrained('company_users', 'company_user_id');
             $table->date('trip_date');
             $table->string('status');
             $table->bigInteger('current_seated_capacity');

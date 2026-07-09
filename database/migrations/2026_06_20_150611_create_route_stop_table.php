@@ -10,7 +10,7 @@ return new class extends Migration {
      */
     public function up(): void
     {
-        Schema::create('route_stop_table', function (Blueprint $table) {
+        Schema::create('route_stop', function (Blueprint $table) {
             $table->id();
             $table->foreignId('stop_id')->constrained('stops', 'stop_id')->onDelete('cascade');
             $table->foreignId('route_id')->constrained('routes', 'route_id')->onDelete('cascade');
