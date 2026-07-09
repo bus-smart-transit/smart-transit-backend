@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Services\PaymentService;
 use App\Services\PayMongoService;
-use App\Services\TicketService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -13,7 +12,6 @@ class PayMongoController extends Controller
     public function __construct(
         private PayMongoService $payMongoService,
         private PaymentService $paymentService,
-        private TicketService $ticketService,
     ) {
     }
 
@@ -40,6 +38,11 @@ class PayMongoController extends Controller
         return response()->json(['message' => 'Webhook processed'], 200);
     }
 
+    /**
+     * Normalizes $event->resource into a plain array regardless of whether the SDK
+     * returned an object or an array for this particular event type — avoids
+     * fragile property-vs-array-access assumptions entirely.
+     */
     private function resourceToArray(mixed $resource): array
     {
         if (is_array($resource)) {
@@ -53,6 +56,15 @@ class PayMongoController extends Controller
         return [];
     }
 
+    /**
+     * payment.paid / payment.failed resources carry a pay_... id, which we
+     * never store, and don't reliably carry back the metadata we attached at
+     * checkout-session creation (observed: payment.failed often has
+     * metadata === null). So we try metadata first, then fall back to
+     * matching on payment_intent_id, which IS reliably present on both event
+     * types and which we store on the payments row at checkout-session
+     * creation time (see PaymentService::checkoutOnline).
+     */
     private function resolvePaymentFromMetadata(array $resource): ?object
     {
         $paymentId = $resource['attributes']['metadata']['payment_id'] ?? null;
@@ -89,28 +101,11 @@ class PayMongoController extends Controller
             return;
         }
 
-        // Idempotency guard: if this webhook is ever delivered more than
-        // once (PayMongo, like most providers, doesn't guarantee exactly-once
-        // delivery), don't re-issue tickets or re-reserve nothing — just
-        // make sure the payment is marked paid and stop.
-        if ($payment->tickets()->exists()) {
-            Log::info('PayMongo webhook: tickets already issued for this payment, skipping.', ['payment_id' => $payment->payment_id]);
-            $this->paymentService->confirmOnlinePayment($payment->payment_id);
-            return;
-        }
-
-        $this->paymentService->confirmOnlinePayment($payment->payment_id);
-
-        $passengerId = $payment->onlinePayment?->passenger_id;
-
-        foreach ($payment->items_payload ?? [] as $reservedItem) {
-            $this->ticketService->finalizeTicket($reservedItem, $passengerId, $payment->payment_id);
-        }
+        $this->paymentService->finalizeOnlinePayment($payment);
 
         Log::info('Payment confirmed via webhook, tickets issued.', [
             'payment_id' => $payment->payment_id,
             'session_id' => $sessionId,
-            'ticket_count' => count($payment->items_payload ?? []),
         ]);
     }
 
@@ -131,18 +126,7 @@ class PayMongoController extends Controller
             return;
         }
 
-        // Idempotency guard: don't release capacity twice if this webhook
-        // somehow arrives more than once.
-        if ($payment->status === 'failed') {
-            Log::info('PayMongo webhook: payment already marked failed, skipping duplicate release.', ['payment_id' => $payment->payment_id]);
-            return;
-        }
-
-        $this->paymentService->failOnlinePayment($payment->payment_id);
-
-        foreach ($payment->items_payload ?? [] as $reservedItem) {
-            $this->ticketService->releaseTicketHold($reservedItem);
-        }
+        $this->paymentService->failOnlinePaymentWithReleases($payment);
 
         Log::info('Payment failed via webhook, held seats released.', [
             'payment_id' => $payment->payment_id,

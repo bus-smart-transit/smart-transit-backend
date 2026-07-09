@@ -80,6 +80,7 @@ class TicketService
             'passenger_id' => $passengerId,
             'status' => 'issued',
             'amount' => $reserved['amount'],
+            'seat_type' => $reserved['seat_type'],
         ]);
 
         if ($passengerId) {
