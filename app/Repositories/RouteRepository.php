@@ -12,7 +12,11 @@ class RouteRepository
 
     public function findById(int $routeId): ?Route
     {
-        return Route::find($routeId);
+        return Route::with([
+            'routeStops' => function ($q) {
+                $q->orderBy('stop_order')->with('stop');
+            }
+        ])->find($routeId);
     }
 
     public function findWithStops(int $routeId): ?Route
@@ -33,5 +37,14 @@ class RouteRepository
     public function delete(int $routeId): bool
     {
         return Route::where('route_id', $routeId)->delete() > 0;
+    }
+
+    public function allWithOrderedStops(): Collection
+    {
+        return Route::with([
+            'routeStops' => function ($q) {
+                $q->orderBy('stop_order')->with('stop');
+            }
+        ])->get();
     }
 }

@@ -12,6 +12,7 @@ use App\Http\Controllers\TripController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\FleetLocationController;
+use App\Http\Controllers\RewardController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -20,9 +21,12 @@ Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/register', [PassengerController::class, 'store']);
 Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
-Route::post('fare/quote-by-location', [FareRuleController::class, 'quoteByLocation']);
+Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
+Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
+
+// Remove:
 
 //PAYMONGO / PAYMENT 
 
@@ -40,8 +44,9 @@ Route::prefix('passengers')
         Route::delete('logout', [AuthController::class, 'logout']);
         Route::get('profile', [AuthController::class, 'profile']);
         Route::put('profile', [PassengerController::class, 'update']);
-
         Route::get('tickets', [TicketController::class, 'myTickets']);
+        Route::get('rewards/history', [RewardController::class, 'history']);
+
         // Route::post('fare/quote', [FareRuleController::class, 'quote']);
         // Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
         // Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -71,8 +76,8 @@ Route::prefix('operator')
 
         // Fare rules
         Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
-        Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
-
+        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
+    
         // Trip scheduling + staff assignment
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
@@ -142,8 +147,8 @@ Route::prefix('admin')
 
         // Fare rules + recalculation
         Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
-        Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
-
+        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
+    
         // Trips — full control
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);

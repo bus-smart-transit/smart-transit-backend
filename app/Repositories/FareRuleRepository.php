@@ -17,6 +17,14 @@ class FareRuleRepository
             ->get();
     }
 
+    public function getActiveRule(int $fleetId, string $seatType): ?FareRule
+    {
+        return FareRule::where('fleet_id', $fleetId)
+            ->where('seat_type', $seatType)
+            ->where('status', 'active')
+            ->first();
+    }
+
     public function update(int $fareRuleId, array $payload): bool
     {
         return FareRule::where('fare_rule_id', $fareRuleId)->update($payload) > 0;

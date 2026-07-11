@@ -13,7 +13,6 @@ class TripService
     ) {
     }
 
-    // $payload = ['fleet_route_id','trip_date','company_user_id']
     public function scheduleTrip(array $payload): object
     {
         return $this->tripRepository->create(array_merge($payload, [
@@ -42,7 +41,6 @@ class TripService
         return $this->tripRepository->findById($tripId);
     }
 
-    // $payload = ['driver_id']
     public function assignDriver(int $tripId, array $payload): void
     {
         $driver = $this->StaffRepository->findById($payload['driver_id']);
@@ -56,7 +54,6 @@ class TripService
         $this->tripRepository->assignDriver($tripId, $payload['driver_id']);
     }
 
-    // $payload = ['conductor_id']
     public function assignConductor(int $tripId, array $payload): void
     {
         $conductor = $this->StaffRepository->findById($payload['conductor_id']);

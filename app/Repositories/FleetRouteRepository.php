@@ -32,4 +32,15 @@ class FleetRouteRepository
         return FleetRoute::where('fleet_route_id', $fleetRouteId)
             ->update(['status' => $status]) > 0;
     }
+
+    public function getActiveFleetsForRoute(int $routeId): Collection
+    {
+        return FleetRoute::with('fleet')
+            ->where('route_id', $routeId)
+            ->where('status', 'active')
+            ->get()
+            ->pluck('fleet')
+            ->filter(fn($fleet) => $fleet && $fleet->status === 'active')
+            ->values();
+    }
 }

@@ -14,7 +14,6 @@ return new class extends Migration {
             $table->id('ticket_id');
             $table->foreignId('fleet_route_id')->constrained('fleets_routes', 'fleet_route_id');
             $table->foreignId('trip_id')->constrained('trips', 'trip_id');
-            $table->foreignId('fare_id')->constrained('fare_matrix', 'fare_id');       // per-ticket price reference
             $table->foreignId('payment_id')->constrained('payments', 'payment_id');   // ← new: which transaction paid for this ticket
             $table->foreignId('passenger_id')->nullable()->constrained('passenger_users', 'passenger_id');
             $table->string('ticket_uuid')->unique(); // already your per-ticket reference number

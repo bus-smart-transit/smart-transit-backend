@@ -38,11 +38,6 @@ class PayMongoController extends Controller
         return response()->json(['message' => 'Webhook processed'], 200);
     }
 
-    /**
-     * Normalizes $event->resource into a plain array regardless of whether the SDK
-     * returned an object or an array for this particular event type — avoids
-     * fragile property-vs-array-access assumptions entirely.
-     */
     private function resourceToArray(mixed $resource): array
     {
         if (is_array($resource)) {
@@ -58,12 +53,10 @@ class PayMongoController extends Controller
 
     /**
      * payment.paid / payment.failed resources carry a pay_... id, which we
-     * never store, and don't reliably carry back the metadata we attached at
+     * never store, and don't reliably carry back the metadata attached at
      * checkout-session creation (observed: payment.failed often has
-     * metadata === null). So we try metadata first, then fall back to
-     * matching on payment_intent_id, which IS reliably present on both event
-     * types and which we store on the payments row at checkout-session
-     * creation time (see PaymentService::checkoutOnline).
+     * metadata === null). Tries metadata first, then falls back to matching
+     * on payment_intent_id, which IS reliably present on both event types.
      */
     private function resolvePaymentFromMetadata(array $resource): ?object
     {

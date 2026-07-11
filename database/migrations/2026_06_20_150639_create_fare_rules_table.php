@@ -16,7 +16,7 @@ return new class extends Migration {
             $table->double('base_fare');
             $table->double('fare_per_km');
             $table->string('status');
-            $table->string('seat_type');
+            $table->string('seat_type')->default('public'); // 'public' | 'private'
             $table->timestamps();
         });
     }

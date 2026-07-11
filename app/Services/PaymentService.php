@@ -21,20 +21,15 @@ class PaymentService
 
     /**
      * $payload = ['items' => [...], 'payment_channel']
-     * $payload['items'][*] = ['trip_id','seat_type','origin_stop_id','destination_stop_id']
+     * Each item is EITHER:
+     *   stop-based:   ['trip_id','seat_type','origin_stop_id','destination_stop_id']
+     *   custom-point: ['trip_id','seat_type','origin_lat','origin_lng','destination_lat','destination_lng']
      *
-     * IMPORTANT: no ticket rows are created here anymore. Each item's
-     * seat/standing capacity is reserved and its fare locked in via
-     * TicketService::reserveAndPrice(), and that reservation is stored as
-     * JSON on payments.items_payload. Actual `tickets` rows are only created
-     * once the webhook confirms payment — see finalizeOnlinePayment() below.
-     *
-     * online_payments is created immediately (it just records WHICH passenger
-     * made the online payment, not whether it succeeded). Success/failure is
-     * tracked solely via payments.status + payments.is_valid — see
-     * finalizeOnlinePayment()/failOnlinePaymentWithReleases() below and
-     * TicketService::validateScan(), which checks payment status before
-     * allowing a scan.
+     * No ticket rows are created here. Each item's seat/standing capacity
+     * is reserved and its fare computed via TicketService::reserveAndPrice(),
+     * and that reservation is stored as JSON on payments.items_payload.
+     * Actual `tickets` rows are only created once the webhook confirms
+     * payment — see PaymentService::finalizeOnlinePayment().
      */
     public function checkoutOnline(?int $passengerId, ?string $guestEmail, array $payload): array
     {
@@ -76,7 +71,6 @@ class PaymentService
             }
 
             $payment->amount = $total;
-            // IGNORE - Intelephense flag this as error but does not affect workflow.
             $payment->items_payload = $reservedItems;
             // Matches PayMongo's default checkout session expiry window.
             // Confirm against your PayMongo dashboard settings if you've
@@ -98,17 +92,13 @@ class PaymentService
             return [
                 'payment' => $payment,
                 'checkout_url' => $session['attributes']['checkout_url'],
-                // No 'tickets' key: none exist yet. Seats/standing capacity
-                // for each item are already held, though, so this checkout
-                // session won't lose them to another buyer while payment is
-                // pending.
             ];
         });
     }
 
     /**
      * $payload = ['items' => [...]]
-     * $payload['items'][*] = ['trip_id','seat_type','origin_stop_id','destination_stop_id','passenger_id' nullable]
+     * $payload['items'][*] = [...same shapes as above, plus 'passenger_id' nullable]
      *
      * Onsite/cash sales are confirmed instantly, so tickets are still
      * created immediately here (no pending window to defer for).
@@ -154,9 +144,7 @@ class PaymentService
      * back (including the status change), so the webhook can be safely
      * retried by PayMongo instead of leaving a half-issued purchase.
      *
-     * Idempotent: safe to call again on webhook redelivery — if tickets
-     * already exist for this payment, it just re-confirms the status and
-     * does nothing else.
+     * Idempotent: safe to call again on webhook redelivery.
      */
     public function finalizeOnlinePayment(Payment $payment): void
     {
@@ -180,10 +168,7 @@ class PaymentService
     /**
      * Called by PayMongoController::handlePaymentFailed. Marks the payment
      * failed and releases every reserved item's held seat/standing capacity
-     * back to the trip.
-     *
-     * Idempotent: if the payment is already marked failed, does nothing —
-     * guards against double-releasing capacity on webhook redelivery.
+     * back to the trip. Idempotent.
      */
     public function failOnlinePaymentWithReleases(Payment $payment): void
     {

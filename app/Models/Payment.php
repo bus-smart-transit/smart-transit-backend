@@ -4,18 +4,15 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @mixin IdeHelperPayment
+ */
 class Payment extends Model
 {
-    /**
-     * The table associated with the model data layout.
-     */
     protected $table = 'payments';
 
     protected $primaryKey = 'payment_id';
 
-    /** 
-     * The attributes that are mass assignable from structural payloads.
-     */
     protected $fillable = [
         'amount',
         'payment_created',
@@ -29,22 +26,22 @@ class Payment extends Model
         'gateway_reference',
         'payment_intent_id',
         'items_payload',
-        'hold_expires_at'
+        'hold_expires_at',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
             'payment_created' => 'datetime',
             'hold_expires_at' => 'datetime',
-            'items_payload' => 'json'
+            // Stores the reserved items (trip_id, seat_type, stop ids OR
+            // coordinates, fare_rule_id, distance_km, amount) locked in at
+            // checkout time, so the webhook can create the actual ticket
+            // rows later without re-running any pricing logic.
+            'items_payload' => 'array',
         ];
     }
+
     public function tickets()
     {
         return $this->hasMany(Ticket::class, 'payment_id', 'payment_id');

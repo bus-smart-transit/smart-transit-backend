@@ -2,6 +2,8 @@
 namespace App\Services;
 
 use App\Repositories\RewardRepository;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class RewardService
 {
@@ -12,20 +14,30 @@ class RewardService
     }
 
     /**
-     * Called automatically inside TicketService::issueTicket()
-     * after a successful ticket purchase. Never called from a controller directly.
+     * Called automatically inside TicketService::finalizeTicket() after a
+     * successful ticket purchase. Never called from a controller directly.
      */
-    public function awardPoints(int $passengerId, float $amountSpent): void
+    public function awardPoints(int $passengerId, float $amountSpent, ?int $paymentId = null): void
     {
         $points = (int) floor($amountSpent / self::PESOS_PER_POINT);
 
         if ($points <= 0)
             return;
 
-        $this->rewardRepository->incrementPoints($passengerId, $points);
+        DB::transaction(function () use ($passengerId, $points, $paymentId) {
+            $this->rewardRepository->incrementPoints($passengerId, $points);
+
+            $this->rewardRepository->createTransaction([
+                'passenger_id' => $passengerId,
+                'payment_id' => $paymentId,
+                'points' => $points,
+                'type' => 'earned',
+                'description' => 'Earned from ticket purchase',
+            ]);
+        });
     }
 
-    public function redeemPoints(int $passengerId, int $points): bool
+    public function redeemPoints(int $passengerId, int $points, ?string $description = null): bool
     {
         $currentPoints = $this->rewardRepository->getPoints($passengerId);
 
@@ -33,7 +45,23 @@ class RewardService
             return false;
         }
 
-        $this->rewardRepository->decrementPoints($passengerId, $points);
+        DB::transaction(function () use ($passengerId, $points, $description) {
+            $this->rewardRepository->decrementPoints($passengerId, $points);
+
+            $this->rewardRepository->createTransaction([
+                'passenger_id' => $passengerId,
+                'payment_id' => null,
+                'points' => -$points,
+                'type' => 'redeemed',
+                'description' => $description ?? 'Points redeemed',
+            ]);
+        });
+
         return true;
+    }
+
+    public function getHistory(int $passengerId): Collection
+    {
+        return $this->rewardRepository->findHistoryForPassenger($passengerId);
     }
 }

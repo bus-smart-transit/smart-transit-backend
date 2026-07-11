@@ -4,17 +4,14 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @mixin IdeHelperFleet
+ */
 class Fleet extends Model
 {
-    /**
-     * The table associated with the model data layout.
-     */
     protected $table = 'fleets';
     protected $primaryKey = 'fleet_id';
 
-    /**
-     * The attributes that are mass assignable from structural payloads.
-     */
     protected $fillable = [
         'company_user_id',
         'plate_number',
@@ -22,15 +19,14 @@ class Fleet extends Model
         'seated_capacity',
         'standing_capacity',
         'status',
+        'fleet_type', // 'public' | 'private'
     ];
 
-    /**
-     * Get the companyUser that owns this record.
-     */
     public function companyUser()
     {
         return $this->belongsTo(StaffUser::class, 'company_user_id');
     }
+
     public function fleetRoutes()
     {
         return $this->hasMany(FleetRoute::class, 'fleet_id', 'fleet_id');

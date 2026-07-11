@@ -4,6 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property-read \App\Models\Fleet $fleet
+ * @mixin IdeHelperFleetRoute
+ */
 class FleetRoute extends Model
 {
     /**
@@ -38,6 +42,7 @@ class FleetRoute extends Model
     {
         return $this->belongsTo(Route::class, 'route_id');
     }
+
     public function trips()
     {
         return $this->hasMany(Trip::class, 'fleet_route_id', 'fleet_route_id');

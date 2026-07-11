@@ -1,7 +1,6 @@
 <?php
 namespace App\Http\Controllers;
 use App\Services\FleetService;
-use App\Services\FareCalculationService;
 use App\Services\StaffService;
 use App\Http\Requests\StoreFleetRequest;
 use App\Http\Requests\AssignFleetRouteRequest;
@@ -12,7 +11,6 @@ class FleetController extends Controller
     use ApiResponse;
     public function __construct(
         private FleetService $fleetService,
-        private FareCalculationService $fareCalculationService,
         private StaffService $staffService,
     ) {
     }
@@ -37,8 +35,9 @@ class FleetController extends Controller
     public function assignRoute(AssignFleetRouteRequest $request, int $fleetId)
     {
         $fleetRoute = $this->fleetService->assignRouteToFleet($fleetId, $request->validated());
-        // Precompute all stop-pair fares immediately after assignment
-        $this->fareCalculationService->recalculateForFleetRoute($fleetRoute->fleet_route_id);
-        return $this->success($fleetRoute, 'Route assigned and fares calculated successfully');
+        // No recalculation step needed — fares for this fleet+route are
+        // computed on demand at quote/booking time (see FareRuleService),
+        // not precomputed and stored.
+        return $this->success($fleetRoute, 'Route assigned successfully');
     }
 }

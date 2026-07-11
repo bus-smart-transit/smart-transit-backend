@@ -4,6 +4,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
+/**
+ * @mixin IdeHelperPassengerUser
+ */
 class PassengerUser extends Model
 {
     protected $primaryKey = 'passenger_id';

@@ -14,6 +14,7 @@ class StoreFleetRequest extends FormRequest
             'capacity' => 'required|integer|min:1',
             'seated_capacity' => 'required|integer|min:0',
             'standing_capacity' => 'required|integer|min:0',
+            'fleet_type' => 'required|in:public,private'
         ];
     }
 }
