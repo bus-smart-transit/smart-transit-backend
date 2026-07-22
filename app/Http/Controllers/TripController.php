@@ -71,6 +71,26 @@ class TripController extends Controller
         );
     }
 
+    // Conductor: see assigned trips (scheduled/current)
+    public function myConductorTrips(Request $request)
+    {
+        $companyUser = $request->user()->companyProfile;
+        return $this->success(
+            $this->tripService->getConductorTrips($companyUser->company_user_id),
+            'Assigned trips retrieved successfully'
+        );
+    }
+
+    // Operator: see all upcoming trips scheduled under this operator
+    public function operatorTrips(Request $request)
+    {
+        $companyUser = $request->user()->companyProfile;
+        return $this->success(
+            $this->tripService->getOperatorUpcomingTrips($companyUser->company_user_id),
+            'Upcoming trips retrieved successfully'
+        );
+    }
+
     // Driver: current active trip
     public function currentTripDriver(Request $request)
     {
@@ -134,7 +154,7 @@ class TripController extends Controller
             ->whereIn('status', ['scheduled', 'boarding'])
             ->where('trip_date', '>=', now()->toDateString())
             ->with([
-                'fleetRoute.route.routeStops',
+                'fleetRoute.route.routeStops.stop',
                 'fleetRoute.fleet',
             ])
             ->orderBy('trip_date', 'asc')

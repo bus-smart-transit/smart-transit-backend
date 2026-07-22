@@ -43,4 +43,16 @@ class FleetRouteRepository
             ->filter(fn($fleet) => $fleet && $fleet->status === 'active')
             ->values();
     }
+
+    public function listActiveByOperator(int $companyUserId): Collection
+    {
+        return FleetRoute::with(['fleet', 'route'])
+            ->where('status', 'active')
+            ->whereHas('fleet', function ($q) use ($companyUserId) {
+                $q->where('company_user_id', $companyUserId)
+                    ->where('status', 'active');
+            })
+            ->orderBy('fleet_route_id', 'asc')
+            ->get();
+    }
 }

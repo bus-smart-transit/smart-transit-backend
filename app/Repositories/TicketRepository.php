@@ -14,7 +14,7 @@ class TicketRepository
 
     public function findByUuid(string $uuid): ?Ticket
     {
-        return Ticket::with(['trip.fleetRoute.route', 'fareRule', 'payment'])
+        return Ticket::with(['trip.fleetRoute.route', 'fareRule', 'payment', 'originStop', 'destinationStop', 'passenger.user'])
             ->where('ticket_uuid', $uuid)
             ->first();
     }
@@ -131,6 +131,21 @@ class TicketRepository
         return Ticket::with(['passenger.user', 'originStop', 'destinationStop'])
             ->where('trip_id', $tripId)
             ->where('status', 'boarded')
+            ->get();
+    }
+
+    /**
+     * Get active passengers for a trip (reserved/issued + boarded, not yet alighted).
+     */
+    public function getActivePassengersDetails(int $tripId): Collection
+    {
+        return Ticket::with(['passenger.user', 'originStop', 'destinationStop'])
+            ->where('trip_id', $tripId)
+            ->whereIn('status', ['issued', 'boarded'])
+            ->whereNull('alighted_at')
+            ->orderByRaw("CASE WHEN status = 'boarded' THEN 0 ELSE 1 END")
+            ->orderByDesc('boarded_at')
+            ->orderByDesc('created_at')
             ->get();
     }
 }

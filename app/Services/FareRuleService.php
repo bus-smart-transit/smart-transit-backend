@@ -35,7 +35,8 @@ class FareRuleService
 
         $distanceKm = abs($destinationRouteStop->distance_from_origin_km - $originRouteStop->distance_from_origin_km);
 
-        $rule = $this->fareRuleRepository->getActiveRule($payload['fleet_id'], $payload['seat_type']);
+        $rule = $this->fareRuleRepository->getActiveRule($payload['fleet_id'], $payload['seat_type'])
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($payload['route_id'], $payload['seat_type']);
 
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
@@ -149,7 +150,8 @@ class FareRuleService
             throw new \RuntimeException('Pickup and drop-off resolved to the same point on the route.');
         }
 
-        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $payload['seat_type']);
+        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $payload['seat_type'])
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $payload['seat_type']);
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
         }
@@ -174,7 +176,8 @@ class FareRuleService
             throw new \RuntimeException('Route not found.');
         }
 
-        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $seatType);
+        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $seatType)
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $seatType);
 
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');

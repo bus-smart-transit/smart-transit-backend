@@ -30,6 +30,11 @@ class FleetService
         return $this->fleetRepository->all();
     }
 
+    public function listFleetRoutesByOperator(int $companyUserId): object
+    {
+        return $this->fleetRouteRepository->listActiveByOperator($companyUserId);
+    }
+
     // $payload = ['route_id','start_time','end_time']
     public function assignRouteToFleet(int $fleetId, array $payload): object
     {

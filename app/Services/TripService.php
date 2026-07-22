@@ -16,12 +16,22 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
-        return $this->tripRepository->create(array_merge($payload, [
+        $trip = $this->tripRepository->create(array_merge($payload, [
             'status' => 'scheduled',
             'current_seated_capacity' => 0,
             'current_standing_capacity' => 0,
             'total_occupancy' => 0,
         ]));
+
+        if (!empty($trip->driver_id) && !empty($trip->conductor_id)) {
+            $this->pinService->generateOrGet(
+                $trip->trip_id,
+                $trip->driver_id,
+                $trip->conductor_id,
+            );
+        }
+
+        return $trip;
     }
 
     public function startBoarding(int $tripId): object
@@ -38,9 +48,7 @@ class TripService
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
 
-        $fleetId = $trip->fleetRoute->fleet_id;
-
-        if (!$this->pinService->isBothVerified($fleetId)) {
+        if (!$this->pinService->isBothVerified($trip->trip_id)) {
             throw ValidationException::withMessages([
                 'pin' => ['Both the driver and conductor must verify the daily fleet PIN before the trip can depart.'],
             ]);
@@ -72,7 +80,7 @@ class TripService
         $trip = $this->tripRepository->findById($tripId);
         if ($trip && $trip->conductor_id) {
             $this->pinService->generateOrGet(
-                $trip->fleetRoute->fleet_id,
+                $trip->trip_id,
                 $payload['driver_id'],
                 $trip->conductor_id,
             );
@@ -95,7 +103,7 @@ class TripService
         $trip = $this->tripRepository->findById($tripId);
         if ($trip && $trip->driver_id) {
             $this->pinService->generateOrGet(
-                $trip->fleetRoute->fleet_id,
+                $trip->trip_id,
                 $trip->driver_id,
                 $payload['conductor_id'],
             );
@@ -105,6 +113,16 @@ class TripService
     public function getDriverTrips(int $driverCompanyUserId): object
     {
         return $this->tripRepository->listByDriver($driverCompanyUserId);
+    }
+
+    public function getConductorTrips(int $conductorCompanyUserId): object
+    {
+        return $this->tripRepository->listByConductor($conductorCompanyUserId);
+    }
+
+    public function getOperatorUpcomingTrips(int $operatorCompanyUserId): object
+    {
+        return $this->tripRepository->listUpcomingByOperator($operatorCompanyUserId);
     }
 
     public function getCurrentTripForDriver(int $driverCompanyUserId): ?object

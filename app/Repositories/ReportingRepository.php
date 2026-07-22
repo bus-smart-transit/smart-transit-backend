@@ -10,6 +10,15 @@ use Illuminate\Support\Collection;
 
 class ReportingRepository
 {
+    private function isRevenueStatus(?string $status): bool
+    {
+        if (!$status) {
+            return false;
+        }
+
+        return in_array(strtolower($status), ['paid', 'completed', 'success', 'succeeded'], true);
+    }
+
     /**
      * Get financial summary for a fleet within a date range
      */
@@ -20,29 +29,83 @@ class ReportingRepository
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->get();
 
+        $fleetTripIds = $trips->pluck('trip_id')->all();
+
         $totalRevenue = 0;
         $onlineRevenue = 0;
         $onsiteRevenue = 0;
         $totalTickets = 0;
         $completedTrips = 0;
+        $countedPaymentIds = [];
 
         foreach ($trips as $trip) {
+            $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if ($ticket->payment && in_array($ticket->payment->status, ['paid', 'completed'])) {
-                    $amount = $ticket->payment->amount;
-                    $totalRevenue += $amount;
-                    $totalTickets++;
+                if (!$ticket->payment) {
+                    continue;
+                }
 
-                    if ($ticket->payment->payment_method === 'online') {
-                        $onlineRevenue += $amount;
-                    } elseif ($ticket->payment->payment_method === 'cash') {
-                        $onsiteRevenue += $amount;
-                    }
+                $payment = $ticket->payment;
+                if (!$this->isRevenueStatus($payment->status)) {
+                    continue;
+                }
+
+                $paymentMap[$payment->payment_id] = $payment;
+                $totalTickets++;
+            }
+
+            foreach ($paymentMap as $payment) {
+                $amount = $payment->amount;
+                $totalRevenue += $amount;
+                $countedPaymentIds[$payment->payment_id] = true;
+
+                if ($payment->payment_method === 'online') {
+                    $onlineRevenue += $amount;
+                } elseif ($payment->payment_method === 'cash') {
+                    $onsiteRevenue += $amount;
                 }
             }
             
             if ($trip->status === 'completed') {
                 $completedTrips++;
+            }
+        }
+
+        // Include paid/success online checkouts that may not yet have ticket rows
+        // but contain reserved trip IDs in items_payload.
+        if (!empty($fleetTripIds)) {
+            $candidateOnlinePayments = Payment::query()
+                ->where('payment_method', 'online')
+                ->whereBetween('payment_created', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+                ->get();
+
+            foreach ($candidateOnlinePayments as $payment) {
+                if (!$this->isRevenueStatus($payment->status)) {
+                    continue;
+                }
+
+                if (isset($countedPaymentIds[$payment->payment_id])) {
+                    continue;
+                }
+
+                $items = $payment->items_payload ?? [];
+                $hasFleetTrip = false;
+                foreach ($items as $item) {
+                    $tripId = isset($item['trip_id']) ? (int) $item['trip_id'] : null;
+                    if ($tripId && in_array($tripId, $fleetTripIds, true)) {
+                        $hasFleetTrip = true;
+                        break;
+                    }
+                }
+
+                if (!$hasFleetTrip) {
+                    continue;
+                }
+
+                $amount = (float) $payment->amount;
+                $onlineRevenue += $amount;
+                $totalRevenue += $amount;
+                $countedPaymentIds[$payment->payment_id] = true;
             }
         }
 
@@ -101,17 +164,29 @@ class ReportingRepository
 
             $routeData[$routeId]['total_trips']++;
 
+            $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if ($ticket->payment && in_array($ticket->payment->status, ['paid', 'completed'])) {
-                    $amount = $ticket->payment->amount;
-                    $routeData[$routeId]['total_revenue'] += $amount;
-                    $routeData[$routeId]['total_tickets']++;
+                if (!$ticket->payment) {
+                    continue;
+                }
 
-                    if ($ticket->payment->payment_method === 'online') {
-                        $routeData[$routeId]['online_revenue'] += $amount;
-                    } elseif ($ticket->payment->payment_method === 'cash') {
-                        $routeData[$routeId]['onsite_revenue'] += $amount;
-                    }
+                $payment = $ticket->payment;
+                if (!$this->isRevenueStatus($payment->status)) {
+                    continue;
+                }
+
+                $paymentMap[$payment->payment_id] = $payment;
+                $routeData[$routeId]['total_tickets']++;
+            }
+
+            foreach ($paymentMap as $payment) {
+                $amount = $payment->amount;
+                $routeData[$routeId]['total_revenue'] += $amount;
+
+                if ($payment->payment_method === 'online') {
+                    $routeData[$routeId]['online_revenue'] += $amount;
+                } elseif ($payment->payment_method === 'cash') {
+                    $routeData[$routeId]['onsite_revenue'] += $amount;
                 }
             }
 
@@ -248,11 +323,23 @@ class ReportingRepository
                 $activeTrips++;
             }
 
+            $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if ($ticket->payment && in_array($ticket->payment->status, ['paid', 'completed'])) {
-                    $totalRevenue += $ticket->payment->amount;
-                    $totalTickets++;
+                if (!$ticket->payment) {
+                    continue;
                 }
+
+                $payment = $ticket->payment;
+                if (!$this->isRevenueStatus($payment->status)) {
+                    continue;
+                }
+
+                $paymentMap[$payment->payment_id] = $payment;
+                $totalTickets++;
+            }
+
+            foreach ($paymentMap as $payment) {
+                $totalRevenue += $payment->amount;
             }
         }
 
@@ -283,21 +370,33 @@ class ReportingRepository
         $channelData = [];
 
         foreach ($trips as $trip) {
+            $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if ($ticket->payment && in_array($ticket->payment->status, ['paid', 'completed'])) {
-                    $channel = $ticket->payment->payment_channel ?? 'unknown';
-                    if (!isset($channelData[$channel])) {
-                        $channelData[$channel] = [
-                            'channel' => $channel,
-                            'total_amount' => 0,
-                            'transaction_count' => 0,
-                            'average_transaction' => 0,
-                        ];
-                    }
-
-                    $channelData[$channel]['total_amount'] += $ticket->payment->amount;
-                    $channelData[$channel]['transaction_count']++;
+                if (!$ticket->payment) {
+                    continue;
                 }
+
+                $payment = $ticket->payment;
+                if (!$this->isRevenueStatus($payment->status)) {
+                    continue;
+                }
+
+                $paymentMap[$payment->payment_id] = $payment;
+            }
+
+            foreach ($paymentMap as $payment) {
+                $channel = $payment->payment_channel ?? 'unknown';
+                if (!isset($channelData[$channel])) {
+                    $channelData[$channel] = [
+                        'channel' => $channel,
+                        'total_amount' => 0,
+                        'transaction_count' => 0,
+                        'average_transaction' => 0,
+                    ];
+                }
+
+                $channelData[$channel]['total_amount'] += $payment->amount;
+                $channelData[$channel]['transaction_count']++;
             }
         }
 

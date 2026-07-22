@@ -70,6 +70,12 @@ class OccupancyService
                 'seated' => max(0, $seatedCapacity - $seatedBoarded),
                 'standing' => max(0, $standingCapacity - $standingBoarded),
             ],
+            // Flat aliases kept for older frontend consumers.
+            'total_capacity' => $totalCapacity,
+            'seated_capacity' => $seatedCapacity,
+            'standing_capacity' => $standingCapacity,
+            'current_seated' => $seatedBoarded,
+            'current_standing' => $standingBoarded,
             'capacity_status' => $capacityStatus,
             'is_full' => $totalBoarded >= $totalCapacity,
             'is_near_capacity' => $totalPercentage >= 80,
@@ -137,7 +143,7 @@ class OccupancyService
             ]);
         }
 
-        $passengers = $this->ticketRepository->getBoardedPassengersDetails($tripId);
+        $passengers = $this->ticketRepository->getActivePassengersDetails($tripId);
 
         return [
             'trip_id' => $tripId,
@@ -149,6 +155,8 @@ class OccupancyService
                 'passenger_name' => $ticket->passenger->user->name ?? 'Guest',
                 'passenger_id' => $ticket->passenger_id,
                 'seat_type' => $ticket->seat_type,
+                'status' => $ticket->status,
+                'is_boarded' => $ticket->status === 'boarded',
                 'origin_stop' => $ticket->originStop?->stop_name,
                 'destination_stop' => $ticket->destinationStop?->stop_name,
                 'boarded_at' => $ticket->boarded_at,

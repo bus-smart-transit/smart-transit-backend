@@ -24,17 +24,21 @@ class FleetDailyPinController extends Controller
     public function showForDriver(Request $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $fleetId     = $this->resolveFleetForDriver($companyUser->company_user_id);
+        $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
-        $pin = $this->pinService->getTodayPin($fleetId);
+        $pin = $this->pinService->getTodayPin($trip->trip_id);
 
         if (!$pin) {
-            return $this->error('No PIN has been generated for your fleet today. Ensure both driver and conductor are assigned.', 404);
+            return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
         }
 
         return $this->success([
             'pin_code'             => $pin->pin_code,
-            'fleet_id'             => $pin->fleet_id,
+            'trip_id'              => $pin->trip_id,
+            'trip_status'          => $trip->status,
+            'trip_date'            => $trip->trip_date,
+            'route_name'           => $trip->fleetRoute?->route?->route_name,
+            'fleet_plate_number'   => $trip->fleetRoute?->fleet?->plate_number,
             'pin_date'             => $pin->pin_date,
             'driver_verified_at'   => $pin->driver_verified_at,
             'conductor_verified_at' => $pin->conductor_verified_at,
@@ -49,17 +53,21 @@ class FleetDailyPinController extends Controller
     public function showForConductor(Request $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $fleetId     = $this->resolveFleetForConductor($companyUser->company_user_id);
+        $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
-        $pin = $this->pinService->getTodayPin($fleetId);
+        $pin = $this->pinService->getTodayPin($trip->trip_id);
 
         if (!$pin) {
-            return $this->error('No PIN has been generated for your fleet today. Ensure both driver and conductor are assigned.', 404);
+            return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
         }
 
         return $this->success([
             'pin_code'             => $pin->pin_code,
-            'fleet_id'             => $pin->fleet_id,
+            'trip_id'              => $pin->trip_id,
+            'trip_status'          => $trip->status,
+            'trip_date'            => $trip->trip_date,
+            'route_name'           => $trip->fleetRoute?->route?->route_name,
+            'fleet_plate_number'   => $trip->fleetRoute?->fleet?->plate_number,
             'pin_date'             => $pin->pin_date,
             'driver_verified_at'   => $pin->driver_verified_at,
             'conductor_verified_at' => $pin->conductor_verified_at,
@@ -74,20 +82,23 @@ class FleetDailyPinController extends Controller
     public function verifyAsDriver(VerifyPinRequest $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $fleetId     = $this->resolveFleetForDriver($companyUser->company_user_id);
+        $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(
-            $fleetId,
+            $trip->trip_id,
             $request->validated()['pin_code'],
             $companyUser->company_user_id,
             'driver'
         );
 
         return $this->success([
-            'fleet_id'           => $pin->fleet_id,
+            'trip_id'            => $pin->trip_id,
+            'trip_status'        => $trip->status,
+            'route_name'         => $trip->fleetRoute?->route?->route_name,
+            'fleet_plate_number' => $trip->fleetRoute?->fleet?->plate_number,
             'driver_verified_at' => $pin->driver_verified_at,
             'both_verified'      => $pin->isBothVerified(),
-        ], 'PIN verified successfully. You are on the correct fleet.');
+        ], 'PIN verified successfully. You are on the correct trip.');
     }
 
     /**
@@ -97,45 +108,48 @@ class FleetDailyPinController extends Controller
     public function verifyAsConductor(VerifyPinRequest $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $fleetId     = $this->resolveFleetForConductor($companyUser->company_user_id);
+        $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(
-            $fleetId,
+            $trip->trip_id,
             $request->validated()['pin_code'],
             $companyUser->company_user_id,
             'conductor'
         );
 
         return $this->success([
-            'fleet_id'              => $pin->fleet_id,
+            'trip_id'               => $pin->trip_id,
+            'trip_status'           => $trip->status,
+            'route_name'            => $trip->fleetRoute?->route?->route_name,
+            'fleet_plate_number'    => $trip->fleetRoute?->fleet?->plate_number,
             'conductor_verified_at' => $pin->conductor_verified_at,
             'both_verified'         => $pin->isBothVerified(),
-        ], 'PIN verified successfully. You are on the correct fleet.');
+        ], 'PIN verified successfully. You are on the correct trip.');
     }
 
     // -------------------------------------------------------------------------
-    // Helpers: resolve fleet_id from today's assigned trip
+    // Helpers: resolve trip from today's assigned schedule/current run
     // -------------------------------------------------------------------------
 
-    private function resolveFleetForDriver(int $driverId): int
+    private function resolveTripForDriver(int $driverId): object
     {
         $trip = $this->tripService->getCurrentOrScheduledTripForDriver($driverId);
 
         if (!$trip) {
-            abort(404, 'No trip assigned for today. Cannot resolve fleet.');
+            abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
         }
 
-        return $trip->fleetRoute->fleet_id;
+        return $trip;
     }
 
-    private function resolveFleetForConductor(int $conductorId): int
+    private function resolveTripForConductor(int $conductorId): object
     {
         $trip = $this->tripService->getCurrentOrScheduledTripForConductor($conductorId);
 
         if (!$trip) {
-            abort(404, 'No trip assigned for today. Cannot resolve fleet.');
+            abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
         }
 
-        return $trip->fleetRoute->fleet_id;
+        return $trip;
     }
 }

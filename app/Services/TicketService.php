@@ -78,7 +78,8 @@ class TicketService
 
         $distanceKm = abs($destinationRouteStop->distance_from_origin_km - $originRouteStop->distance_from_origin_km);
 
-        $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $item['seat_type']);
+        $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $item['seat_type'])
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $item['seat_type']);
 
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
@@ -195,7 +196,19 @@ class TicketService
         }
 
         $this->ticketRepository->markBoarded($ticket->ticket_id);
-        return $this->ticketRepository->findByUuid($payload['ticket_uuid']);
+        $boardedTicket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
+
+        return (object) [
+            'ticket_id' => $boardedTicket->ticket_id,
+            'ticket_uuid' => $boardedTicket->ticket_uuid,
+            'passenger_name' => $boardedTicket->passenger?->user?->name ?? 'Guest',
+            'origin' => $boardedTicket->originStop?->stop_name,
+            'destination' => $boardedTicket->destinationStop?->stop_name,
+            'seat_type' => $boardedTicket->seat_type,
+            'amount' => (float) $boardedTicket->amount,
+            'status' => $boardedTicket->status,
+            'boarded_at' => $boardedTicket->boarded_at,
+        ];
     }
 
     public function getPassengerTickets(int $passengerId): object

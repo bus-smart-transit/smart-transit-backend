@@ -15,12 +15,12 @@ class FleetDailyPinService
 
     /**
      * Called when both driver and conductor are assigned to a trip.
-     * Generates a 6-digit PIN for the fleet for today, or returns the
+     * Generates a 6-digit PIN for the trip for today, or returns the
      * existing one if it was already created earlier in the day.
      */
-    public function generateOrGet(int $fleetId, int $driverId, int $conductorId): FleetDailyPin
+    public function generateOrGet(int $tripId, int $driverId, int $conductorId): FleetDailyPin
     {
-        $existing = $this->pinRepository->findTodayByFleet($fleetId);
+        $existing = $this->pinRepository->findTodayByTrip($tripId);
 
         if ($existing) {
             // Update staff IDs in case of re-assignment; reset verifications if pair changed.
@@ -38,11 +38,11 @@ class FleetDailyPinService
         }
 
         return $this->pinRepository->create([
-            'fleet_id'     => $fleetId,
-            'driver_id'    => $driverId,
-            'conductor_id' => $conductorId,
-            'pin_code'     => $this->generateCode(),
-            'pin_date'     => Carbon::today(),
+            'trip_id'       => $tripId,
+            'driver_id'     => $driverId,
+            'conductor_id'  => $conductorId,
+            'pin_code'      => $this->generateCode(),
+            'pin_date'      => Carbon::today(),
         ]);
     }
 
@@ -50,26 +50,26 @@ class FleetDailyPinService
      * Driver or conductor submits the PIN they see in their app.
      * Marks the appropriate verified_at timestamp.
      */
-    public function verify(int $fleetId, string $submittedPin, int $staffId, string $role): FleetDailyPin
+    public function verify(int $tripId, string $submittedPin, int $staffId, string $role): FleetDailyPin
     {
-        $pin = $this->pinRepository->findTodayByFleet($fleetId);
+        $pin = $this->pinRepository->findTodayByTrip($tripId);
 
         if (!$pin) {
             throw ValidationException::withMessages([
-                'pin_code' => ['No daily PIN has been generated for this fleet yet.'],
+                'pin_code' => ['No daily PIN has been generated for this trip yet.'],
             ]);
         }
 
         if ($pin->pin_code !== $submittedPin) {
             throw ValidationException::withMessages([
-                'pin_code' => ['Incorrect PIN. You may be assigned to the wrong fleet.'],
+                'pin_code' => ['Incorrect PIN. You may be assigned to the wrong trip.'],
             ]);
         }
 
         if ($role === 'driver') {
             if ($pin->driver_id !== $staffId) {
                 throw ValidationException::withMessages([
-                    'pin_code' => ['You are not the assigned driver for this fleet today.'],
+                    'pin_code' => ['You are not the assigned driver for this trip today.'],
                 ]);
             }
             if ($pin->driver_verified_at !== null) {
@@ -81,7 +81,7 @@ class FleetDailyPinService
         if ($role === 'conductor') {
             if ($pin->conductor_id !== $staffId) {
                 throw ValidationException::withMessages([
-                    'pin_code' => ['You are not the assigned conductor for this fleet today.'],
+                    'pin_code' => ['You are not the assigned conductor for this trip today.'],
                 ]);
             }
             if ($pin->conductor_verified_at !== null) {
@@ -99,19 +99,19 @@ class FleetDailyPinService
      * Checks if both driver and conductor have verified the PIN for today.
      * Used as a gate before a trip can depart.
      */
-    public function isBothVerified(int $fleetId): bool
+    public function isBothVerified(int $tripId): bool
     {
-        $pin = $this->pinRepository->findTodayByFleet($fleetId);
+        $pin = $this->pinRepository->findTodayByTrip($tripId);
 
         return $pin !== null && $pin->isBothVerified();
     }
 
     /**
-     * Returns today's PIN record for a fleet, or null.
+    * Returns today's PIN record for a trip, or null.
      */
-    public function getTodayPin(int $fleetId): ?FleetDailyPin
+    public function getTodayPin(int $tripId): ?FleetDailyPin
     {
-        return $this->pinRepository->findTodayByFleet($fleetId);
+        return $this->pinRepository->findTodayByTrip($tripId);
     }
 
     private function generateCode(): string

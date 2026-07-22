@@ -75,6 +75,15 @@ Route::prefix('operator')
 
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
+        Route::get('routes', [RouteController::class, 'index']);
+        Route::get('routes/{routeId}', [RouteController::class, 'show']);
+        Route::get('stops', [StopController::class, 'index']);
+        Route::post('stops', [StopController::class, 'store']);
+        Route::put('stops/{stopId}', [StopController::class, 'update']);
+        Route::delete('stops/{stopId}', [StopController::class, 'destroy']);
+        Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
+        Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
+        Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
         Route::post('fleets', [FleetController::class, 'store']);
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
@@ -83,6 +92,7 @@ Route::prefix('operator')
         // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
     
         // Trip scheduling + staff assignment
+        Route::get('trips', [TripController::class, 'operatorTrips']);
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
         Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
@@ -133,6 +143,7 @@ Route::prefix('conductor')
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
 
+        Route::get('trips', [TripController::class, 'myConductorTrips']);
         Route::get('trips/current', [TripController::class, 'currentTripConductor']);
         Route::post('tickets/scan', [TicketController::class, 'scan']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);

@@ -20,7 +20,10 @@ class PayMongoService
 
     public function createCheckoutSession(object $payment, array $lineItems, string $successUrl, string $cancelUrl): array
     {
+        $verifyOption = $this->resolveVerifyOption();
+
         $response = Http::withBasicAuth($this->secretKey, '')
+            ->withOptions(['verify' => $verifyOption])
             ->post('https://api.paymongo.com/v1/checkout_sessions', [
                 'data' => [
                     'attributes' => [
@@ -46,6 +49,32 @@ class PayMongoService
         }
 
         return $response->json('data');
+    }
+
+    private function resolveVerifyOption(): bool|string
+    {
+        $verify = (bool) config('services.paymongo.verify_ssl', true);
+        if (!$verify) {
+            return false;
+        }
+
+        $configuredBundle = trim((string) config('services.paymongo.ca_bundle', ''));
+        $candidates = [];
+
+        if ($configuredBundle !== '') {
+            $candidates[] = $configuredBundle;
+            $candidates[] = base_path($configuredBundle);
+        }
+
+        $candidates[] = base_path('storage/certs/cacert.pem');
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && $candidate !== '' && is_file($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return true;
     }
 
     /**

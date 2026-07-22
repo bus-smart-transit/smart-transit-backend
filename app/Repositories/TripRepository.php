@@ -30,11 +30,30 @@ class TripRepository
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
     }
 
+    public function listUpcomingByOperator(int $operatorCompanyUserId): Collection
+    {
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where('company_user_id', $operatorCompanyUserId)
+            ->where('trip_date', '>=', today())
+            ->orderBy('trip_date', 'asc')
+            ->get();
+    }
+
     public function listByDriver(int $driverCompanyUserId): Collection
     {
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('driver_id', $driverCompanyUserId)
-            ->where('trip_date', today())
+            ->where('trip_date', '>=', today())
+            ->orderBy('trip_date', 'asc')
+            ->get();
+    }
+
+    public function listByConductor(int $conductorCompanyUserId): Collection
+    {
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where('conductor_id', $conductorCompanyUserId)
+            ->where('trip_date', '>=', today())
+            ->orderBy('trip_date', 'asc')
             ->get();
     }
 
@@ -43,7 +62,10 @@ class TripRepository
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
-            ->where('trip_date', today())
+            ->where('trip_date', '>=', today())
+            ->orderByRaw("CASE WHEN trip_date = CURRENT_DATE THEN 0 ELSE 1 END")
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
+            ->orderBy('trip_date', 'asc')
             ->first();
     }
 
@@ -52,7 +74,10 @@ class TripRepository
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
-            ->where('trip_date', today())
+            ->where('trip_date', '>=', today())
+            ->orderByRaw("CASE WHEN trip_date = CURRENT_DATE THEN 0 ELSE 1 END")
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
+            ->orderBy('trip_date', 'asc')
             ->first();
     }
 

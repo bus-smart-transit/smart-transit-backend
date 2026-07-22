@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 /**
  * @property int $id
- * @property int $fleet_id
+ * @property int $trip_id
  * @property int|null $driver_id
  * @property int|null $conductor_id
  * @property string $pin_code
@@ -17,7 +17,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property \Illuminate\Support\Carbon|null $updated_at
  * @property-read \App\Models\StaffUser|null $conductor
  * @property-read \App\Models\StaffUser|null $driver
- * @property-read \App\Models\Fleet $fleet
+ * @property-read \App\Models\Trip $trip
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin query()
@@ -26,7 +26,7 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereCreatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereDriverId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereDriverVerifiedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereFleetId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereTripId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin whereId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin wherePinCode($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetDailyPin wherePinDate($value)
@@ -38,7 +38,7 @@ class FleetDailyPin extends Model
     protected $table = 'fleet_daily_pins';
 
     protected $fillable = [
-        'fleet_id',
+        'trip_id',
         'driver_id',
         'conductor_id',
         'pin_code',
@@ -56,9 +56,9 @@ class FleetDailyPin extends Model
         ];
     }
 
-    public function fleet()
+    public function trip()
     {
-        return $this->belongsTo(Fleet::class, 'fleet_id', 'fleet_id');
+        return $this->belongsTo(Trip::class, 'trip_id', 'trip_id');
     }
 
     public function driver()

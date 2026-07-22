@@ -7,9 +7,9 @@ use Illuminate\Support\Carbon;
 
 class FleetDailyPinRepository
 {
-    public function findTodayByFleet(int $fleetId): ?FleetDailyPin
+    public function findTodayByTrip(int $tripId): ?FleetDailyPin
     {
-        return FleetDailyPin::where('fleet_id', $fleetId)
+        return FleetDailyPin::where('trip_id', $tripId)
             ->where('pin_date', Carbon::today())
             ->first();
     }

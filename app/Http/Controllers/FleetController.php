@@ -5,6 +5,7 @@ use App\Services\StaffService;
 use App\Http\Requests\StoreFleetRequest;
 use App\Http\Requests\AssignFleetRouteRequest;
 use App\Traits\ApiResponse;
+use Illuminate\Http\Request;
 
 class FleetController extends Controller
 {
@@ -39,5 +40,19 @@ class FleetController extends Controller
         // computed on demand at quote/booking time (see FareRuleService),
         // not precomputed and stored.
         return $this->success($fleetRoute, 'Route assigned successfully');
+    }
+
+    public function fleetRoutes(Request $request)
+    {
+        $staffProfile = $this->staffService->getStaffProfile($request->user());
+
+        if (!$staffProfile) {
+            return $this->error('Staff profile not found for this account.', 404);
+        }
+
+        return $this->success(
+            $this->fleetService->listFleetRoutesByOperator($staffProfile->company_user_id),
+            'Fleet routes retrieved successfully'
+        );
     }
 }
