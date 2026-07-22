@@ -90,7 +90,7 @@ class OccupancyService
         }
 
         $route = $trip->fleetRoute->route;
-        $routeStops = $route->routeStops()->orderBy('sequence_number')->get();
+        $routeStops = $route->routeStops()->orderBy('stop_order')->get();
 
         $stopBreakdown = [];
 
@@ -109,7 +109,7 @@ class OccupancyService
             $stopBreakdown[] = [
                 'stop_id' => $stopId,
                 'stop_name' => $routeStop->stop->stop_name,
-                'sequence_number' => $routeStop->sequence_number,
+                'sequence_number' => $routeStop->stop_order,
                 'distance_from_origin_km' => $routeStop->distance_from_origin_km,
                 'boarding_count' => $boarding,
                 'alighting_count' => $alighting,
