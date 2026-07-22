@@ -6,6 +6,31 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * @mixin IdeHelperPassengerUser
+ * @property int $passenger_id
+ * @property string $passenger_uuid
+ * @property int $user_id
+ * @property string $name
+ * @property string $phone_num
+ * @property string $address
+ * @property float $reward_points
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property string|null $birthdate
+ * @property-read \App\Models\User $user
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereAddress($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereBirthdate($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereName($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser wherePassengerId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser wherePassengerUuid($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser wherePhoneNum($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereRewardPoints($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUpdatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUserId($value)
+ * @mixin \Eloquent
  */
 class PassengerUser extends Model
 {

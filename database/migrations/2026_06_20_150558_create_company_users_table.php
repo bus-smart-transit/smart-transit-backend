@@ -17,7 +17,7 @@ return new class extends Migration {
             $table->string('phone_num');
             $table->string('name');
             $table->string('address');
-            $table->timestamp('birth_date');
+            $table->timestamp('birth_date')->nullable()->default(now());
             $table->timestamps();
         });
     }

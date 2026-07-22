@@ -83,7 +83,7 @@ class StaffService
         }
 
         $user = $this->userRepository->create([
-            'username' => $payload['username'] ?? explode('@', $payload['email'])[0],
+            'username' => $payload['username'] ?? null,
             'email' => $payload['email'],
             'password' => $payload['password'],
             'role' => $targetRole,

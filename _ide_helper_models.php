@@ -13,6 +13,7 @@
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperFareRule
  * @property int $fare_rule_id
  * @property int $fleet_id
  * @property float $base_fare
@@ -33,14 +34,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereSeatType($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperFareRule {}
+	class FareRule extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperFleet
  * @property int $fleet_id
  * @property int $company_user_id
  * @property string $plate_number
@@ -69,15 +69,14 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereStandingCapacity($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperFleet {}
+	class Fleet extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
  * @property-read \App\Models\Fleet $fleet
+ * @mixin IdeHelperFleetRoute
  * @property int $fleet_route_id
  * @property int $fleet_id
  * @property int $route_id
@@ -100,14 +99,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetRoute whereStartTime($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetRoute whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FleetRoute whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperFleetRoute {}
+	class FleetRoute extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperOnlinePayment
  * @property int $online_payment_id
  * @property int $passenger_id
  * @property int $payment_id
@@ -123,14 +121,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnlinePayment wherePassengerId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnlinePayment wherePaymentId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnlinePayment whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperOnlinePayment {}
+	class OnlinePayment extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperOnsitePayment
  * @property int $onsite_payment_id
  * @property int $payment_id
  * @property int $conductor_id
@@ -146,14 +143,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnsitePayment whereOnsitePaymentId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnsitePayment wherePaymentId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|OnsitePayment whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperOnsitePayment {}
+	class OnsitePayment extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperPassengerUser
  * @property int $passenger_id
  * @property string $passenger_uuid
  * @property int $user_id
@@ -178,14 +174,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereRewardPoints($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUserId($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperPassengerUser {}
+	class PassengerUser extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperPayment
  * @property int $payment_id
  * @property float $amount
  * @property \Illuminate\Support\Carbon $payment_created
@@ -225,14 +220,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereTransactionReference($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperPayment {}
+	class Payment extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperRewardTransaction
  * @property int $reward_transaction_id
  * @property int $passenger_id
  * @property int|null $payment_id
@@ -254,15 +248,14 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereRewardTransactionId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereType($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperRewardTransaction {}
+	class RewardTransaction extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
  * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RouteStop> $routeStops
+ * @mixin IdeHelperRoute
  * @property int $route_id
  * @property string $origin
  * @property string $destination
@@ -281,14 +274,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereRouteId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereRouteName($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperRoute {}
+	class Route extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperRouteStop
  * @property int $route_stop_id
  * @property int $stop_id
  * @property int $route_id
@@ -308,14 +300,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopOrder($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperRouteStop {}
+	class RouteStop extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperStaffUser
  * @property int $company_user_id
  * @property string $company_user_uuid
  * @property int $user_id
@@ -336,14 +327,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser wherePhoneNum($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUserId($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperStaffUser {}
+	class StaffUser extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperStop
  * @property int $stop_id
  * @property string $stop_name
  * @property \Illuminate\Support\Carbon|null $created_at
@@ -361,18 +351,17 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Stop whereStopId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Stop whereStopName($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Stop whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperStop {}
+	class Stop extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperTicket
  * @property int $ticket_id
  * @property int $fleet_route_id
  * @property int $trip_id
- * @property int|null $fare_id
+ * @property int|null $fare_rule_id
  * @property int $payment_id
  * @property int|null $passenger_id
  * @property string $ticket_uuid
@@ -382,6 +371,7 @@ namespace App\Models{
  * @property \Illuminate\Support\Carbon|null $created_at
  * @property \Illuminate\Support\Carbon|null $updated_at
  * @property string|null $seat_type
+ * @property numeric|null $distance_km
  * @property-read \App\Models\FareRule|null $fareRule
  * @property-read \App\Models\FleetRoute $fleetRoute
  * @property-read \App\Models\PassengerUser|null $passenger
@@ -393,7 +383,8 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereAmount($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereBoardedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereCreatedAt($value)
- * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereFareId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereDistanceKm($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereFareRuleId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereFleetRouteId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket wherePassengerId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket wherePaymentId($value)
@@ -403,15 +394,14 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereTicketUuid($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereTripId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperTicket {}
+	class Ticket extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
  * @property-read \App\Models\FleetRoute $fleetRoute
+ * @mixin IdeHelperTrip
  * @property int $trip_id
  * @property int $fleet_route_id
  * @property int $company_user_id
@@ -440,14 +430,13 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Trip whereTripDate($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Trip whereTripId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Trip whereUpdatedAt($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperTrip {}
+	class Trip extends \Eloquent {}
 }
 
 namespace App\Models{
 /**
+ * @mixin IdeHelperUser
  * @property int $user_id
  * @property string $email
  * @property string $username
@@ -473,9 +462,7 @@ namespace App\Models{
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUserId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUsername($value)
- * @mixin \Eloquent
  */
-	#[\AllowDynamicProperties]
-	class IdeHelperUser {}
+	class User extends \Eloquent {}
 }
 

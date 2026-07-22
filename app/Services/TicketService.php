@@ -91,6 +91,8 @@ class TicketService
             'fare_rule_id' => $rule->fare_rule_id,
             'distance_km' => $distanceKm,
             'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm),
+            'origin_stop_id' => $item['origin_stop_id'],
+            'destination_stop_id' => $item['destination_stop_id'],
         ];
     }
 

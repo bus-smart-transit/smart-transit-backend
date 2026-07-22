@@ -2,6 +2,7 @@
 namespace App\Services;
 use App\Repositories\TripRepository;
 use App\Repositories\StaffRepository;
+use App\Services\FleetDailyPinService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 
@@ -10,8 +11,8 @@ class TripService
     public function __construct(
         private TripRepository $tripRepository,
         private StaffRepository $StaffRepository,
-    ) {
-    }
+        private FleetDailyPinService $pinService,
+    ) {}
 
     public function scheduleTrip(array $payload): object
     {
@@ -31,6 +32,20 @@ class TripService
 
     public function departTrip(int $tripId): object
     {
+        $trip = $this->tripRepository->findById($tripId);
+
+        if (!$trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        $fleetId = $trip->fleetRoute->fleet_id;
+
+        if (!$this->pinService->isBothVerified($fleetId)) {
+            throw ValidationException::withMessages([
+                'pin' => ['Both the driver and conductor must verify the daily fleet PIN before the trip can depart.'],
+            ]);
+        }
+
         $this->tripRepository->updateStatus($tripId, 'departed');
         return $this->tripRepository->findById($tripId);
     }
@@ -52,6 +67,16 @@ class TripService
         }
 
         $this->tripRepository->assignDriver($tripId, $payload['driver_id']);
+
+        // Auto-generate daily PIN if conductor is already assigned
+        $trip = $this->tripRepository->findById($tripId);
+        if ($trip && $trip->conductor_id) {
+            $this->pinService->generateOrGet(
+                $trip->fleetRoute->fleet_id,
+                $payload['driver_id'],
+                $trip->conductor_id,
+            );
+        }
     }
 
     public function assignConductor(int $tripId, array $payload): void
@@ -65,6 +90,16 @@ class TripService
         }
 
         $this->tripRepository->assignConductor($tripId, $payload['conductor_id']);
+
+        // Auto-generate daily PIN if driver is already assigned
+        $trip = $this->tripRepository->findById($tripId);
+        if ($trip && $trip->driver_id) {
+            $this->pinService->generateOrGet(
+                $trip->fleetRoute->fleet_id,
+                $trip->driver_id,
+                $payload['conductor_id'],
+            );
+        }
     }
 
     public function getDriverTrips(int $driverCompanyUserId): object
@@ -80,6 +115,24 @@ class TripService
     public function getCurrentTripForConductor(int $conductorCompanyUserId): ?object
     {
         return $this->tripRepository->findCurrentByConductor($conductorCompanyUserId);
+    }
+
+    /**
+     * Returns any trip assigned to this driver today (including scheduled),
+     * used to resolve fleet context for PIN endpoints.
+     */
+    public function getCurrentOrScheduledTripForDriver(int $driverCompanyUserId): ?object
+    {
+        return $this->tripRepository->findTodayByDriver($driverCompanyUserId);
+    }
+
+    /**
+     * Returns any trip assigned to this conductor today (including scheduled),
+     * used to resolve fleet context for PIN endpoints.
+     */
+    public function getCurrentOrScheduledTripForConductor(int $conductorCompanyUserId): ?object
+    {
+        return $this->tripRepository->findTodayByConductor($conductorCompanyUserId);
     }
 
     /**

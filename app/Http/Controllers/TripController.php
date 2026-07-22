@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Controllers;
 use App\Services\TripService;
+use App\Services\DriverNavigationService;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\AssignDriverRequest;
 use App\Http\Requests\AssignConductorRequest;
@@ -10,7 +11,10 @@ use Illuminate\Http\Request;
 class TripController extends Controller
 {
     use ApiResponse;
-    public function __construct(private TripService $tripService)
+    public function __construct(
+        private TripService $tripService,
+        private DriverNavigationService $navigationService,
+    )
     {
     }
 
@@ -85,5 +89,57 @@ class TripController extends Controller
         if (!$trip)
             return $this->error('No active trip found.', 404);
         return $this->success($trip, 'Current trip retrieved successfully');
+    }
+
+    /**
+     * Driver: Get current trip with all stops and passengers alighting at each stop
+     * GET /driver/trips/current/stops
+     */
+    public function currentTripStops(Request $request)
+    {
+        $companyUser = $request->user()->companyProfile;
+        $tripWithStops = $this->navigationService->getCurrentTripWithStops($companyUser->company_user_id);
+        return $this->success($tripWithStops, 'Current trip stops and passengers retrieved successfully');
+    }
+
+    /**
+     * Driver: Get details for a specific stop on current trip
+     * GET /driver/trips/current/stops/{stopId}
+     */
+    public function currentTripStopDetail(Request $request, int $stopId)
+    {
+        $companyUser = $request->user()->companyProfile;
+        $stopDetails = $this->navigationService->getStopDetails($companyUser->company_user_id, $stopId);
+        return $this->success($stopDetails, 'Stop details retrieved successfully');
+    }
+
+    /**
+     * Driver: Acknowledge reaching a stop (mark as passed)
+     * POST /driver/trips/current/stops/{stopId}/acknowledge
+     */
+    public function acknowledgeStop(Request $request, int $stopId)
+    {
+        $companyUser = $request->user()->companyProfile;
+        $this->navigationService->acknowledgeStop($companyUser->company_user_id, $stopId);
+        return $this->success(null, 'Stop acknowledged successfully');
+    }
+
+    /**
+     * Public: Get available trips for passengers to book
+     * GET /trips
+     */
+    public function availableTrips()
+    {
+        $trips = \App\Models\Trip::query()
+            ->whereIn('status', ['scheduled', 'boarding'])
+            ->where('trip_date', '>=', now()->toDateString())
+            ->with([
+                'fleetRoute.route.routeStops',
+                'fleetRoute.fleet',
+            ])
+            ->orderBy('trip_date', 'asc')
+            ->get();
+
+        return $this->success($trips, 'Available trips retrieved successfully');
     }
 }

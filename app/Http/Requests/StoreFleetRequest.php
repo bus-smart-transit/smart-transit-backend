@@ -11,7 +11,6 @@ class StoreFleetRequest extends FormRequest
     {
         return [
             'plate_number' => 'required|string|unique:fleets,plate_number',
-            'capacity' => 'required|integer|min:1',
             'seated_capacity' => 'required|integer|min:0',
             'standing_capacity' => 'required|integer|min:0',
             'fleet_type' => 'required|in:public,private'

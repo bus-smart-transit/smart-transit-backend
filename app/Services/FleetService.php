@@ -11,12 +11,16 @@ class FleetService
     ) {
     }
 
-    // $payload = ['company_user_id','plate_number','capacity','seated_capacity','standing_capacity']
+    // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type']
     public function registerFleet(array $payload, int $staffId): object
     {
+        // Auto-calculate capacity from seated + standing
+        $capacity = (intval($payload['seated_capacity'] ?? 0) + intval($payload['standing_capacity'] ?? 0));
+        
         return $this->fleetRepository->create(array_merge(
             $payload,
             ['company_user_id' => $staffId],
+            ['capacity' => $capacity],
             ['status' => 'active']
         ));
     }

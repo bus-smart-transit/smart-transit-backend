@@ -6,6 +6,46 @@ use Illuminate\Database\Eloquent\Model;
 
 /**
  * @mixin IdeHelperPayment
+ * @property int $payment_id
+ * @property float $amount
+ * @property \Illuminate\Support\Carbon $payment_created
+ * @property string $transaction_reference
+ * @property string $payment_method
+ * @property string $payment_channel
+ * @property string $status
+ * @property string $payment_uuid
+ * @property bool $is_valid
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property string|null $gateway_reference
+ * @property string|null $guest_email
+ * @property string|null $payment_intent_id
+ * @property array<array-key, mixed>|null $items_payload
+ * @property \Illuminate\Support\Carbon|null $hold_expires_at
+ * @property-read \App\Models\OnlinePayment|null $onlinePayment
+ * @property-read \App\Models\OnsitePayment|null $onsitePayment
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Ticket> $tickets
+ * @property-read int|null $tickets_count
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereAmount($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereGatewayReference($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereGuestEmail($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereHoldExpiresAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereIsValid($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereItemsPayload($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentChannel($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentCreated($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentIntentId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentMethod($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment wherePaymentUuid($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereStatus($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereTransactionReference($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Payment whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class Payment extends Model
 {

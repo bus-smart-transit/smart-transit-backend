@@ -6,6 +6,26 @@ use Illuminate\Database\Eloquent\Model;
 
 /**
  * @mixin IdeHelperRouteStop
+ * @property int $route_stop_id
+ * @property int $stop_id
+ * @property int $route_id
+ * @property int $stop_order
+ * @property numeric $distance_from_origin_km
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read \App\Models\Route $route
+ * @property-read \App\Models\Stop $stop
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereDistanceFromOriginKm($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereRouteId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereRouteStopId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopOrder($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class RouteStop extends Model
 {

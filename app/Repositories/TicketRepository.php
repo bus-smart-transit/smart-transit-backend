@@ -14,14 +14,14 @@ class TicketRepository
 
     public function findByUuid(string $uuid): ?Ticket
     {
-        return Ticket::with(['trip.fleetRoute.route', 'fare', 'payment'])
+        return Ticket::with(['trip.fleetRoute.route', 'fareRule', 'payment'])
             ->where('ticket_uuid', $uuid)
             ->first();
     }
 
     public function findByPassenger(int $passengerId): Collection
     {
-        return Ticket::with(['trip.fleetRoute.route', 'fare'])
+        return Ticket::with(['trip.fleetRoute.route', 'fareRule'])
             ->where('passenger_id', $passengerId)
             ->latest()
             ->get();
@@ -47,6 +47,90 @@ class TicketRepository
                 $q->where('transaction_reference', $transactionReference)
                     ->where('guest_email', $email);
             })
+            ->get();
+    }
+
+    /**
+     * Get all boarded tickets for a trip with destination stop info
+     */
+    public function getboardedTicketsWithDestination(int $tripId): Collection
+    {
+        return Ticket::with(['passenger.user', 'destinationStop', 'originStop'])
+            ->where('trip_id', $tripId)
+            ->where('status', 'boarded')
+            ->get();
+    }
+
+    /**
+     * Get passengers alighting at a specific stop on a trip
+     */
+    public function getPassengersAlightingAtStop(int $tripId, int $stopId): Collection
+    {
+        return Ticket::with(['passenger.user', 'originStop', 'destinationStop'])
+            ->where('trip_id', $tripId)
+            ->where('destination_stop_id', $stopId)
+            ->where('status', 'boarded')
+            ->get();
+    }
+
+    /**
+     * Count boarded tickets of a specific seat type for a trip
+     */
+    public function countBoardedByType(int $tripId, string $seatType): int
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->where('seat_type', $seatType)
+            ->where('status', 'boarded')
+            ->count();
+    }
+
+    /**
+     * Count passengers boarding at a specific stop
+     */
+    public function countBoardingAtStop(int $tripId, int $stopId): int
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->where('origin_stop_id', $stopId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->count();
+    }
+
+    /**
+     * Count passengers alighting at a specific stop
+     */
+    public function countAlightingAtStop(int $tripId, int $stopId): int
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->where('destination_stop_id', $stopId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->count();
+    }
+
+    /**
+     * Count cumulative passengers on bus after a specific stop
+     */
+    public function countPassengersAfterStop(int $tripId, int $stopId): int
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->where('status', 'boarded')
+            ->get()
+            ->filter(function ($ticket) use ($stopId) {
+                // Passenger is on bus if they've boarded and haven't reached destination
+                $boardedAtOrBefore = ($ticket->originStop?->stop_id ?? 0) <= $stopId;
+                $destinationAfter = ($ticket->destinationStop?->stop_id ?? 999) > $stopId;
+                return $boardedAtOrBefore && $destinationAfter;
+            })
+            ->count();
+    }
+
+    /**
+     * Get all boarded passengers with full details
+     */
+    public function getBoardedPassengersDetails(int $tripId): Collection
+    {
+        return Ticket::with(['passenger.user', 'originStop', 'destinationStop'])
+            ->where('trip_id', $tripId)
+            ->where('status', 'boarded')
             ->get();
     }
 }

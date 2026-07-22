@@ -42,7 +42,7 @@ class TripRepository
     {
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('driver_id', $driverCompanyUserId)
-            ->whereIn('status', ['boarding', 'departed'])
+            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
             ->where('trip_date', today())
             ->first();
     }
@@ -51,7 +51,7 @@ class TripRepository
     {
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('conductor_id', $conductorCompanyUserId)
-            ->whereIn('status', ['boarding', 'departed'])
+            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
             ->where('trip_date', today())
             ->first();
     }
@@ -71,6 +71,22 @@ class TripRepository
     {
         return Trip::where('trip_id', $tripId)
             ->update(['conductor_id' => $conductorCompanyUserId]) > 0;
+    }
+
+    public function findTodayByDriver(int $driverCompanyUserId): ?Trip
+    {
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('driver_id', $driverCompanyUserId)
+            ->where('trip_date', today())
+            ->first();
+    }
+
+    public function findTodayByConductor(int $conductorCompanyUserId): ?Trip
+    {
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('conductor_id', $conductorCompanyUserId)
+            ->where('trip_date', today())
+            ->first();
     }
 
     public function incrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
@@ -97,5 +113,16 @@ class TripRepository
         $trip->current_standing_capacity = max(0, $trip->current_standing_capacity - $standingDelta);
         $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
         return $trip->save();
+    }
+
+    /**
+     * Update the last acknowledged stop for a trip
+     */
+    public function updateLastAcknowledgedStop(int $tripId, int $stopId): bool
+    {
+        return Trip::where('trip_id', $tripId)->update([
+            'last_acknowledged_stop_id' => $stopId,
+            'last_acknowledged_at' => now()
+        ]) > 0;
     }
 }
