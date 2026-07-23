@@ -37,7 +37,7 @@ class RewardService
         });
     }
 
-    public function redeemPoints(int $passengerId, int $points, ?string $description = null): bool
+    public function redeemPoints(int $passengerId, int $points, ?string $description = null, ?int $paymentId = null): bool
     {
         $currentPoints = $this->rewardRepository->getPoints($passengerId);
 
@@ -45,12 +45,12 @@ class RewardService
             return false;
         }
 
-        DB::transaction(function () use ($passengerId, $points, $description) {
+        DB::transaction(function () use ($passengerId, $points, $description, $paymentId) {
             $this->rewardRepository->decrementPoints($passengerId, $points);
 
             $this->rewardRepository->createTransaction([
                 'passenger_id' => $passengerId,
-                'payment_id' => null,
+                'payment_id' => $paymentId,
                 'points' => -$points,
                 'type' => 'redeemed',
                 'description' => $description ?? 'Points redeemed',
@@ -63,5 +63,10 @@ class RewardService
     public function getHistory(int $passengerId): Collection
     {
         return $this->rewardRepository->findHistoryForPassenger($passengerId);
+    }
+
+    public function getPoints(int $passengerId): int
+    {
+        return (int) floor($this->rewardRepository->getPoints($passengerId));
     }
 }

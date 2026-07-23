@@ -55,6 +55,21 @@ class TicketService
     }
 
     /**
+     * Reserves one more seat/standing slot using a precomputed pricing
+     * template from a previous reserveAndPrice() call for identical items.
+     */
+    public function reserveFromTemplate(array $reservedTemplate): array
+    {
+        if (!isset($reservedTemplate['trip_id'], $reservedTemplate['seat_type'])) {
+            throw new \RuntimeException('Invalid reservation template.');
+        }
+
+        $this->tripService->recordBoarding((int) $reservedTemplate['trip_id'], (string) $reservedTemplate['seat_type']);
+
+        return $reservedTemplate;
+    }
+
+    /**
      * Computed on the fly — no fare_matrix table. The distance between two
      * known stops on a known route is exact (no interpolation needed), so
      * this is just a subtraction plus the shared fare formula.
@@ -144,10 +159,16 @@ class TicketService
             'status' => 'issued',
             'amount' => $reserved['amount'],
             'seat_type' => $reserved['seat_type'],
+            'origin_stop_id' => $reserved['origin_stop_id'] ?? null,
+            'destination_stop_id' => $reserved['destination_stop_id'] ?? null,
         ]);
 
         if ($passengerId) {
-            $this->rewardService->awardPoints($passengerId, $reserved['amount'], $paymentId);
+            $earnableAmount = isset($reserved['reward_earn_amount'])
+                ? (float) $reserved['reward_earn_amount']
+                : (float) $reserved['amount'];
+
+            $this->rewardService->awardPoints($passengerId, $earnableAmount, $paymentId);
         }
 
         return $ticket;
@@ -195,6 +216,19 @@ class TicketService
             ]);
         }
 
+        $tripDate = $ticket->trip?->trip_date;
+        if ($tripDate && now()->startOfDay()->lt($tripDate->startOfDay())) {
+            throw ValidationException::withMessages([
+                'ticket' => ['This ticket is not yet active. It can only be used on the scheduled trip date.'],
+            ]);
+        }
+
+        if ($tripDate && now()->gt($tripDate->copy()->endOfDay())) {
+            throw ValidationException::withMessages([
+                'ticket' => ['This ticket has expired. Tickets are only valid until 11:59 PM of the scheduled trip date.'],
+            ]);
+        }
+
         $this->ticketRepository->markBoarded($ticket->ticket_id);
         $boardedTicket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
 
@@ -213,11 +247,29 @@ class TicketService
 
     public function getPassengerTickets(int $passengerId): object
     {
-        return $this->ticketRepository->findByPassenger($passengerId);
+        return $this->ticketRepository
+            ->findByPassenger($passengerId)
+            ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
 
-    public function findByTransactionAndEmail(string $transactionReference, string $email): object
+    public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): object
     {
-        return $this->ticketRepository->findByTransactionAndEmail($transactionReference, $email);
+        return $this->ticketRepository
+            ->findByTransactionAndEmail($transactionReference, $email, $paymentId)
+            ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
+    }
+
+    private function appendValidityWindow(Ticket $ticket): Ticket
+    {
+        $tripDate = $ticket->trip?->trip_date;
+        if ($tripDate) {
+            $ticket->setAttribute('valid_from', $tripDate->copy()->startOfDay()->toIso8601String());
+            $ticket->setAttribute('expires_at', $tripDate->copy()->endOfDay()->toIso8601String());
+        } else {
+            $ticket->setAttribute('valid_from', null);
+            $ticket->setAttribute('expires_at', null);
+        }
+
+        return $ticket;
     }
 }

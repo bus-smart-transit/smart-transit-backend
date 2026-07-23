@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Stop;
 use App\Models\Ticket;
 
 class QRCodeService
@@ -12,36 +13,53 @@ class QRCodeService
      */
     public function generateQRData(Ticket $ticket): array
     {
-        // QR code encodes the ticket UUID
-        // Frontend can use this with a library like qrcode.js or html5-qrcode
+        // QR code now encodes only ticket UUID.
         $qrContent = $this->encodeTicketData($ticket);
+        $destination = $ticket->destinationStop?->stop_name ?? $this->resolveDestinationFromPaymentPayload($ticket) ?? 'Not specified';
 
         return [
-            'ticket_id' => $ticket->ticket_id,
             'ticket_uuid' => $ticket->ticket_uuid,
             'qr_content' => $qrContent,
             'qr_url' => $this->generateQRUrl($qrContent),
             'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
             'trip_id' => $ticket->trip_id,
-            'destination' => $ticket->destinationStop?->stop_name ?? 'Not specified',
+            'destination' => $destination,
             'seat_type' => $ticket->seat_type,
             'amount' => $ticket->amount,
+            'valid_from' => $ticket->trip?->trip_date?->copy()->startOfDay()?->toIso8601String(),
+            'expires_at' => $ticket->trip?->trip_date?->copy()->endOfDay()?->toIso8601String(),
         ];
     }
 
+    private function resolveDestinationFromPaymentPayload(Ticket $ticket): ?string
+    {
+        $items = $ticket->payment?->items_payload ?? [];
+
+        foreach ($items as $item) {
+            $sameTrip = (int) ($item['trip_id'] ?? 0) === (int) $ticket->trip_id;
+            $sameSeatType = ($item['seat_type'] ?? null) === $ticket->seat_type;
+            if (!$sameTrip || !$sameSeatType) {
+                continue;
+            }
+
+            $destinationStopId = isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null;
+            if (!$destinationStopId) {
+                continue;
+            }
+
+            return Stop::query()->where('stop_id', $destinationStopId)->value('stop_name');
+        }
+
+        return null;
+    }
+
     /**
-     * Encode ticket data into QR format
-     * Format: ticket_uuid|trip_id|passenger_id|destination_stop_id|issued_at
+     * Encode ticket data into QR format.
+     * Format: ticket_uuid (UUID-only).
      */
     private function encodeTicketData(Ticket $ticket): string
     {
-        return implode('|', [
-            $ticket->ticket_uuid,
-            $ticket->trip_id,
-            $ticket->passenger_id ?? 'guest',
-            $ticket->destination_stop_id ?? 0,
-            $ticket->created_at->timestamp,
-        ]);
+        return $ticket->ticket_uuid;
     }
 
     /**
@@ -59,6 +77,18 @@ class QRCodeService
      */
     public function decodeQRContent(string $content): array
     {
+        // UUID-only format (preferred)
+        if (!str_contains($content, '|')) {
+            return [
+                'ticket_uuid' => $content,
+                'trip_id' => null,
+                'passenger_id' => null,
+                'destination_stop_id' => null,
+                'issued_at' => null,
+            ];
+        }
+
+        // Legacy format compatibility
         $parts = explode('|', $content);
 
         return [
@@ -75,6 +105,12 @@ class QRCodeService
      */
     public function isValidQRContent(string $content): bool
     {
+        // UUID-only format is valid.
+        if (!str_contains($content, '|')) {
+            return !empty(trim($content));
+        }
+
+        // Legacy format compatibility.
         $parts = explode('|', $content);
         return count($parts) === 5 && !empty($parts[0]); // Must have ticket_uuid
     }

@@ -163,7 +163,7 @@ class TripService
      */
     public function recordBoarding(int $tripId, string $seatType): object
     {
-        return DB::transaction(function () use ($tripId, $seatType) {
+        $execute = function () use ($tripId, $seatType) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
             if (!$trip) {
@@ -182,9 +182,19 @@ class TripService
                 throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
             }
 
-            $this->tripRepository->incrementOccupancy($tripId, $seatedDelta, $standingDelta);
-            return $this->tripRepository->findById($tripId);
-        });
+            $trip->current_seated_capacity += $seatedDelta;
+            $trip->current_standing_capacity += $standingDelta;
+            $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
+            $trip->save();
+
+            return $trip;
+        };
+
+        if (DB::transactionLevel() > 0) {
+            return $execute();
+        }
+
+        return DB::transaction($execute);
     }
 
     /**
@@ -194,7 +204,7 @@ class TripService
      */
     public function releaseBoarding(int $tripId, string $seatType): object
     {
-        return DB::transaction(function () use ($tripId, $seatType) {
+        $execute = function () use ($tripId, $seatType) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
             if (!$trip) {
@@ -204,8 +214,18 @@ class TripService
             $seatedDelta = $seatType === 'seated' ? 1 : 0;
             $standingDelta = $seatType === 'standing' ? 1 : 0;
 
-            $this->tripRepository->decrementOccupancy($tripId, $seatedDelta, $standingDelta);
-            return $this->tripRepository->findById($tripId);
-        });
+            $trip->current_seated_capacity = max(0, $trip->current_seated_capacity - $seatedDelta);
+            $trip->current_standing_capacity = max(0, $trip->current_standing_capacity - $standingDelta);
+            $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
+            $trip->save();
+
+            return $trip;
+        };
+
+        if (DB::transactionLevel() > 0) {
+            return $execute();
+        }
+
+        return DB::transaction($execute);
     }
 }

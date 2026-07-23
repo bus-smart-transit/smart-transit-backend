@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Stop;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Repositories\TicketRepository;
@@ -145,23 +146,68 @@ class OccupancyService
 
         $passengers = $this->ticketRepository->getActivePassengersDetails($tripId);
 
+        $payloadStopIds = [];
+        foreach ($passengers as $ticket) {
+            $item = $this->matchPaymentItemForTicket($ticket);
+            $originId = isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null;
+            $destinationId = isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null;
+
+            if ($originId) {
+                $payloadStopIds[] = $originId;
+            }
+            if ($destinationId) {
+                $payloadStopIds[] = $destinationId;
+            }
+        }
+
+        $payloadStopNames = Stop::query()
+            ->whereIn('stop_id', array_values(array_unique($payloadStopIds)))
+            ->pluck('stop_name', 'stop_id');
+
         return [
             'trip_id' => $tripId,
             'trip_status' => $trip->status,
             'total_count' => $passengers->count(),
-            'passengers' => $passengers->map(fn($ticket) => [
-                'ticket_id' => $ticket->ticket_id,
-                'ticket_uuid' => $ticket->ticket_uuid,
-                'passenger_name' => $ticket->passenger->user->name ?? 'Guest',
-                'passenger_id' => $ticket->passenger_id,
-                'seat_type' => $ticket->seat_type,
-                'status' => $ticket->status,
-                'is_boarded' => $ticket->status === 'boarded',
-                'origin_stop' => $ticket->originStop?->stop_name,
-                'destination_stop' => $ticket->destinationStop?->stop_name,
-                'boarded_at' => $ticket->boarded_at,
-            ])->values()->toArray(),
+            'passengers' => $passengers->map(function ($ticket) use ($payloadStopNames) {
+                $matchedItem = $this->matchPaymentItemForTicket($ticket);
+                $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
+                $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
+
+                $originStopName = $ticket->originStop?->stop_name
+                    ?? ($payloadOriginId ? ($payloadStopNames[$payloadOriginId] ?? null) : null);
+                $destinationStopName = $ticket->destinationStop?->stop_name
+                    ?? ($payloadDestinationId ? ($payloadStopNames[$payloadDestinationId] ?? null) : null);
+
+                return [
+                    'ticket_id' => $ticket->ticket_id,
+                    'ticket_uuid' => $ticket->ticket_uuid,
+                    'passenger_name' => $ticket->passenger->user->name ?? 'Guest',
+                    'passenger_id' => $ticket->passenger_id,
+                    'seat_type' => $ticket->seat_type,
+                    'status' => $ticket->status,
+                    'is_boarded' => $ticket->status === 'boarded',
+                    'origin_stop' => $originStopName,
+                    'destination_stop' => $destinationStopName,
+                    'boarded_at' => $ticket->boarded_at,
+                ];
+            })->values()->toArray(),
         ];
+    }
+
+    private function matchPaymentItemForTicket(Ticket $ticket): array
+    {
+        $items = $ticket->payment?->items_payload ?? [];
+
+        foreach ($items as $item) {
+            $sameTrip = (int) ($item['trip_id'] ?? 0) === (int) $ticket->trip_id;
+            $sameSeatType = ($item['seat_type'] ?? null) === $ticket->seat_type;
+
+            if ($sameTrip && $sameSeatType) {
+                return $item;
+            }
+        }
+
+        return [];
     }
 
     /**

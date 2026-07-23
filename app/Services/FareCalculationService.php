@@ -13,4 +13,4 @@ class FareCalculationService
     {
         return round($baseFare + ($distanceKm * $farePerKm), 2);
     }
-}
+} 

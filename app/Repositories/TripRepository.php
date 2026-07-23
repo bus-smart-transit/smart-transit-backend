@@ -50,7 +50,7 @@ class TripRepository
 
     public function listByConductor(int $conductorCompanyUserId): Collection
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->where('trip_date', '>=', today())
             ->orderBy('trip_date', 'asc')
@@ -71,7 +71,7 @@ class TripRepository
 
     public function findCurrentByConductor(int $conductorCompanyUserId): ?Trip
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
             ->where('trip_date', '>=', today())

@@ -29,7 +29,9 @@ class OnlineCheckoutRequest extends FormRequest
             'items.*.destination_lng' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-180,180',
 
             'payment_channel' => 'required|string|in:gcash,maya,card',
-            'guest_email' => ['required_if:guest_checkout,true', 'nullable', 'email'],
+            'guest_email' => ['nullable', 'email'],
+            'return_base_url' => ['nullable', 'url', 'max:255'],
+            'reward_points_to_use' => ['nullable', 'integer', 'min:1'],
         ];
     }
 

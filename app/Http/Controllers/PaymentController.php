@@ -5,7 +5,10 @@ use App\Http\Requests\OnlineCheckoutRequest;
 use App\Http\Requests\OnsiteCheckoutRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Database\QueryException;
 
 class PaymentController extends Controller
 {
@@ -33,8 +36,20 @@ class PaymentController extends Controller
             return $this->error('Checkout validation failed.', 422, $e->errors());
         } catch (ConnectionException $e) {
             return $this->error('Unable to connect to payment gateway. Please verify SSL certificate settings and try again.', 503);
+        } catch (QueryException $e) {
+            $sqlState = $e->getCode();
+            if ($sqlState === '57014') {
+                return $this->error('Checkout query timed out. Please retry in a few seconds.', 503);
+            }
+            return $this->error('Checkout failed while processing database records.', 500);
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            Log::error('checkoutOnline unexpected failure', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return $this->error('Checkout failed due to an unexpected server error. Please try again.', 500);
         }
     }
 
@@ -47,5 +62,17 @@ class PaymentController extends Controller
             $request->validated()
         );
         return $this->success($result, 'Onsite sale recorded successfully');
+    }
+
+    public function passengerHistory(Request $request)
+    {
+        $passengerId = $request->user()?->passengerProfile?->passenger_id;
+
+        if (!$passengerId) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
+        $history = $this->paymentService->getPassengerHistoryFromPayments($passengerId);
+        return $this->success($history, 'Payments history retrieved successfully');
     }
 }

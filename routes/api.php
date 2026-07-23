@@ -48,7 +48,8 @@ Route::prefix('passengers')
         Route::get('profile', [AuthController::class, 'profile']);
         Route::put('profile', [PassengerController::class, 'update']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
-        Route::get('tickets/{ticketId}/qr', [TicketController::class, 'getTicketQR']);
+        Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
+        Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
 

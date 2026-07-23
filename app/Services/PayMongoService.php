@@ -42,7 +42,12 @@ class PayMongoService
                 ],
             ]);
 
-        Log::info('PayMongo checkout session created', ['data' => $response->json('data')]);
+        $sessionData = $response->json('data') ?? [];
+        Log::info('PayMongo checkout session created', [
+            'session_id' => $sessionData['id'] ?? null,
+            'checkout_url' => $sessionData['attributes']['checkout_url'] ?? null,
+            'payment_intent_id' => $sessionData['attributes']['payment_intent']['id'] ?? null,
+        ]);
         if ($response->failed()) {
             Log::error('PayMongo checkout session creation failed', ['body' => $response->body()]);
             throw new \RuntimeException('Unable to create PayMongo checkout session.');

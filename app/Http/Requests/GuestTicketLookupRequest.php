@@ -15,7 +15,8 @@ class GuestTicketLookupRequest extends FormRequest
     {
         return [
             'transaction_reference' => ['required', 'string'],
-            'email' => ['required', 'email'],
+            'email' => ['nullable', 'email'],
+            'payment_id' => ['nullable', 'integer', 'min:1'],
         ];
     }
 }

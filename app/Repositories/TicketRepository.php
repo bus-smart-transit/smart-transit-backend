@@ -21,7 +21,7 @@ class TicketRepository
 
     public function findByPassenger(int $passengerId): Collection
     {
-        return Ticket::with(['trip.fleetRoute.route', 'fareRule'])
+        return Ticket::with(['trip.fleetRoute.route', 'fareRule', 'originStop', 'destinationStop', 'payment'])
             ->where('passenger_id', $passengerId)
             ->latest()
             ->get();
@@ -40,12 +40,19 @@ class TicketRepository
         ]) > 0;
     }
 
-    public function findByTransactionAndEmail(string $transactionReference, string $email): Collection
+    public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): Collection
     {
-        return Ticket::with('payment')
-            ->whereHas('payment', function ($q) use ($transactionReference, $email) {
-                $q->where('transaction_reference', $transactionReference)
-                    ->where('guest_email', $email);
+        return Ticket::with(['payment', 'originStop', 'destinationStop', 'trip.fleetRoute.route'])
+            ->whereHas('payment', function ($q) use ($transactionReference, $email, $paymentId) {
+                $q->where('transaction_reference', $transactionReference);
+
+                if ($email !== null && $email !== '') {
+                    $q->where('guest_email', $email);
+                }
+
+                if ($paymentId !== null) {
+                    $q->where('payment_id', $paymentId);
+                }
             })
             ->get();
     }
@@ -139,7 +146,7 @@ class TicketRepository
      */
     public function getActivePassengersDetails(int $tripId): Collection
     {
-        return Ticket::with(['passenger.user', 'originStop', 'destinationStop'])
+        return Ticket::with(['passenger.user', 'originStop', 'destinationStop', 'payment'])
             ->where('trip_id', $tripId)
             ->whereIn('status', ['issued', 'boarded'])
             ->whereNull('alighted_at')

@@ -40,13 +40,16 @@ class TicketController extends Controller
     // using the transaction reference + email they provided at checkout.
     public function guestLookup(GuestTicketLookupRequest $request)
     {
+        $validated = $request->validated();
+
         $tickets = $this->ticketService->findByTransactionAndEmail(
-            $request->validated('transaction_reference'),
-            $request->validated('email'),
+            $validated['transaction_reference'],
+            $validated['email'] ?? null,
+            $validated['payment_id'] ?? null,
         );
 
         if ($tickets->isEmpty()) {
-            return $this->error('No tickets found for that reference and email.', 404);
+            return $this->error('No tickets found for that transaction reference.', 404);
         }
 
         return $this->success($tickets, 'Tickets retrieved successfully');
@@ -115,11 +118,11 @@ class TicketController extends Controller
 
     /**
      * Passenger: Get QR code for their ticket
-     * GET /passengers/tickets/{ticketId}/qr
+     * GET /passengers/tickets/{ticketUuid}/qr
      */
-    public function getTicketQR(Request $request, int $ticketId)
+    public function getTicketQR(Request $request, string $ticketUuid)
     {
-        $ticket = \App\Models\Ticket::findOrFail($ticketId);
+        $ticket = \App\Models\Ticket::where('ticket_uuid', $ticketUuid)->firstOrFail();
         
         // Verify ownership
         if ($ticket->passenger_id && $ticket->passenger_id !== $request->user()->passengerProfile->passenger_id) {
