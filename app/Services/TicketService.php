@@ -58,13 +58,17 @@ class TicketService
      * Reserves one more seat/standing slot using a precomputed pricing
      * template from a previous reserveAndPrice() call for identical items.
      */
-    public function reserveFromTemplate(array $reservedTemplate): array
+    public function reserveFromTemplate(array $reservedTemplate, int $quantity = 1): array
     {
         if (!isset($reservedTemplate['trip_id'], $reservedTemplate['seat_type'])) {
             throw new \RuntimeException('Invalid reservation template.');
         }
 
-        $this->tripService->recordBoarding((int) $reservedTemplate['trip_id'], (string) $reservedTemplate['seat_type']);
+        $this->tripService->recordBoardingMultiple(
+            (int) $reservedTemplate['trip_id'],
+            (string) $reservedTemplate['seat_type'],
+            max(1, $quantity),
+        );
 
         return $reservedTemplate;
     }

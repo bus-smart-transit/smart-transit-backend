@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Fleet;
+use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\StaffUser;
@@ -78,11 +79,15 @@ function makeFleetRoute(): FleetRoute
 
 test('operator can schedule a trip', function () {
     $operator   = makeStaffUser('operator');
+    $driver     = makeStaffUser('driver');
+    $conductor  = makeStaffUser('conductor');
     $fleetRoute = makeFleetRoute();
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,
         'trip_date'      => now()->toDateString(),
+        'driver_id'      => $driver->companyProfile->company_user_id,
+        'conductor_id'   => $conductor->companyProfile->company_user_id,
     ]);
 
     $response->assertSuccessful()
@@ -209,6 +214,7 @@ test('operator can start boarding', function () {
 
 test('driver can depart a trip', function () {
     $driver     = makeStaffUser('driver');
+    $conductor  = makeStaffUser('conductor');
     $operator   = makeStaffUser('operator');
     $fleetRoute = makeFleetRoute();
 
@@ -216,11 +222,22 @@ test('driver can depart a trip', function () {
         'fleet_route_id'            => $fleetRoute->fleet_route_id,
         'company_user_id'           => $operator->companyProfile->company_user_id,
         'driver_id'                 => $driver->companyProfile->company_user_id,
+        'conductor_id'              => $conductor->companyProfile->company_user_id,
         'trip_date'                 => now()->toDateString(),
         'status'                    => 'boarding',
         'current_seated_capacity'   => 0,
         'current_standing_capacity' => 0,
         'total_occupancy'           => 0,
+    ]);
+
+    FleetDailyPin::create([
+        'trip_id' => $trip->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'pin_code' => '123456',
+        'pin_date' => now()->toDateString(),
+        'driver_verified_at' => now(),
+        'conductor_verified_at' => now(),
     ]);
 
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/depart")

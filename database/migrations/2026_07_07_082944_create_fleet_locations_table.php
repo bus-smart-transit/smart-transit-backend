@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -10,6 +11,27 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        $driver = Schema::getConnection()->getDriverName();
+
+        if ($driver === 'sqlite') {
+            Schema::create('fleet_locations', function (Blueprint $table) {
+                $table->id('fleet_location_id');
+                $table->unsignedBigInteger('fleet_id')->unique();
+                $table->unsignedBigInteger('trip_id')->nullable();
+                // SQLite test DB fallback for PostGIS geography point.
+                $table->string('location', 120);
+                $table->decimal('heading', 5, 2)->nullable();
+                $table->decimal('speed_kmh', 6, 2)->nullable();
+                $table->timestamp('recorded_at')->nullable()->useCurrent();
+                $table->timestamp('updated_at')->nullable()->useCurrent();
+
+                $table->foreign('fleet_id')->references('fleet_id')->on('fleets')->onDelete('cascade');
+                $table->foreign('trip_id')->references('trip_id')->on('trips')->nullOnDelete();
+            });
+
+            return;
+        }
+
         // PostGIS is already enabled in Supabase — we just need the table.
         // We use raw SQL for the GEOGRAPHY column since Laravel's Blueprint
         // doesn't have a native PostGIS type.

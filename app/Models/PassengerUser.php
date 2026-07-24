@@ -46,10 +46,32 @@ class PassengerUser extends Model
         'passenger_uuid',
         'name',
         'birthdate',
+        'birth_date',
         'phone_num',
         'address',
         'reward_points',
     ];
+
+    protected $appends = [
+        'birthdate',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'birth_date' => 'date',
+        ];
+    }
+
+    public function getBirthdateAttribute(): mixed
+    {
+        return $this->attributes['birth_date'] ?? null;
+    }
+
+    public function setBirthdateAttribute(mixed $value): void
+    {
+        $this->attributes['birth_date'] = $value;
+    }
 
     public function user()
     {

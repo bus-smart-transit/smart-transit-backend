@@ -18,16 +18,31 @@ return new class extends Migration
             }
         });
 
-        // Backfill trip_id from previously stored fleet_route_id and pin_date.
-        DB::statement(<<<'SQL'
-            UPDATE fleet_daily_pins fdp
-            SET trip_id = t.trip_id
-            FROM trips t
-            WHERE fdp.trip_id IS NULL
-              AND fdp.fleet_route_id IS NOT NULL
-              AND t.fleet_route_id = fdp.fleet_route_id
-              AND t.trip_date = fdp.pin_date
+                // Backfill trip_id from previously stored fleet_route_id and pin_date.
+                if (DB::getDriverName() === 'sqlite') {
+                        DB::statement(<<<'SQL'
+                                UPDATE fleet_daily_pins
+                                SET trip_id = (
+                                        SELECT t.trip_id
+                                        FROM trips t
+                                        WHERE t.fleet_route_id = fleet_daily_pins.fleet_route_id
+                                            AND t.trip_date = fleet_daily_pins.pin_date
+                                        LIMIT 1
+                                )
+                                WHERE trip_id IS NULL
+                                    AND fleet_route_id IS NOT NULL
 SQL);
+                } else {
+                        DB::statement(<<<'SQL'
+                                UPDATE fleet_daily_pins fdp
+                                SET trip_id = t.trip_id
+                                FROM trips t
+                                WHERE fdp.trip_id IS NULL
+                                    AND fdp.fleet_route_id IS NOT NULL
+                                    AND t.fleet_route_id = fdp.fleet_route_id
+                                    AND t.trip_date = fdp.pin_date
+SQL);
+                }
 
         Schema::table('fleet_daily_pins', function (Blueprint $table) {
             if (Schema::hasColumn('fleet_daily_pins', 'fleet_route_id')) {

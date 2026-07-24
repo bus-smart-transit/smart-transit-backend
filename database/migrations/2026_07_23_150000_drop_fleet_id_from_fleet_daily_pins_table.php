@@ -30,14 +30,28 @@ return new class extends Migration
             }
         });
 
-        DB::statement(<<<'SQL'
-            UPDATE fleet_daily_pins fdp
-            SET fleet_id = fr.fleet_id
-            FROM trips t
-            JOIN fleets_routes fr ON fr.fleet_route_id = t.fleet_route_id
-            WHERE fdp.trip_id = t.trip_id
-              AND fdp.fleet_id IS NULL
+        if (DB::getDriverName() === 'sqlite') {
+            DB::statement(<<<'SQL'
+                UPDATE fleet_daily_pins
+                SET fleet_id = (
+                    SELECT fr.fleet_id
+                    FROM trips t
+                    JOIN fleets_routes fr ON fr.fleet_route_id = t.fleet_route_id
+                    WHERE t.trip_id = fleet_daily_pins.trip_id
+                    LIMIT 1
+                )
+                WHERE fleet_id IS NULL
 SQL);
+        } else {
+            DB::statement(<<<'SQL'
+                UPDATE fleet_daily_pins fdp
+                SET fleet_id = fr.fleet_id
+                FROM trips t
+                JOIN fleets_routes fr ON fr.fleet_route_id = t.fleet_route_id
+                WHERE fdp.trip_id = t.trip_id
+                  AND fdp.fleet_id IS NULL
+SQL);
+        }
 
         Schema::table('fleet_daily_pins', function (Blueprint $table) {
             $table->foreign('fleet_id')->references('fleet_id')->on('fleets')->cascadeOnDelete();

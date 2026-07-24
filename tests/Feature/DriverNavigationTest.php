@@ -1,67 +1,103 @@
 <?php
 
+use App\Models\StaffUser;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+
+uses(RefreshDatabase::class);
+
+function makeDriverWithProfile(): User
+{
+    $user = User::create([
+        'username' => 'driver_' . uniqid(),
+        'email' => 'driver+' . uniqid() . '@smarttransit.test',
+        'password' => bcrypt('password123'),
+        'role' => 'driver',
+    ]);
+
+    StaffUser::create([
+        'company_user_uuid' => (string) Str::uuid(),
+        'user_id' => $user->user_id,
+        'name' => 'Driver Test',
+        'phone_num' => '09170000001',
+        'address' => 'Test Address',
+    ]);
+
+    return $user;
+}
+
 describe('Driver Navigation System', function () {
-    
+
     it('driver can retrieve current trip with stops and passengers', function () {
+        $driver = makeDriverWithProfile();
+
         $driverLogin = $this->postJson('/api/staff/login', [
-            'username' => 'driver@smarttransit.com',
-            'password' => 'password123'
+            'email' => $driver->email,
+            'password' => 'password123',
         ]);
-        
-        if ($driverLogin->status() === 200) {
-            $token = $driverLogin->json('data.token');
+        $driverLogin->assertStatus(200);
 
-            $response = $this->withHeader('Authorization', "Bearer $token")
-                ->getJson('/api/driver/trips/current/stops');
+        $token = $driverLogin->json('data.token');
 
-            expect($response->status())->toBeIn([200, 404]);
-        }
+        $response = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/driver/trips/current/stops');
+
+        expect($response->status())->toBeIn([200, 404]);
     });
 
     it('driver can view specific stop details', function () {
+        $driver = makeDriverWithProfile();
+
         $driverLogin = $this->postJson('/api/staff/login', [
-            'username' => 'driver@smarttransit.com',
-            'password' => 'password123'
+            'email' => $driver->email,
+            'password' => 'password123',
         ]);
-        
-        if ($driverLogin->status() === 200) {
-            $token = $driverLogin->json('data.token');
+        $driverLogin->assertStatus(200);
 
-            $tripsResponse = $this->withHeader('Authorization', "Bearer $token")
-                ->getJson('/api/driver/trips/current/stops');
+        $token = $driverLogin->json('data.token');
 
-            if ($tripsResponse->status() === 200 && $tripsResponse->json('data.stops.0')) {
-                $stopId = $tripsResponse->json('data.stops.0.stop_id');
+        $tripsResponse = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/driver/trips/current/stops');
 
-                $response = $this->withHeader('Authorization', "Bearer $token")
-                    ->getJson("/api/driver/trips/current/stops/$stopId");
+        if ($tripsResponse->status() === 200 && $tripsResponse->json('data.stops.0')) {
+            $stopId = $tripsResponse->json('data.stops.0.stop_id');
 
-                expect($response->status())->toBeIn([200, 404]);
-            }
+            $response = $this->withHeader('Authorization', "Bearer $token")
+                ->getJson("/api/driver/trips/current/stops/$stopId");
+
+            expect($response->status())->toBeIn([200, 404]);
+            return;
         }
+
+        expect($tripsResponse->status())->toBeIn([200, 404]);
     });
 
     it('driver can acknowledge reaching a stop', function () {
+        $driver = makeDriverWithProfile();
+
         $driverLogin = $this->postJson('/api/staff/login', [
-            'username' => 'driver@smarttransit.com',
-            'password' => 'password123'
+            'email' => $driver->email,
+            'password' => 'password123',
         ]);
-        
-        if ($driverLogin->status() === 200) {
-            $token = $driverLogin->json('data.token');
+        $driverLogin->assertStatus(200);
 
-            $tripsResponse = $this->withHeader('Authorization', "Bearer $token")
-                ->getJson('/api/driver/trips/current/stops');
+        $token = $driverLogin->json('data.token');
 
-            if ($tripsResponse->status() === 200 && $tripsResponse->json('data.stops.0')) {
-                $stopId = $tripsResponse->json('data.stops.0.stop_id');
+        $tripsResponse = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/driver/trips/current/stops');
 
-                $response = $this->withHeader('Authorization', "Bearer $token")
-                    ->postJson("/api/driver/trips/current/stops/$stopId/acknowledge", []);
+        if ($tripsResponse->status() === 200 && $tripsResponse->json('data.stops.0')) {
+            $stopId = $tripsResponse->json('data.stops.0.stop_id');
 
-                expect($response->status())->toBeIn([200, 404]);
-            }
+            $response = $this->withHeader('Authorization', "Bearer $token")
+                ->postJson("/api/driver/trips/current/stops/$stopId/acknowledge", []);
+
+            expect($response->status())->toBeIn([200, 404]);
+            return;
         }
+
+        expect($tripsResponse->status())->toBeIn([200, 404]);
     });
 
 });

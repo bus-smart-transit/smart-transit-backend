@@ -1,41 +1,72 @@
 <?php
 
+use App\Models\StaffUser;
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+
+uses(RefreshDatabase::class);
+
+function makeStaffForAuth(string $role): User
+{
+    $user = User::create([
+        'username' => 'u_' . Str::lower($role) . '_' . uniqid(),
+        'email' => Str::lower($role) . '+' . uniqid() . '@smarttransit.test',
+        'password' => bcrypt('password123'),
+        'role' => $role,
+    ]);
+
+    StaffUser::create([
+        'company_user_uuid' => (string) Str::uuid(),
+        'user_id' => $user->user_id,
+        'name' => Str::title($role) . ' User',
+        'phone_num' => '09170000000',
+        'address' => 'Test Address',
+    ]);
+
+    return $user;
+}
 
 describe('Authentication & Authorization', function () {
-    
+
     it('authenticates admin user and returns token', function () {
-        $response = $this->postJson('/api/admin/login', [
-            'email' => 'admin@busmartransit.test',
-            'password' => 'password123'
+        $admin = makeStaffForAuth('admin');
+
+        $response = $this->postJson('/api/staff/login', [
+            'email' => $admin->email,
+            'password' => 'password123',
         ]);
 
         $response->assertStatus(200);
         $response->assertJsonStructure([
             'status',
             'message',
-            'data' => ['token', 'user']
+            'data' => ['token', 'user'],
         ]);
         $response->assertJsonPath('status', 'success');
     });
 
     it('authenticates driver and returns token', function () {
+        $driver = makeStaffForAuth('driver');
+
         $response = $this->postJson('/api/staff/login', [
-            'username' => 'driver@smarttransit.com',
-            'password' => 'password123'
+            'email' => $driver->email,
+            'password' => 'password123',
         ]);
 
         $response->assertStatus(200);
         $response->assertJsonPath('status', 'success');
         $response->assertJsonStructure([
-            'data' => ['token']
+            'data' => ['token'],
         ]);
     });
 
     it('authenticates conductor and returns token', function () {
+        $conductor = makeStaffForAuth('conductor');
+
         $response = $this->postJson('/api/staff/login', [
-            'username' => 'conductor@smarttransit.com',
-            'password' => 'password123'
+            'email' => $conductor->email,
+            'password' => 'password123',
         ]);
 
         $response->assertStatus(200);
@@ -43,24 +74,27 @@ describe('Authentication & Authorization', function () {
     });
 
     it('rejects invalid credentials', function () {
-        $response = $this->postJson('/api/admin/login', [
-            'email' => 'admin@busmartransit.test',
-            'password' => 'wrongpassword'
+        $admin = makeStaffForAuth('admin');
+
+        $response = $this->postJson('/api/staff/login', [
+            'email' => $admin->email,
+            'password' => 'wrongpassword',
         ]);
 
-        $response->assertStatus(401);
+        $response->assertStatus(422);
     });
 
     it('enforces role-based access control on driver routes', function () {
-        // Get conductor token
+        $conductor = makeStaffForAuth('conductor');
+
         $conductorLogin = $this->postJson('/api/staff/login', [
-            'username' => 'conductor@smarttransit.com',
-            'password' => 'password123'
+            'email' => $conductor->email,
+            'password' => 'password123',
         ]);
-        
+        $conductorLogin->assertStatus(200);
+
         $conductorToken = $conductorLogin->json('data.token');
 
-        // Try to access driver-only route
         $response = $this->withHeader('Authorization', "Bearer $conductorToken")
             ->getJson('/api/driver/trips/current/stops');
 
@@ -68,15 +102,16 @@ describe('Authentication & Authorization', function () {
     });
 
     it('enforces role-based access control on conductor routes', function () {
-        // Get driver token
+        $driver = makeStaffForAuth('driver');
+
         $driverLogin = $this->postJson('/api/staff/login', [
-            'username' => 'driver@smarttransit.com',
-            'password' => 'password123'
+            'email' => $driver->email,
+            'password' => 'password123',
         ]);
-        
+        $driverLogin->assertStatus(200);
+
         $driverToken = $driverLogin->json('data.token');
 
-        // Try to access conductor-only route
         $response = $this->withHeader('Authorization', "Bearer $driverToken")
             ->getJson('/api/conductor/trips/current/occupancy');
 

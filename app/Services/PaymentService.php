@@ -74,7 +74,7 @@ class PaymentService
             $total = 0;
             $reservedItems = [];
             $lineItems = [];
-            $reservationTemplates = [];
+            $groupedItems = [];
 
             foreach ($payload['items'] as $item) {
                 $itemKey = json_encode([
@@ -88,26 +88,32 @@ class PaymentService
                     'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
                 ]);
 
-                // Holds seat/standing capacity now and locks in fare. If the
-                // item repeats (multi-quantity of the same leg), reuse the
-                // first computed pricing template and only reserve capacity.
-                if (!isset($reservationTemplates[$itemKey])) {
-                    $reservationTemplates[$itemKey] = $this->ticketService->reserveAndPrice($item);
-                } else {
-                    $reservationTemplates[$itemKey] = $this->ticketService->reserveFromTemplate($reservationTemplates[$itemKey]);
+                if (!isset($groupedItems[$itemKey])) {
+                    $groupedItems[$itemKey] = [
+                        'item' => $item,
+                        'count' => 0,
+                    ];
                 }
 
-                $reserved = $reservationTemplates[$itemKey];
-                $total += $reserved['amount'];
-                $reserved['passenger_id'] = $passengerId;
-                $reservedItems[] = $reserved;
+                $groupedItems[$itemKey]['count']++;
+            }
 
-                $lineItems[] = [
-                    'name' => "Trip #{$reserved['trip_id']} — {$reserved['seat_type']}",
-                    'amount' => (int) round($reserved['amount'] * 100), // PayMongo expects centavos
-                    'currency' => 'PHP',
-                    'quantity' => 1,
-                ];
+            foreach ($groupedItems as $group) {
+                // Compute fare once per unique item and reserve remaining
+                // repeated quantity as one batched capacity operation.
+                $template = $this->ticketService->reserveAndPrice($group['item']);
+
+                $extraCount = max(0, ((int) $group['count']) - 1);
+                if ($extraCount > 0) {
+                    $this->ticketService->reserveFromTemplate($template, $extraCount);
+                }
+
+                for ($i = 0; $i < (int) $group['count']; $i++) {
+                    $reserved = $template;
+                    $total += $reserved['amount'];
+                    $reserved['passenger_id'] = $passengerId;
+                    $reservedItems[] = $reserved;
+                }
             }
 
             Log::info('Checkout reservation stage completed', [

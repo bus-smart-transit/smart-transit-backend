@@ -163,7 +163,18 @@ class TripService
      */
     public function recordBoarding(int $tripId, string $seatType): object
     {
-        $execute = function () use ($tripId, $seatType) {
+        return $this->recordBoardingMultiple($tripId, $seatType, 1);
+    }
+
+    /**
+     * Batched variant of recordBoarding() that reserves multiple seats/slots
+     * in one locked transaction, reducing lock churn for multi-ticket checkout.
+     */
+    public function recordBoardingMultiple(int $tripId, string $seatType, int $count): object
+    {
+        $count = max(1, $count);
+
+        $execute = function () use ($tripId, $seatType, $count) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
             if (!$trip) {
@@ -171,12 +182,12 @@ class TripService
             }
 
             $fleet = $trip->fleetRoute->fleet;
-            $seatedDelta = $seatType === 'seated' ? 1 : 0;
-            $standingDelta = $seatType === 'standing' ? 1 : 0;
+            $seatedDelta = $seatType === 'seated' ? $count : 0;
+            $standingDelta = $seatType === 'standing' ? $count : 0;
 
             $wouldExceed = $seatType === 'seated'
-                ? $trip->current_seated_capacity + 1 > $fleet->seated_capacity
-                : $trip->current_standing_capacity + 1 > $fleet->standing_capacity;
+                ? $trip->current_seated_capacity + $count > $fleet->seated_capacity
+                : $trip->current_standing_capacity + $count > $fleet->standing_capacity;
 
             if ($wouldExceed) {
                 throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
