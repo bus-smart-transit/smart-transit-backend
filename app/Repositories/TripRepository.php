@@ -62,8 +62,7 @@ class TripRepository
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
-            ->where('trip_date', '>=', today())
-            ->orderByRaw("CASE WHEN trip_date = CURRENT_DATE THEN 0 ELSE 1 END")
+            ->whereDate('trip_date', today())
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
             ->orderBy('trip_date', 'asc')
             ->first();
@@ -74,8 +73,7 @@ class TripRepository
         return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
-            ->where('trip_date', '>=', today())
-            ->orderByRaw("CASE WHEN trip_date = CURRENT_DATE THEN 0 ELSE 1 END")
+            ->whereDate('trip_date', today())
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
             ->orderBy('trip_date', 'asc')
             ->first();
