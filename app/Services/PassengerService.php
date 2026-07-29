@@ -34,6 +34,19 @@ class PassengerService
         });
     }
 
+    /**
+     * Register a new passenger and issue their first API token.
+     * Returns ['passenger' => PassengerUser, 'token' => string].
+     */
+    public function registerPassenger(array $payload): array
+    {
+        $passenger = $this->createPassenger($payload);
+        $passenger->load('user');
+        $token = $passenger->user->createToken('passenger-token')->plainTextToken;
+
+        return ['passenger' => $passenger, 'token' => $token];
+    }
+
     public function getPassenger(string $uuid): ?object
     {
         return $this->passengerRepository->findByUuid($uuid);

@@ -33,14 +33,14 @@ class TripController extends Controller
     public function assignDriver(AssignDriverRequest $request, int $tripId)
     {
         $this->tripService->assignDriver($tripId, $request->validated());
-        return $this->success('test', 'Driver assigned successfully');
+        return $this->success(null, 'Driver assigned successfully');
     }
 
     // Operator / Admin: assign a conductor
     public function assignConductor(AssignConductorRequest $request, int $tripId)
     {
         $this->tripService->assignConductor($tripId, $request->validated());
-        return $this->success('test', 'Conductor assigned successfully');
+        return $this->success(null, 'Conductor assigned successfully');
     }
 
     // Operator / Admin: open boarding

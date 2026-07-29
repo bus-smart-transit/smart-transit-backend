@@ -2,21 +2,34 @@
 
 namespace App\Services;
 
+use App\Repositories\FleetRepository;
 use App\Repositories\ReportingRepository;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
-use Illuminate\Validation\ValidationException;
 
 class ReportingService
 {
     public function __construct(
         private ReportingRepository $reportingRepository,
+        private FleetRepository $fleetRepository,
     ) {}
+
+    /**
+     * Verify fleet exists. Throws ModelNotFoundException (auto-resolved as 404) if not.
+     */
+    private function ensureFleetExists(int $fleetId): void
+    {
+        if (!$this->fleetRepository->findById($fleetId)) {
+            throw (new ModelNotFoundException())->setModel('Fleet', $fleetId);
+        }
+    }
 
     /**
      * Get complete financial audit for a fleet
      */
     public function getFinancialAudit(int $fleetId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
         $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
 
@@ -30,6 +43,7 @@ class ReportingService
      */
     public function getRevenueByRoute(int $fleetId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
         $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
 
@@ -50,6 +64,7 @@ class ReportingService
      */
     public function getRouteAdherence(int $fleetId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
         $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
 
@@ -63,6 +78,7 @@ class ReportingService
      */
     public function getOccupancyTrends(int $fleetId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
         $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
 
@@ -76,13 +92,8 @@ class ReportingService
      */
     public function getDailySummary(int $fleetId, ?string $date = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $date = $date ?? Carbon::now()->toDateString();
-
-        if (!$this->isValidDate($date)) {
-            throw ValidationException::withMessages([
-                'date' => ['Invalid date format. Use YYYY-MM-DD.'],
-            ]);
-        }
 
         return $this->reportingRepository->getDailySummary($fleetId, $date);
     }
@@ -92,6 +103,7 @@ class ReportingService
      */
     public function getPaymentChannelBreakdown(int $fleetId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
         $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
 

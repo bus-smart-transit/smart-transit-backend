@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 use App\Services\TicketService;
 use App\Services\OccupancyService;
 use App\Services\QRCodeService;
+use App\Services\TripService;
 use App\Http\Requests\ScanTicketRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
 use App\Traits\ApiResponse;
@@ -15,6 +16,7 @@ class TicketController extends Controller
         private TicketService $ticketService,
         private OccupancyService $occupancyService,
         private QRCodeService $qrCodeService,
+        private TripService $tripService,
     )
     {
     }
@@ -62,7 +64,7 @@ class TicketController extends Controller
     public function currentTripOccupancy(Request $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $trip = app(\App\Services\TripService::class)->getCurrentTripForConductor($companyUser->company_user_id);
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
             return $this->error('No active trip found.', 404);
@@ -79,7 +81,7 @@ class TicketController extends Controller
     public function occupancyByStop(Request $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $trip = app(\App\Services\TripService::class)->getCurrentTripForConductor($companyUser->company_user_id);
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
             return $this->error('No active trip found.', 404);
@@ -96,7 +98,7 @@ class TicketController extends Controller
     public function currentPassengers(Request $request)
     {
         $companyUser = $request->user()->companyProfile;
-        $trip = app(\App\Services\TripService::class)->getCurrentTripForConductor($companyUser->company_user_id);
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
             return $this->error('No active trip found.', 404);

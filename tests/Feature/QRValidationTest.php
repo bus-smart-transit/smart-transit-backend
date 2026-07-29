@@ -129,7 +129,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
 
         $registerResponse->assertStatus(201);
 
-        $token = $registerResponse->json('token');
+        $token = $registerResponse->json('data.token');
 
         $response = $this->withHeader('Authorization', "Bearer $token")
             ->getJson('/api/passengers/tickets/' . Str::uuid() . '/qr');

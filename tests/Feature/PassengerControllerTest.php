@@ -16,7 +16,7 @@ test('it can create a passenger user', function () {
     ]);
 
     $response->assertStatus(201);
-    $response->assertJsonStructure(['passenger', 'token']);
+    $response->assertJsonStructure(['data' => ['passenger', 'token']]);
 });
 
 test('it validates request data when creating a passenger user', function () {
