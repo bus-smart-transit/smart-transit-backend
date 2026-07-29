@@ -33,7 +33,10 @@ class RouteStop extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'route_stop';
-    protected $primaryKey = 'route_stop_id';
+    // DB column is `id` (created by $table->id() in migration).
+    // Previously declared as 'route_stop_id' which caused Postgres to fail
+    // with "column route_stop_id does not exist" on insert.
+    protected $primaryKey = 'id';
     /**
      * The attributes that are mass assignable from structural payloads.
      */

@@ -77,6 +77,7 @@ Route::prefix('operator')
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
         Route::get('routes', [RouteController::class, 'index']);
+        Route::post('routes', [RouteController::class, 'store']);
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
         Route::get('stops', [StopController::class, 'index']);
         Route::post('stops', [StopController::class, 'store']);
