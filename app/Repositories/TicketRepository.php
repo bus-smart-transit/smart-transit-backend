@@ -40,6 +40,13 @@ class TicketRepository
         ]) > 0;
     }
 
+    public function findByTransactionRef(string $transactionRef): Collection
+    {
+        return Ticket::with(['trip', 'payment', 'originStop', 'destinationStop', 'passenger.user'])
+            ->whereHas('payment', fn ($q) => $q->where('transaction_reference', $transactionRef))
+            ->get();
+    }
+
     public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): Collection
     {
         return Ticket::with(['payment', 'originStop', 'destinationStop', 'trip.fleetRoute.route'])

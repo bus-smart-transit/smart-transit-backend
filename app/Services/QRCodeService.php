@@ -2,11 +2,12 @@
 
 namespace App\Services;
 
-use App\Models\Stop;
 use App\Models\Ticket;
+use App\Repositories\StopRepository;
 
 class QRCodeService
 {
+    public function __construct(private StopRepository $stopRepository) {}
     /**
      * Generate QR code data/URL for a ticket
      * Returns data suitable for frontend QR code generation
@@ -17,17 +18,23 @@ class QRCodeService
         $qrContent = $this->encodeTicketData($ticket);
         $destination = $ticket->destinationStop?->stop_name ?? $this->resolveDestinationFromPaymentPayload($ticket) ?? 'Not specified';
 
+        $transactionRef = $ticket->payment?->transaction_reference;
+        $groupQrContent = $transactionRef ? "grp:{$transactionRef}" : null;
+
         return [
-            'ticket_uuid' => $ticket->ticket_uuid,
-            'qr_content' => $qrContent,
-            'qr_url' => $this->generateQRUrl($qrContent),
-            'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
-            'trip_id' => $ticket->trip_id,
-            'destination' => $destination,
-            'seat_type' => $ticket->seat_type,
-            'amount' => $ticket->amount,
-            'valid_from' => $ticket->trip?->trip_date?->copy()->startOfDay()?->toIso8601String(),
-            'expires_at' => $ticket->trip?->trip_date?->copy()->endOfDay()?->toIso8601String(),
+            'ticket_uuid'           => $ticket->ticket_uuid,
+            'qr_content'            => $qrContent,
+            'qr_url'                => $this->generateQRUrl($qrContent),
+            'group_qr_content'      => $groupQrContent,
+            'group_qr_url'          => $groupQrContent ? $this->generateQRUrl($groupQrContent) : null,
+            'transaction_reference' => $transactionRef,
+            'passenger_name'        => $ticket->passenger?->user?->name ?? 'Guest',
+            'trip_id'               => $ticket->trip_id,
+            'destination'           => $destination,
+            'seat_type'             => $ticket->seat_type,
+            'amount'                => $ticket->amount,
+            'valid_from'            => $ticket->trip?->trip_date?->copy()->startOfDay()?->toIso8601String(),
+            'expires_at'            => $ticket->trip?->trip_date?->copy()->endOfDay()?->toIso8601String(),
         ];
     }
 
@@ -47,7 +54,7 @@ class QRCodeService
                 continue;
             }
 
-            return Stop::query()->where('stop_id', $destinationStopId)->value('stop_name');
+            return $this->stopRepository->findById($destinationStopId)?->stop_name;
         }
 
         return null;

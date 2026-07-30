@@ -211,7 +211,7 @@ class PaymentService
         }
 
         DB::transaction(function () use ($session, $payment, $passengerId, $prepared) {
-            $freshPayment = Payment::query()->find($payment->payment_id);
+            $freshPayment = $this->paymentRepository->findById($payment->payment_id);
             if (!$freshPayment) {
                 throw new \RuntimeException('Payment record no longer exists.');
             }
@@ -236,7 +236,7 @@ class PaymentService
         ]);
 
         return [
-            'payment' => Payment::query()->find($payment->payment_id),
+            'payment' => $this->paymentRepository->findById($payment->payment_id),
             'gross_amount' => $prepared['gross_amount'],
             'reward_points_applied' => $prepared['reward_points_applied'],
             'reward_discount' => $prepared['reward_discount'],

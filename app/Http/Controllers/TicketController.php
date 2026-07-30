@@ -6,6 +6,7 @@ use App\Services\QRCodeService;
 use App\Services\TripService;
 use App\Http\Requests\ScanTicketRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
+use App\Http\Requests\ScanGroupRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -36,6 +37,14 @@ class TicketController extends Controller
     {
         $ticket = $this->ticketService->validateScan($request->validated());
         return $this->success($ticket, 'Ticket validated and boarded successfully');
+    }
+
+    // Conductor: scan a group QR to board all tickets under one transaction at once
+    public function scanGroup(ScanGroupRequest $request)
+    {
+        $result = $this->ticketService->scanGroup($request->validated());
+        $msg = "{$result['boarded_count']} of {$result['total_tickets']} ticket(s) boarded successfully.";
+        return $this->success($result, $msg);
     }
 
     // Public route — lets a guest (no account) recover their ticket(s)

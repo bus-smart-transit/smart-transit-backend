@@ -256,6 +256,62 @@ class TicketService
             ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
 
+    public function scanGroup(array $payload): array
+    {
+        $tickets = $this->ticketRepository->findByTransactionRef($payload['transaction_reference']);
+
+        if ($tickets->isEmpty()) {
+            throw ValidationException::withMessages([
+                'transaction_reference' => ['No tickets found for this transaction.'],
+            ]);
+        }
+
+        $boardedCount = 0;
+        $results = [];
+
+        foreach ($tickets as $ticket) {
+            $base = [
+                'ticket_uuid'    => $ticket->ticket_uuid,
+                'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
+                'destination'    => $ticket->destinationStop?->stop_name,
+                'seat_type'      => $ticket->seat_type,
+                'amount'         => (float) $ticket->amount,
+            ];
+
+            if ($ticket->status !== 'issued') {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => "Already {$ticket->status}"]);
+                continue;
+            }
+
+            if (!$ticket->payment || $ticket->payment->status !== 'paid' || !$ticket->payment->is_valid) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Payment not completed']);
+                continue;
+            }
+
+            $tripDate = $ticket->trip?->trip_date;
+            if ($tripDate && now()->startOfDay()->lt($tripDate->startOfDay())) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket not yet active']);
+                continue;
+            }
+
+            if ($tripDate && now()->gt($tripDate->copy()->endOfDay())) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket expired']);
+                continue;
+            }
+
+            $this->ticketRepository->markBoarded($ticket->ticket_id);
+            $boardedCount++;
+            $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => false]);
+        }
+
+        return [
+            'transaction_reference' => $payload['transaction_reference'],
+            'total_tickets'         => count($results),
+            'boarded_count'         => $boardedCount,
+            'tickets'               => $results,
+        ];
+    }
+
     public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): object
     {
         return $this->ticketRepository

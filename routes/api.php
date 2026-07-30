@@ -148,6 +148,7 @@ Route::prefix('conductor')
         Route::get('trips', [TripController::class, 'myConductorTrips']);
         Route::get('trips/current', [TripController::class, 'currentTripConductor']);
         Route::post('tickets/scan', [TicketController::class, 'scan']);
+        Route::post('tickets/scan-group', [TicketController::class, 'scanGroup']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);
         
         // Occupancy monitoring dashboard
