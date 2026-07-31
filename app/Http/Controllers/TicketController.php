@@ -26,6 +26,11 @@ class TicketController extends Controller
     public function myTickets(Request $request)
     {
         $passenger = $request->user()->passengerProfile;
+
+        if (!$passenger) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
         return $this->success(
             $this->ticketService->getPassengerTickets($passenger->passenger_id),
             'Tickets retrieved successfully'
@@ -134,9 +139,14 @@ class TicketController extends Controller
     public function getTicketQR(Request $request, string $ticketUuid)
     {
         $ticket = \App\Models\Ticket::where('ticket_uuid', $ticketUuid)->firstOrFail();
-        
+
+        $passengerProfile = $request->user()->passengerProfile;
+        if (!$passengerProfile) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
         // Verify ownership
-        if ($ticket->passenger_id && $ticket->passenger_id !== $request->user()->passengerProfile->passenger_id) {
+        if ($ticket->passenger_id && $ticket->passenger_id !== $passengerProfile->passenger_id) {
             return $this->error('Unauthorized', 403);
         }
 

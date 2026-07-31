@@ -155,7 +155,7 @@ class TicketRepository
     {
         return Ticket::with(['passenger.user', 'originStop', 'destinationStop', 'payment'])
             ->where('trip_id', $tripId)
-            ->whereIn('status', ['issued', 'boarded'])
+            ->whereIn('status', ['valid', 'boarded'])
             ->whereNull('alighted_at')
             ->orderByRaw("CASE WHEN status = 'boarded' THEN 0 ELSE 1 END")
             ->orderByDesc('boarded_at')

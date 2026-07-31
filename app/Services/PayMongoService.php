@@ -15,6 +15,11 @@ class PayMongoService
     public function __construct()
     {
         $this->secretKey = config('services.paymongo.secret_key');
+
+        if (empty($this->secretKey) || str_contains($this->secretKey, 'REPLACE_WITH')) {
+            throw new \RuntimeException('PayMongo secret key is not configured. Set PAYMONGO_SECRET_KEY in your .env file.');
+        }
+
         $this->client = new PaymongoClient($this->secretKey);
     }
 

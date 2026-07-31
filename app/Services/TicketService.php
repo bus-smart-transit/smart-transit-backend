@@ -160,7 +160,7 @@ class TicketService
             'distance_km' => $reserved['distance_km'],
             'payment_id' => $paymentId,
             'passenger_id' => $passengerId,
-            'status' => 'issued',
+            'status' => 'valid',
             'amount' => $reserved['amount'],
             'seat_type' => $reserved['seat_type'],
             'origin_stop_id' => $reserved['origin_stop_id'] ?? null,
@@ -208,7 +208,7 @@ class TicketService
             throw ValidationException::withMessages(['ticket' => ['Ticket not found.']]);
         }
 
-        if ($ticket->status !== 'issued') {
+        if ($ticket->status !== 'valid') {
             throw ValidationException::withMessages([
                 'ticket' => ["Ticket is already {$ticket->status}."],
             ]);
@@ -278,7 +278,7 @@ class TicketService
                 'amount'         => (float) $ticket->amount,
             ];
 
-            if ($ticket->status !== 'issued') {
+            if ($ticket->status !== 'valid') {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => "Already {$ticket->status}"]);
                 continue;
             }
@@ -323,12 +323,26 @@ class TicketService
     {
         $tripDate = $ticket->trip?->trip_date;
         if ($tripDate) {
+            $expiresAt = $tripDate->copy()->endOfDay();
+
+            // Mark expired and persist BEFORE setting virtual attributes,
+            // so that valid_from / expires_at (which are not real DB columns)
+            // are never included in the UPDATE statement.
+            if ($ticket->status === 'valid' && now()->gt($expiresAt)) {
+                $ticket->status = 'expired';
+                $ticket->save();
+            }
+
             $ticket->setAttribute('valid_from', $tripDate->copy()->startOfDay()->toIso8601String());
-            $ticket->setAttribute('expires_at', $tripDate->copy()->endOfDay()->toIso8601String());
+            $ticket->setAttribute('expires_at', $expiresAt->toIso8601String());
         } else {
             $ticket->setAttribute('valid_from', null);
             $ticket->setAttribute('expires_at', null);
         }
+
+        // Sync so these virtual attributes are never treated as dirty
+        // if something calls save() again downstream.
+        $ticket->syncOriginal();
 
         return $ticket;
     }

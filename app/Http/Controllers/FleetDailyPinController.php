@@ -28,8 +28,14 @@ class FleetDailyPinController extends Controller
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
 
+        // Auto-generate if the trip has both staff but the PIN was never created
+        // (e.g. operator assigned driver/conductor after trip creation).
         if (!$pin) {
-            return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
+            if ($trip->driver_id && $trip->conductor_id) {
+                $pin = $this->pinService->generateOrGet($trip->trip_id, $trip->driver_id, $trip->conductor_id);
+            } else {
+                return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
+            }
         }
 
         return $this->success([
@@ -57,8 +63,13 @@ class FleetDailyPinController extends Controller
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
 
+        // Auto-generate if the trip has both staff but the PIN was never created.
         if (!$pin) {
-            return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
+            if ($trip->driver_id && $trip->conductor_id) {
+                $pin = $this->pinService->generateOrGet($trip->trip_id, $trip->driver_id, $trip->conductor_id);
+            } else {
+                return $this->error('No PIN has been generated for your trip today. Ensure both driver and conductor are assigned.', 404);
+            }
         }
 
         return $this->success([
