@@ -2,6 +2,7 @@
 namespace App\Repositories;
 use App\Models\Trip;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class TripRepository
 {
@@ -114,13 +115,12 @@ class TripRepository
 
     public function incrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
-        $trip = Trip::find($tripId);
-        if (!$trip)
-            return false;
-        $trip->current_seated_capacity += $seatedDelta;
-        $trip->current_standing_capacity += $standingDelta;
-        $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
-        return $trip->save();
+        // Single atomic UPDATE — avoids SELECT+UPDATE race condition under concurrent scans
+        return Trip::where('trip_id', $tripId)->update([
+            'current_seated_capacity'   => DB::raw("current_seated_capacity + {$seatedDelta}"),
+            'current_standing_capacity' => DB::raw("current_standing_capacity + {$standingDelta}"),
+            'total_occupancy'           => DB::raw("total_occupancy + {$seatedDelta} + {$standingDelta}"),
+        ]) > 0;
     }
 
     /**
@@ -129,13 +129,11 @@ class TripRepository
      */
     public function decrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
-        $trip = Trip::find($tripId);
-        if (!$trip)
-            return false;
-        $trip->current_seated_capacity = max(0, $trip->current_seated_capacity - $seatedDelta);
-        $trip->current_standing_capacity = max(0, $trip->current_standing_capacity - $standingDelta);
-        $trip->total_occupancy = $trip->current_seated_capacity + $trip->current_standing_capacity;
-        return $trip->save();
+        return Trip::where('trip_id', $tripId)->update([
+            'current_seated_capacity'   => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta})"),
+            'current_standing_capacity' => DB::raw("GREATEST(0, current_standing_capacity - {$standingDelta})"),
+            'total_occupancy'           => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta}) + GREATEST(0, current_standing_capacity - {$standingDelta})"),
+        ]) > 0;
     }
 
     /**

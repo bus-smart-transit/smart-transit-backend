@@ -50,7 +50,7 @@ class TripService
 
         if (!$this->pinService->isBothVerified($trip->trip_id)) {
             throw ValidationException::withMessages([
-                'pin' => ['Both the driver and conductor must verify the daily fleet PIN before the trip can depart.'],
+                'pin' => ['Both the driver and conductor must complete QR pairing before the trip can depart.'],
             ]);
         }
 

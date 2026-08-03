@@ -38,9 +38,22 @@ class PassengerController extends Controller
         return $this->success(new PassengerResource($this->passengerService->getPassenger($uuid)));
     }
 
-    public function update(UpdatePassengerProfileRequest $request, string $uuid): JsonResponse
+    public function update(UpdatePassengerProfileRequest $request): JsonResponse
     {
-        $model = $this->passengerService->updatePassenger($uuid, $request->validated());
+        // Enforce ownership: always update the authenticated user's own profile
+        $passengerProfile = $request->user()?->passengerProfile;
+        if (!$passengerProfile) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
+        $model = $this->passengerService->updatePassenger(
+            $passengerProfile->passenger_uuid,
+            $request->validated()
+        );
+
+        // Revoke all other tokens when profile is updated (session hygiene)
+        $request->user()->tokens()->where('id', '!=', $request->user()->currentAccessToken()->id)->delete();
+
         return $this->success(new PassengerResource($model), 'Profile updated successfully');
     }
 

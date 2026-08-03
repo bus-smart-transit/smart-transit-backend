@@ -45,14 +45,16 @@ class FleetDailyPin extends Model
         'pin_date',
         'driver_verified_at',
         'conductor_verified_at',
+        'paired_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'pin_date'             => 'date',
+            'pin_date'              => 'date',
             'driver_verified_at'   => 'datetime',
             'conductor_verified_at' => 'datetime',
+            'paired_at'             => 'datetime',
         ];
     }
 

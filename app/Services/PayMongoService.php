@@ -29,6 +29,8 @@ class PayMongoService
 
         $response = Http::withBasicAuth($this->secretKey, '')
             ->withOptions(['verify' => $verifyOption])
+            ->timeout(15)          // fail fast if PayMongo is unresponsive
+            ->connectTimeout(5)    // TCP connect must succeed within 5s
             ->post('https://api.paymongo.com/v1/checkout_sessions', [
                 'data' => [
                     'attributes' => [

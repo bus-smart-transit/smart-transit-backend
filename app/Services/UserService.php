@@ -22,9 +22,10 @@ class UserService
             ]);
         }
 
+        // Use same generic message to prevent role/existence enumeration
         if ($user->role !== 'passenger') {
             throw ValidationException::withMessages([
-                'email' => ['Access unauthorized via passenger terminal app.'],
+                'email' => ['Invalid email or password credentials provided.'],
             ]);
         }
 

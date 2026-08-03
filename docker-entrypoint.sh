@@ -25,5 +25,8 @@ php artisan event:cache
 # Run migrations automatically
 php artisan migrate --force
 
+# Prune expired Sanctum tokens (tokens older than sanctum.expiration)
+php artisan sanctum:prune-expired --hours=24
+
 echo "[entrypoint] Starting Laravel on 0.0.0.0:8000..."
 exec php artisan serve --host=0.0.0.0 --port=8000

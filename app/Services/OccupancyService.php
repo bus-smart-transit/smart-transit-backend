@@ -86,6 +86,10 @@ class OccupancyService
     /**
      * Get occupancy breakdown by stop (passengers boarding/alighting at each stop)
      */
+    /**
+     * Get occupancy breakdown by stop.
+     * Uses 2 aggregate SQL queries instead of 3×N per-stop queries.
+     */
     public function getOccupancyByStop(int $tripId): array
     {
         $trip = $this->tripRepository->findById($tripId);
@@ -97,37 +101,53 @@ class OccupancyService
         }
 
         $route = $trip->fleetRoute->route;
-        $routeStops = $route->routeStops()->orderBy('stop_order')->get();
+        $routeStops = $route->routeStops()->with('stop')->orderBy('stop_order')->get();
 
+        // Aggregate 1: boarding count per origin stop
+        $boardingByStop = \Illuminate\Support\Facades\DB::table('tickets')
+            ->where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereNotNull('origin_stop_id')
+            ->selectRaw('origin_stop_id AS stop_id, COUNT(*) AS cnt')
+            ->groupBy('origin_stop_id')
+            ->pluck('cnt', 'stop_id')
+            ->map(fn ($v) => (int) $v);
+
+        // Aggregate 2: alighting count per destination stop
+        $alightingByStop = \Illuminate\Support\Facades\DB::table('tickets')
+            ->where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereNotNull('destination_stop_id')
+            ->selectRaw('destination_stop_id AS stop_id, COUNT(*) AS cnt')
+            ->groupBy('destination_stop_id')
+            ->pluck('cnt', 'stop_id')
+            ->map(fn ($v) => (int) $v);
+
+        // Compute cumulative on-bus count in PHP — no additional DB calls
+        $cumulativeOnBus = 0;
         $stopBreakdown = [];
 
         foreach ($routeStops as $routeStop) {
-            $stopId = $routeStop->stop_id;
-
-            // Get passengers boarding at this stop
-            $boarding = $this->ticketRepository->countBoardingAtStop($tripId, $stopId);
-
-            // Get passengers alighting at this stop
-            $alighting = $this->ticketRepository->countAlightingAtStop($tripId, $stopId);
-
-            // Cumulative passengers on bus after this stop
-            $onBus = $this->getCumulativePassengersAfterStop($tripId, $stopId);
+            $stopId   = $routeStop->stop_id;
+            $boarding  = (int) ($boardingByStop[$stopId]  ?? 0);
+            $alighting = (int) ($alightingByStop[$stopId] ?? 0);
+            $cumulativeOnBus += $boarding - $alighting;
 
             $stopBreakdown[] = [
-                'stop_id' => $stopId,
-                'stop_name' => $routeStop->stop->stop_name,
-                'sequence_number' => $routeStop->stop_order,
+                'stop_id'                 => $stopId,
+                'stop_name'               => $routeStop->stop->stop_name,
+                'sequence_number'         => $routeStop->stop_order,
                 'distance_from_origin_km' => $routeStop->distance_from_origin_km,
-                'boarding_count' => $boarding,
-                'alighting_count' => $alighting,
-                'passengers_on_bus_after' => $onBus,
+                'boarding_count'          => $boarding,
+                'alighting_count'         => $alighting,
+                'passengers_on_bus_after' => max(0, $cumulativeOnBus),
             ];
         }
 
         return [
-            'trip_id' => $tripId,
+            'trip_id'    => $tripId,
             'route_name' => $route->route_name,
-            'stops' => $stopBreakdown,
+            'stops'      => $stopBreakdown,
         ];
     }
 

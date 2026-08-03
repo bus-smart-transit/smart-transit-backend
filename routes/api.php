@@ -13,15 +13,18 @@ use App\Http\Controllers\TicketController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\FleetLocationController;       
 use App\Http\Controllers\FleetDailyPinController;
+use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\RewardController;
 use App\Http\Controllers\ReportingController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
-
-Route::post('passengers/login', [AuthController::class, 'login']);
-Route::post('passengers/register', [PassengerController::class, 'store']);
-Route::post('staff/login', [StaffAuthController::class, 'login']);
+// Login and register are rate-limited: 5 attempts per 15 minutes per IP
+Route::middleware('throttle:5,15')->group(function () {
+    Route::post('passengers/login', [AuthController::class, 'login']);
+    Route::post('passengers/register', [PassengerController::class, 'store']);
+    Route::post('staff/login', [StaffAuthController::class, 'login']);
+});
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -133,6 +136,11 @@ Route::prefix('driver')
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForDriver']);
         Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsDriver']);
+
+        // QR-based crew pairing (must complete before dashboard access)
+        Route::get('pairing-token', [FleetPairingController::class, 'getDriverToken']);
+        Route::post('pair', [FleetPairingController::class, 'pairAsDriver']);
+        Route::get('pairing-status', [FleetPairingController::class, 'driverPairingStatus']);
     });
 
 // CONDUCTOR
@@ -160,6 +168,11 @@ Route::prefix('conductor')
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForConductor']);
         Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsConductor']);
+
+        // QR-based crew pairing (must complete before dashboard access)
+        Route::get('pairing-token', [FleetPairingController::class, 'getConductorToken']);
+        Route::post('pair', [FleetPairingController::class, 'pairAsConductor']);
+        Route::get('pairing-status', [FleetPairingController::class, 'conductorPairingStatus']);
     });
 
 // ADMIN (developers)
