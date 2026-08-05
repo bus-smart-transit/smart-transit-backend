@@ -247,6 +247,38 @@ test('driver can depart a trip', function () {
     $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'departed']);
 });
 
+test('driver cannot depart before pairing is completed', function () {
+    $driver     = makeStaffUser('driver');
+    $conductor  = makeStaffUser('conductor');
+    $operator   = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id'            => $fleetRoute->fleet_route_id,
+        'company_user_id'           => $operator->companyProfile->company_user_id,
+        'driver_id'                 => $driver->companyProfile->company_user_id,
+        'conductor_id'              => $conductor->companyProfile->company_user_id,
+        'trip_date'                 => now()->toDateString(),
+        'status'                    => 'boarding',
+        'current_seated_capacity'   => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy'           => 0,
+    ]);
+
+    FleetDailyPin::create([
+        'trip_id' => $trip->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'pin_code' => '123456',
+        'pin_date' => now()->toDateString(),
+    ]);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/depart")
+         ->assertStatus(423);
+
+    $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'boarding']);
+});
+
 test('driver can complete a trip', function () {
     $driver     = makeStaffUser('driver');
     $operator   = makeStaffUser('operator');

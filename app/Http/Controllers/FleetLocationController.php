@@ -15,6 +15,7 @@ class FleetLocationController extends Controller
     public function updateLocation(UpdateLocationRequest $request)
     {
         $companyUser = $request->user()->companyProfile;
+
         $this->fleetLocationService->updateLocation(
             $companyUser->company_user_id,
             $request->validated()

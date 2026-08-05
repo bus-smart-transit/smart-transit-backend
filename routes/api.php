@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PassengerController;
+use App\Http\Controllers\PassengerDashboardController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\RouteController;
@@ -19,12 +20,12 @@ use App\Http\Controllers\ReportingController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
-// Login and register are rate-limited: 5 attempts per 15 minutes per IP
-Route::middleware('throttle:5,15')->group(function () {
-    Route::post('passengers/login', [AuthController::class, 'login']);
-    Route::post('passengers/register', [PassengerController::class, 'store']);
-    Route::post('staff/login', [StaffAuthController::class, 'login']);
-});
+// Auth endpoints are rate-limited independently via throttle key prefixes
+Route::post('passengers/login', [AuthController::class, 'login'])->middleware('throttle:5,15,passenger-login');
+Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
+Route::post('staff/login', [StaffAuthController::class, 'login'])->middleware('throttle:5,15,staff-login');
+Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -52,6 +53,7 @@ Route::prefix('passengers')
         Route::put('profile', [PassengerController::class, 'update']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
+        Route::get('dashboard-summary', [PassengerDashboardController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
@@ -126,12 +128,15 @@ Route::prefix('driver')
 
         Route::get('trips', [TripController::class, 'myTrips']);
         Route::get('trips/current', [TripController::class, 'currentTripDriver']);
-        Route::get('trips/current/stops', [TripController::class, 'currentTripStops']);
-        Route::get('trips/current/stops/{stopId}', [TripController::class, 'currentTripStopDetail']);
-        Route::post('trips/current/stops/{stopId}/acknowledge', [TripController::class, 'acknowledgeStop']);
-        Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
-        Route::post('location', [FleetLocationController::class, 'updateLocation']);
+
+        Route::middleware('paired:driver')->group(function () {
+            Route::get('trips/current/stops', [TripController::class, 'currentTripStops']);
+            Route::get('trips/current/stops/{stopId}', [TripController::class, 'currentTripStopDetail']);
+            Route::post('trips/current/stops/{stopId}/acknowledge', [TripController::class, 'acknowledgeStop']);
+            Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
+            Route::post('location', [FleetLocationController::class, 'updateLocation']);
+        });
 
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForDriver']);
@@ -154,16 +159,19 @@ Route::prefix('conductor')
         Route::get('profile', [StaffAuthController::class, 'profile']);
 
         Route::get('trips', [TripController::class, 'myConductorTrips']);
-        Route::get('trips/current', [TripController::class, 'currentTripConductor']);
-        Route::post('tickets/scan', [TicketController::class, 'scan']);
-        Route::post('tickets/scan-group', [TicketController::class, 'scanGroup']);
-        Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);
-        
-        // Occupancy monitoring dashboard
-        Route::get('trips/current/occupancy', [TicketController::class, 'currentTripOccupancy']);
-        Route::get('trips/current/occupancy/by-stop', [TicketController::class, 'occupancyByStop']);
-        Route::get('trips/current/passengers', [TicketController::class, 'currentPassengers']);
-        Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
+
+        Route::middleware('paired:conductor')->group(function () {
+            Route::get('trips/current', [TripController::class, 'currentTripConductor']);
+            Route::post('tickets/scan', [TicketController::class, 'scan']);
+            Route::post('tickets/scan-group', [TicketController::class, 'scanGroup']);
+            Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);
+
+            // Occupancy monitoring dashboard
+            Route::get('trips/current/occupancy', [TicketController::class, 'currentTripOccupancy']);
+            Route::get('trips/current/occupancy/by-stop', [TicketController::class, 'occupancyByStop']);
+            Route::get('trips/current/passengers', [TicketController::class, 'currentPassengers']);
+            Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
+        });
 
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForConductor']);

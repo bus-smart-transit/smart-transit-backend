@@ -90,6 +90,8 @@ class FleetPairingController extends Controller
 
         return $this->success([
             'token'       => $token,
+            'token_pin'   => $this->pairingService->toReadablePin($token),
+            'pin_code'    => $this->pairingService->toReadablePin($token),
             'qr_url'      => $qrUrl,
             'trip_id'     => $trip->trip_id,
             'fleet_id'    => $fleetId,
@@ -101,7 +103,10 @@ class FleetPairingController extends Controller
 
     private function pair(Request $request, string $role): \Illuminate\Http\JsonResponse
     {
-        $request->validate(['token' => 'required|string']);
+        $request->validate([
+            'token'    => 'nullable|string|required_without:pin_code',
+            'pin_code' => 'nullable|string|required_without:token',
+        ]);
 
         $companyUser = $request->user()->companyProfile;
         if (!$companyUser) {
@@ -122,8 +127,17 @@ class FleetPairingController extends Controller
         }
 
         try {
+            $partnerToken = $request->filled('token')
+                ? (string) $request->input('token')
+                : $this->pairingService->resolvePartnerTokenFromPin(
+                    (string) $request->input('pin_code'),
+                    $role,
+                    $trip->trip_id,
+                    $fleetId,
+                );
+
             $pin = $this->pairingService->validateAndPair(
-                $request->input('token'),
+                $partnerToken,
                 $companyUser->company_user_id,
                 $role,
                 $trip->trip_id,

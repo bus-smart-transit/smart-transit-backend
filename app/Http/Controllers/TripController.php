@@ -108,6 +108,7 @@ class TripController extends Controller
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
         if (!$trip)
             return $this->error('No active trip found.', 404);
+
         return $this->success($trip, 'Current trip retrieved successfully');
     }
 
@@ -148,15 +149,23 @@ class TripController extends Controller
      * Public: Get available trips for passengers to book
      * GET /trips
      */
-    public function availableTrips()
+    public function availableTrips(Request $request)
     {
+        $includeStops = $request->boolean('include_stops', true);
+
+        $with = [
+            'fleetRoute.fleet',
+            'fleetRoute.route',
+        ];
+
+        if ($includeStops) {
+            $with[] = 'fleetRoute.route.routeStops.stop';
+        }
+
         $trips = \App\Models\Trip::query()
             ->whereIn('status', ['scheduled', 'boarding'])
             ->where('trip_date', '>=', now()->toDateString())
-            ->with([
-                'fleetRoute.route.routeStops.stop',
-                'fleetRoute.fleet',
-            ])
+            ->with($with)
             ->orderBy('trip_date', 'asc')
             ->get();
 

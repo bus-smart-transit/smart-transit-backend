@@ -34,6 +34,61 @@ class FleetPairingService
         return $payload . '.' . $this->sign($payload);
     }
 
+    /**
+     * Convert a signed token to a 6-digit human-readable PIN.
+     * This PIN is a deterministic representation of the same credential.
+     */
+    public function toReadablePin(string $token): string
+    {
+        $hash = hash_hmac('sha256', $token, $this->signingKey(), true);
+        $number = unpack('N', substr($hash, 0, 4))[1] % 1000000;
+
+        return str_pad((string) $number, 6, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Resolve partner token from a manually entered PIN, then validate using
+     * the exact same token validation path as QR scans.
+     */
+    public function resolvePartnerTokenFromPin(
+        string $enteredPin,
+        string $scannerRole,
+        int $scannerTripId,
+        int $scannerFleetId,
+    ): string {
+        $pinCode = preg_replace('/\D+/', '', (string) $enteredPin);
+        if (strlen($pinCode) !== 6) {
+            $this->rejectWith('pin_code', 'PIN must be a 6-digit code.');
+        }
+
+        $pin = $this->pinRepository->findTodayByTrip($scannerTripId);
+        if (!$pin) {
+            $this->rejectWith('pin_code', 'No pairing record found for this trip today.');
+        }
+
+        $partnerRole = $scannerRole === 'driver' ? 'conductor' : 'driver';
+        $partnerUserId = $scannerRole === 'driver'
+            ? (int) ($pin->conductor_id ?? 0)
+            : (int) ($pin->driver_id ?? 0);
+
+        if (!$partnerUserId) {
+            $this->rejectWith('pin_code', 'Partner assignment is missing for this trip.');
+        }
+
+        $expectedToken = $this->generateToken(
+            $partnerUserId,
+            $partnerRole,
+            $scannerTripId,
+            $scannerFleetId,
+        );
+
+        if (!hash_equals($this->toReadablePin($expectedToken), $pinCode)) {
+            $this->rejectWith('pin_code', 'Invalid PIN. Ask your partner to refresh and share the latest code.');
+        }
+
+        return $expectedToken;
+    }
+
     // ── Pairing validation ───────────────────────────────────────────────────
 
     /**
@@ -122,9 +177,14 @@ class FleetPairingService
     {
         $pin = $this->pinRepository->findTodayByTrip($tripId);
 
-        $paired = $pin !== null
+        $pairedByPairingTimestamp = $pin !== null
             && $pin->paired_at !== null
             && Carbon::parse($pin->paired_at)->isToday();
+
+        // Backward compatibility: older flows only marked both_verified.
+        $pairedByLegacyVerification = $pin !== null && $pin->isBothVerified();
+
+        $paired = $pairedByPairingTimestamp || $pairedByLegacyVerification;
 
         return [
             'paired'     => $paired,
@@ -134,6 +194,14 @@ class FleetPairingService
                 ? null
                 : ($pin ? 'QR pairing not yet completed. Scan your partner\'s QR code.' : 'No assignment record found for today.'),
         ];
+    }
+
+    /**
+     * Lightweight boolean helper for controller-level feature gating.
+     */
+    public function isTripPaired(int $tripId): bool
+    {
+        return (bool) ($this->getPairingStatus($tripId)['paired'] ?? false);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -161,11 +229,17 @@ class FleetPairingService
 
     private function sign(string $payload): string
     {
+        return rtrim(strtr(base64_encode(hash_hmac('sha256', $payload, $this->signingKey(), true)), '+/', '-_'), '=');
+    }
+
+    private function signingKey(): string
+    {
         $key = config('app.key');
         if (str_starts_with($key, 'base64:')) {
-            $key = base64_decode(substr($key, 7));
+            return (string) base64_decode(substr($key, 7));
         }
-        return rtrim(strtr(base64_encode(hash_hmac('sha256', $payload, $key, true)), '+/', '-_'), '=');
+
+        return (string) $key;
     }
 
     private function encodePayload(array $data): string
