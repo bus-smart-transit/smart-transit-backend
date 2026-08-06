@@ -20,10 +20,10 @@ use App\Http\Controllers\ReportingController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
-// Auth endpoints are rate-limited independently via throttle key prefixes
-Route::post('passengers/login', [AuthController::class, 'login'])->middleware('throttle:5,15,passenger-login');
+// Login endpoints use controller-level RateLimiter (failed-only counting).
+Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
-Route::post('staff/login', [StaffAuthController::class, 'login'])->middleware('throttle:5,15,staff-login');
+Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);

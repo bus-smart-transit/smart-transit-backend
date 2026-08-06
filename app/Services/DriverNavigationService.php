@@ -33,6 +33,10 @@ class DriverNavigationService
             return null;
         }
 
+        if (!$trip->fleetRoute || !$trip->fleetRoute->route_id) {
+            return null;
+        }
+
         $routeId = $trip->fleetRoute->route_id;
         $stops = $this->routeStopRepository->getOrderedStops($routeId);
 
@@ -48,7 +52,7 @@ class DriverNavigationService
                     return [
                         'destination_stop_name' => $group->first()->destinationStop->stop_name ?? 'Unknown',
                         'passengers' => $group->map(fn($ticket) => [
-                            'passenger_name' => $ticket->passengerId->first_name . ' ' . $ticket->passengerId->last_name,
+                            'passenger_name' => $this->resolvePassengerDisplayName($ticket),
                             'ticket_id' => $ticket->ticket_id,
                             'ticket_uuid' => $ticket->ticket_uuid,
                             'seat_type' => $ticket->seat_type
@@ -84,6 +88,10 @@ class DriverNavigationService
             return null;
         }
 
+        if (!$trip->fleetRoute || !$trip->fleetRoute->route_id) {
+            return null;
+        }
+
         $passengers = $this->ticketRepository->getPassengersAlightingAtStop(
             $trip->trip_id,
             $stopId
@@ -105,7 +113,7 @@ class DriverNavigationService
                 return [
                     'destination_stop_name' => $group->first()->destinationStop->stop_name ?? 'Unknown',
                     'passengers' => $group->map(fn($ticket) => [
-                        'passenger_name' => $ticket->passengerId->first_name . ' ' . $ticket->passengerId->last_name,
+                        'passenger_name' => $this->resolvePassengerDisplayName($ticket),
                         'ticket_id' => $ticket->ticket_id,
                         'ticket_uuid' => $ticket->ticket_uuid,
                         'seat_type' => $ticket->seat_type
@@ -138,5 +146,14 @@ class DriverNavigationService
             $trip->trip_id,
             $stopId
         );
+    }
+
+    private function resolvePassengerDisplayName(object $ticket): string
+    {
+        $name = $ticket->passenger?->name
+            ?? $ticket->passenger?->user?->username
+            ?? $ticket->passenger?->user?->email;
+
+        return is_string($name) && $name !== '' ? $name : 'Passenger';
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\FleetDailyPinService;
 use App\Services\FleetPairingService;
 use App\Services\TripService;
 use App\Traits\ApiResponse;
@@ -13,8 +14,9 @@ class FleetPairingController extends Controller
     use ApiResponse;
 
     public function __construct(
-        private FleetPairingService $pairingService,
-        private TripService $tripService,
+        private FleetPairingService  $pairingService,
+        private FleetDailyPinService $pinService,
+        private TripService          $tripService,
     ) {}
 
     // ── Driver endpoints ─────────────────────────────────────────────────────
@@ -127,6 +129,18 @@ class FleetPairingController extends Controller
         }
 
         try {
+            // Ensure the daily-pin record exists before PIN-based pairing.
+            // FleetDailyPinController lazy-creates it when staff view their PIN
+            // page — but if they skip that screen and try to pair directly,
+            // resolvePartnerTokenFromPin would fail with "No pairing record found".
+            if ($trip->driver_id && $trip->conductor_id) {
+                $this->pinService->generateOrGet(
+                    $trip->trip_id,
+                    (int) $trip->driver_id,
+                    (int) $trip->conductor_id,
+                );
+            }
+
             $partnerToken = $request->filled('token')
                 ? (string) $request->input('token')
                 : $this->pairingService->resolvePartnerTokenFromPin(

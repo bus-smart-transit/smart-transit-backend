@@ -16,11 +16,12 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
+        // current_* fields represent occupied slots; new trips must start at 0.
         $trip = $this->tripRepository->create(array_merge($payload, [
-            'status' => 'scheduled',
-            'current_seated_capacity' => 0,
+            'status'                    => 'scheduled',
+            'current_seated_capacity'   => 0,
             'current_standing_capacity' => 0,
-            'total_occupancy' => 0,
+            'total_occupancy'           => 0,
         ]));
 
         if (!empty($trip->driver_id) && !empty($trip->conductor_id)) {
