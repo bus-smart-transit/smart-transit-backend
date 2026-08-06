@@ -31,6 +31,7 @@ Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteF
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
 Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
+Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
 Route::get('trips', [TripController::class, 'availableTrips']);
 
 // Remove:
@@ -136,6 +137,7 @@ Route::prefix('driver')
             Route::post('trips/current/stops/{stopId}/acknowledge', [TripController::class, 'acknowledgeStop']);
             Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
             Route::post('location', [FleetLocationController::class, 'updateLocation']);
+            Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
         });
 
         // Daily fleet PIN — view and verify
@@ -170,6 +172,7 @@ Route::prefix('conductor')
             Route::get('trips/current/occupancy', [TicketController::class, 'currentTripOccupancy']);
             Route::get('trips/current/occupancy/by-stop', [TicketController::class, 'occupancyByStop']);
             Route::get('trips/current/passengers', [TicketController::class, 'currentPassengers']);
+            Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
         });
 

@@ -137,11 +137,17 @@ class TicketService
 
         return [
             'fleet_route_id' => $trip->fleet_route_id,
-            'trip_id' => $trip->trip_id,
-            'seat_type' => $item['seat_type'],
-            'fare_rule_id' => $quote['fare_rule_id'],
-            'distance_km' => $quote['distance_km'],
-            'amount' => $quote['amount'],
+            'trip_id'        => $trip->trip_id,
+            'seat_type'      => $item['seat_type'],
+            'fare_rule_id'   => $quote['fare_rule_id'],
+            'distance_km'    => $quote['distance_km'],
+            'amount'         => $quote['amount'],
+            // Preserve custom GPS drop-off so the ticket can display where the
+            // passenger actually intends to alight (not just the route terminal).
+            'origin_lat'      => (float) $item['origin_lat'],
+            'origin_lng'      => (float) $item['origin_lng'],
+            'destination_lat' => (float) $item['destination_lat'],
+            'destination_lng' => (float) $item['destination_lng'],
         ];
     }
 
@@ -163,8 +169,12 @@ class TicketService
             'status' => 'valid',
             'amount' => $reserved['amount'],
             'seat_type' => $reserved['seat_type'],
-            'origin_stop_id' => $reserved['origin_stop_id'] ?? null,
+            'origin_stop_id'      => $reserved['origin_stop_id']      ?? null,
             'destination_stop_id' => $reserved['destination_stop_id'] ?? null,
+            'origin_lat'          => $reserved['origin_lat']          ?? null,
+            'origin_lng'          => $reserved['origin_lng']          ?? null,
+            'destination_lat'     => $reserved['destination_lat']     ?? null,
+            'destination_lng'     => $reserved['destination_lng']     ?? null,
         ]);
 
         if ($passengerId) {
@@ -236,16 +246,30 @@ class TicketService
         $this->ticketRepository->markBoarded($ticket->ticket_id);
         $boardedTicket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
 
+        // Destination label — prefer a named stop; fall back to GPS coords for
+        // custom-pinpoint tickets so the conductor sees WHERE the passenger alights.
+        $destinationLabel = $boardedTicket->destinationStop?->stop_name
+            ?? ($boardedTicket->destination_lat !== null
+                ? 'GPS: ' . round((float) $boardedTicket->destination_lat, 5) . ', ' . round((float) $boardedTicket->destination_lng, 5)
+                : null);
+
+        $originLabel = $boardedTicket->originStop?->stop_name
+            ?? ($boardedTicket->origin_lat !== null
+                ? 'GPS: ' . round((float) $boardedTicket->origin_lat, 5) . ', ' . round((float) $boardedTicket->origin_lng, 5)
+                : null);
+
         return (object) [
-            'ticket_id' => $boardedTicket->ticket_id,
-            'ticket_uuid' => $boardedTicket->ticket_uuid,
-            'passenger_name' => $boardedTicket->passenger?->user?->name ?? 'Guest',
-            'origin' => $boardedTicket->originStop?->stop_name,
-            'destination' => $boardedTicket->destinationStop?->stop_name,
-            'seat_type' => $boardedTicket->seat_type,
-            'amount' => (float) $boardedTicket->amount,
-            'status' => $boardedTicket->status,
-            'boarded_at' => $boardedTicket->boarded_at,
+            'ticket_id'       => $boardedTicket->ticket_id,
+            'ticket_uuid'     => $boardedTicket->ticket_uuid,
+            'passenger_name'  => $boardedTicket->passenger?->user?->name ?? 'Guest',
+            'origin'          => $originLabel,
+            'destination'     => $destinationLabel,
+            'destination_lat' => $boardedTicket->destination_lat,
+            'destination_lng' => $boardedTicket->destination_lng,
+            'seat_type'       => $boardedTicket->seat_type,
+            'amount'          => (float) $boardedTicket->amount,
+            'status'          => $boardedTicket->status,
+            'boarded_at'      => $boardedTicket->boarded_at,
         ];
     }
 
@@ -255,6 +279,44 @@ class TicketService
             ->findByPassenger($passengerId)
             ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
+
+    /**
+     * Trip earnings summary — total fare collected, broken down by payment method.
+     * Computed server-side from verified payment/ticket records only.
+     */
+    public function getTripEarnings(int $tripId): array
+    {
+        $tickets = Ticket::with('payment')
+            ->where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->get();
+
+        $totalFare    = 0.0;
+        $onsiteAmount = 0.0;
+        $onlineAmount = 0.0;
+        $passengerCount = $tickets->count();
+
+        foreach ($tickets as $ticket) {
+            $amount = (float) ($ticket->amount ?? 0);
+            $totalFare += $amount;
+            $method = $ticket->payment?->payment_method ?? 'unknown';
+            if ($method === 'cash' || $method === 'onsite') {
+                $onsiteAmount += $amount;
+            } else {
+                $onlineAmount += $amount;
+            }
+        }
+
+        return [
+            'trip_id'        => $tripId,
+            'total_fare'     => round($totalFare, 2),
+            'onsite_amount'  => round($onsiteAmount, 2),
+            'online_amount'  => round($onlineAmount, 2),
+            'passenger_count'=> $passengerCount,
+            'average_fare'   => $passengerCount > 0 ? round($totalFare / $passengerCount, 2) : 0.0,
+        ];
+    }
+
 
     public function scanGroup(array $payload): array
     {

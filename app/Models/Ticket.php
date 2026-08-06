@@ -71,13 +71,21 @@ class Ticket extends Model
         'seat_type',
         'origin_stop_id',
         'destination_stop_id',
+        'origin_lat',
+        'origin_lng',
+        'destination_lat',
+        'destination_lng',
     ];
 
     protected function casts(): array
     {
         return [
-            'boarded_at' => 'datetime',
-            'alighted_at' => 'datetime',
+            'boarded_at'      => 'datetime',
+            'alighted_at'     => 'datetime',
+            'origin_lat'      => 'float',
+            'origin_lng'      => 'float',
+            'destination_lat' => 'float',
+            'destination_lng' => 'float',
         ];
     }
 

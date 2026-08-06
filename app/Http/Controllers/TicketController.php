@@ -133,6 +133,32 @@ class TicketController extends Controller
     }
 
     /**
+     * Conductor & Driver: Trip earnings summary for current active trip.
+     * GET /conductor/trips/current/earnings
+     * GET /driver/trips/current/earnings
+     */
+    public function currentTripEarnings(Request $request)
+    {
+        $user = $request->user();
+        $companyUser = $user->companyProfile;
+
+        // Works for both driver and conductor — each has their own current-trip endpoint.
+        $role = $user->role ?? null;
+        $trip = match ($role) {
+            'conductor' => $this->tripService->getCurrentTripForConductor($companyUser->company_user_id),
+            'driver'    => $this->tripService->getCurrentTripForDriver($companyUser->company_user_id),
+            default     => null,
+        };
+
+        if (!$trip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        $earnings = $this->ticketService->getTripEarnings($trip->trip_id);
+        return $this->success($earnings, 'Trip earnings retrieved successfully');
+    }
+
+    /**
      * Passenger: Get QR code for their ticket
      * GET /passengers/tickets/{ticketUuid}/qr
      */
