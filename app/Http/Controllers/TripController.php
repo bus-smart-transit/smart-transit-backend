@@ -21,7 +21,8 @@ class TripController extends Controller
     // Operator / Admin: schedule a new trip
     public function store(StoreTripRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->scheduleTrip(array_merge(
             $request->validated(),
             ['company_user_id' => $companyUser->company_user_id]
@@ -64,7 +65,8 @@ class TripController extends Controller
     // Driver: see today's assigned trips
     public function myTrips(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         return $this->success(
             $this->tripService->getDriverTrips($companyUser->company_user_id),
             'Assigned trips retrieved successfully'
@@ -74,7 +76,8 @@ class TripController extends Controller
     // Conductor: see assigned trips (scheduled/current)
     public function myConductorTrips(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         return $this->success(
             $this->tripService->getConductorTrips($companyUser->company_user_id),
             'Assigned trips retrieved successfully'
@@ -84,7 +87,8 @@ class TripController extends Controller
     // Operator: see all upcoming trips scheduled under this operator
     public function operatorTrips(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         return $this->success(
             $this->tripService->getOperatorUpcomingTrips($companyUser->company_user_id),
             'Upcoming trips retrieved successfully'
@@ -94,7 +98,8 @@ class TripController extends Controller
     // Driver: current active trip
     public function currentTripDriver(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->getCurrentTripForDriver($companyUser->company_user_id);
         if (!$trip)
             return $this->error('No active trip found.', 404);
@@ -104,7 +109,8 @@ class TripController extends Controller
     // Conductor: current active trip
     public function currentTripConductor(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
         if (!$trip)
             return $this->error('No active trip found.', 404);
@@ -118,7 +124,8 @@ class TripController extends Controller
      */
     public function currentTripStops(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $tripWithStops = $this->navigationService->getCurrentTripWithStops($companyUser->company_user_id);
         return $this->success($tripWithStops, 'Current trip stops and passengers retrieved successfully');
     }
@@ -129,7 +136,8 @@ class TripController extends Controller
      */
     public function currentTripStopDetail(Request $request, int $stopId)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $stopDetails = $this->navigationService->getStopDetails($companyUser->company_user_id, $stopId);
         return $this->success($stopDetails, 'Stop details retrieved successfully');
     }
@@ -140,7 +148,8 @@ class TripController extends Controller
      */
     public function acknowledgeStop(Request $request, int $stopId)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $this->navigationService->acknowledgeStop($companyUser->company_user_id, $stopId);
         return $this->success(null, 'Stop acknowledged successfully');
     }
@@ -153,21 +162,7 @@ class TripController extends Controller
     {
         $includeStops = $request->boolean('include_stops', true);
 
-        $with = [
-            'fleetRoute.fleet',
-            'fleetRoute.route',
-        ];
-
-        if ($includeStops) {
-            $with[] = 'fleetRoute.route.routeStops.stop';
-        }
-
-        $trips = \App\Models\Trip::query()
-            ->whereIn('status', ['scheduled', 'boarding'])
-            ->where('trip_date', '>=', now()->toDateString())
-            ->with($with)
-            ->orderBy('trip_date', 'asc')
-            ->get();
+        $trips = $this->tripService->getAvailableTripsForPassengers($includeStops);
 
         return $this->success($trips, 'Available trips retrieved successfully');
     }

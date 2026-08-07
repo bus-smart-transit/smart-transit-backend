@@ -23,7 +23,8 @@ class FleetDailyPinController extends Controller
      */
     public function showForDriver(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
@@ -58,7 +59,8 @@ class FleetDailyPinController extends Controller
      */
     public function showForConductor(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
@@ -92,7 +94,8 @@ class FleetDailyPinController extends Controller
      */
     public function verifyAsDriver(VerifyPinRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(
@@ -118,7 +121,8 @@ class FleetDailyPinController extends Controller
      */
     public function verifyAsConductor(VerifyPinRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(

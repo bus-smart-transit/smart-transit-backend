@@ -44,14 +44,10 @@ class FleetController extends Controller
 
     public function fleetRoutes(Request $request)
     {
-        $staffProfile = $this->staffService->getStaffProfile($request->user());
-
-        if (!$staffProfile) {
-            return $this->error('Staff profile not found for this account.', 404);
-        }
-
+        // Return ALL active fleet routes so operators can schedule trips on any
+        // fleet, not just fleets they personally created.
         return $this->success(
-            $this->fleetService->listFleetRoutesByOperator($staffProfile->company_user_id),
+            $this->fleetService->listAllFleetRoutes(),
             'Fleet routes retrieved successfully'
         );
     }

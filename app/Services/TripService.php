@@ -154,6 +154,11 @@ class TripService
         return $this->tripRepository->findTodayByConductor($conductorCompanyUserId);
     }
 
+    public function getAvailableTripsForPassengers(bool $includeStops = true): object
+    {
+        return $this->tripRepository->listAvailableForPassengers($includeStops);
+    }
+
     /**
      * Called internally by TicketService — not from any controller.
      * $seatType = 'seated' | 'standing'

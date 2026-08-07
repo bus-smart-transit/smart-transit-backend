@@ -146,4 +146,27 @@ class TripRepository
             'last_acknowledged_at' => now()
         ]) > 0;
     }
+
+    /**
+     * All trips currently bookable by passengers.
+     * Used by the public GET /trips endpoint.
+     */
+    public function listAvailableForPassengers(bool $includeStops = true): \Illuminate\Support\Collection
+    {
+        $with = [
+            'fleetRoute.fleet',
+            'fleetRoute.route',
+        ];
+
+        if ($includeStops) {
+            $with[] = 'fleetRoute.route.routeStops.stop';
+        }
+
+        return Trip::query()
+            ->whereIn('status', ['scheduled', 'boarding'])
+            ->where('trip_date', '>=', now()->toDateString())
+            ->with($with)
+            ->orderBy('trip_date', 'asc')
+            ->get();
+    }
 }

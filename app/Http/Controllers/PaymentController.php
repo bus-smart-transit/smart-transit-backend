@@ -56,7 +56,8 @@ class PaymentController extends Controller
     // Conductor: record an onsite cash sale (one or more tickets)
     public function checkoutOnsite(OnsiteCheckoutRequest $request)
     {
-        $conductor = $request->user()->companyProfile;
+        $conductor = $request->user()?->companyProfile;
+        if (!$conductor) return $this->error('Staff profile not found.', 404);
         $result = $this->paymentService->checkoutOnsite(
             $conductor->company_user_id,
             $request->validated()

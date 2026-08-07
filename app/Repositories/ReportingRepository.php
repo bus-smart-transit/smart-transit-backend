@@ -24,112 +24,47 @@ class ReportingRepository
      */
     public function getFleetFinancialSummary(int $fleetId, string $startDate, string $endDate): array
     {
-        $trips = Trip::with('fleetRoute', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
-            ->whereBetween('trip_date', [$startDate, $endDate])
-            ->get();
+        // Single aggregation query — avoids hydrating thousands of trip/ticket/payment
+        // models into PHP memory for every report request.
+        $row = \Illuminate\Support\Facades\DB::selectOne("
+            SELECT
+                COALESCE(SUM(p.amount) FILTER (WHERE p.payment_method = 'online'), 0)  AS online_revenue,
+                COALESCE(SUM(p.amount) FILTER (WHERE p.payment_method = 'cash'), 0)    AS onsite_revenue,
+                COALESCE(SUM(p.amount), 0)                                              AS total_revenue,
+                COUNT(DISTINCT t.ticket_id)                                             AS total_tickets,
+                COUNT(DISTINCT tr.trip_id) FILTER (WHERE tr.status = 'completed')      AS completed_trips
+            FROM trips tr
+            JOIN fleet_routes fr  ON fr.fleet_route_id = tr.fleet_route_id
+            JOIN tickets t        ON t.trip_id = tr.trip_id
+            JOIN payments p       ON p.payment_id = t.payment_id
+            WHERE fr.fleet_id = ?
+              AND tr.trip_date BETWEEN ? AND ?
+              AND p.status IN ('paid','completed','success','succeeded')
+        ", [$fleetId, $startDate, $endDate]);
 
-        $fleetTripIds = $trips->pluck('trip_id')->all();
-
-        $totalRevenue = 0;
-        $onlineRevenue = 0;
-        $onsiteRevenue = 0;
-        $totalTickets = 0;
-        $completedTrips = 0;
-        $countedPaymentIds = [];
-
-        foreach ($trips as $trip) {
-            $paymentMap = [];
-            foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
-                    continue;
-                }
-
-                $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
-                    continue;
-                }
-
-                $paymentMap[$payment->payment_id] = $payment;
-                $totalTickets++;
-            }
-
-            foreach ($paymentMap as $payment) {
-                $amount = $payment->amount;
-                $totalRevenue += $amount;
-                $countedPaymentIds[$payment->payment_id] = true;
-
-                if ($payment->payment_method === 'online') {
-                    $onlineRevenue += $amount;
-                } elseif ($payment->payment_method === 'cash') {
-                    $onsiteRevenue += $amount;
-                }
-            }
-            
-            if ($trip->status === 'completed') {
-                $completedTrips++;
-            }
-        }
-
-        // Include paid/success online checkouts that may not yet have ticket rows
-        // but contain reserved trip IDs in items_payload.
-        if (!empty($fleetTripIds)) {
-            $candidateOnlinePayments = Payment::query()
-                ->where('payment_method', 'online')
-                ->whereBetween('payment_created', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
-                ->get();
-
-            foreach ($candidateOnlinePayments as $payment) {
-                if (!$this->isRevenueStatus($payment->status)) {
-                    continue;
-                }
-
-                if (isset($countedPaymentIds[$payment->payment_id])) {
-                    continue;
-                }
-
-                $items = $payment->items_payload ?? [];
-                $hasFleetTrip = false;
-                foreach ($items as $item) {
-                    $tripId = isset($item['trip_id']) ? (int) $item['trip_id'] : null;
-                    if ($tripId && in_array($tripId, $fleetTripIds, true)) {
-                        $hasFleetTrip = true;
-                        break;
-                    }
-                }
-
-                if (!$hasFleetTrip) {
-                    continue;
-                }
-
-                $amount = (float) $payment->amount;
-                $onlineRevenue += $amount;
-                $totalRevenue += $amount;
-                $countedPaymentIds[$payment->payment_id] = true;
-            }
-        }
-
-        $averageRevenuePerTrip = $completedTrips > 0 ? $totalRevenue / $completedTrips : 0;
+        $completedTrips = (int) ($row->completed_trips ?? 0);
+        $totalRevenue   = (float) ($row->total_revenue  ?? 0);
+        $totalTickets   = (int) ($row->total_tickets    ?? 0);
 
         return [
             'fleet_id' => $fleetId,
-            'period' => [
+            'period'   => [
                 'start_date' => $startDate,
-                'end_date' => $endDate,
+                'end_date'   => $endDate,
             ],
             'revenue' => [
-                'total' => round($totalRevenue, 2),
-                'online' => round($onlineRevenue, 2),
-                'onsite_cash' => round($onsiteRevenue, 2),
-                'currency' => 'PHP',
+                'total'       => round($totalRevenue, 2),
+                'online'      => round((float) ($row->online_revenue  ?? 0), 2),
+                'onsite_cash' => round((float) ($row->onsite_revenue  ?? 0), 2),
+                'currency'    => 'PHP',
             ],
             'tickets' => [
-                'total' => $totalTickets,
-                'average_per_trip' => $completedTrips > 0 ? round($totalTickets / $completedTrips, 2) : 0,
+                'total'              => $totalTickets,
+                'average_per_trip'   => $completedTrips > 0 ? round($totalTickets / $completedTrips, 2) : 0,
             ],
             'trips' => [
-                'completed' => $completedTrips,
-                'average_revenue_per_trip' => round($averageRevenuePerTrip, 2),
+                'completed'                => $completedTrips,
+                'average_revenue_per_trip' => $completedTrips > 0 ? round($totalRevenue / $completedTrips, 2) : 0,
             ],
         ];
     }

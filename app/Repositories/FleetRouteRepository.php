@@ -55,4 +55,17 @@ class FleetRouteRepository
             ->orderBy('fleet_route_id', 'asc')
             ->get();
     }
+
+    /**
+     * Return all active fleet routes regardless of which operator created the fleet.
+     * Used for trip scheduling so any operator can schedule trips on any fleet route.
+     */
+    public function listAll(): Collection
+    {
+        return FleetRoute::with(['fleet', 'route'])
+            ->where('status', 'active')
+            ->whereHas('fleet', fn($q) => $q->where('status', 'active'))
+            ->orderBy('fleet_route_id', 'asc')
+            ->get();
+    }
 }

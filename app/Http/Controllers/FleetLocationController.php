@@ -14,7 +14,8 @@ class FleetLocationController extends Controller
     // fleet_id is derived server-side from the driver's active trip — not trusted from client
     public function updateLocation(UpdateLocationRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
         $this->fleetLocationService->updateLocation(
             $companyUser->company_user_id,

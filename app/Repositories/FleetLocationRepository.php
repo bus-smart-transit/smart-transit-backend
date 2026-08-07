@@ -47,12 +47,12 @@ class FleetLocationRepository
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id
             LEFT JOIN trips t ON t.trip_id = fl.trip_id
-            WHERE t.status IN ('boarding', 'departed')
+            WHERE t.status IN ('boarding', 'departed', 'in-progress')
                OR fl.updated_at > NOW() - INTERVAL '2 minutes'
         "));
     }
 
-    public function findNearest(array $payload, float $radiusMeters = 5000): ?object
+    public function findNearest(array $payload, float $radiusMeters = 25000): ?object
     {
         $results = DB::select("
             SELECT
@@ -73,7 +73,7 @@ class FleetLocationRepository
                 ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
                 ?
             )
-            AND (t.status IN ('boarding', 'departed')
+            AND (t.status IN ('boarding', 'departed', 'in-progress')
                 OR fl.updated_at > NOW() - INTERVAL '2 minutes')
             ORDER BY distance_meters ASC
             LIMIT 1

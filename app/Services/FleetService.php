@@ -35,6 +35,15 @@ class FleetService
         return $this->fleetRouteRepository->listActiveByOperator($companyUserId);
     }
 
+    /**
+     * All active fleet routes — used by the trip-scheduling form so operators
+     * can schedule trips on fleets they did not personally create.
+     */
+    public function listAllFleetRoutes(): object
+    {
+        return $this->fleetRouteRepository->listAll();
+    }
+
     // $payload = ['route_id','start_time','end_time']
     public function assignRouteToFleet(int $fleetId, array $payload): object
     {

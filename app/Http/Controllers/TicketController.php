@@ -40,14 +40,26 @@ class TicketController extends Controller
     // Conductor: scan a passenger QR code at boarding
     public function scan(ScanTicketRequest $request)
     {
-        $ticket = $this->ticketService->validateScan($request->validated());
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+
+        $ticket = $this->ticketService->validateScan(
+            $request->validated(),
+            $companyUser->company_user_id
+        );
         return $this->success($ticket, 'Ticket validated and boarded successfully');
     }
 
     // Conductor: scan a group QR to board all tickets under one transaction at once
     public function scanGroup(ScanGroupRequest $request)
     {
-        $result = $this->ticketService->scanGroup($request->validated());
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+
+        $result = $this->ticketService->scanGroup(
+            $request->validated(),
+            $companyUser->company_user_id
+        );
         $msg = "{$result['boarded_count']} of {$result['total_tickets']} ticket(s) boarded successfully.";
         return $this->success($result, $msg);
     }
@@ -77,7 +89,8 @@ class TicketController extends Controller
      */
     public function currentTripOccupancy(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
@@ -94,7 +107,8 @@ class TicketController extends Controller
      */
     public function occupancyByStop(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
@@ -111,7 +125,8 @@ class TicketController extends Controller
      */
     public function currentPassengers(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
@@ -140,7 +155,8 @@ class TicketController extends Controller
     public function currentTripEarnings(Request $request)
     {
         $user = $request->user();
-        $companyUser = $user->companyProfile;
+        $companyUser = $user?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
         // Works for both driver and conductor — each has their own current-trip endpoint.
         $role = $user->role ?? null;
@@ -164,7 +180,7 @@ class TicketController extends Controller
      */
     public function getTicketQR(Request $request, string $ticketUuid)
     {
-        $ticket = \App\Models\Ticket::where('ticket_uuid', $ticketUuid)->firstOrFail();
+        $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
 
         $passengerProfile = $request->user()->passengerProfile;
         if (!$passengerProfile) {

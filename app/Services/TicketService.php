@@ -210,7 +210,10 @@ class TicketService
     }
 
     // $payload = ['ticket_uuid']
-    public function validateScan(array $payload): object
+    // $conductorCompanyUserId — when provided, the ticket must belong to the
+    // conductor's currently active trip (prevents scanning tickets for wrong
+    // or future trips even if the date check somehow passes).
+    public function validateScan(array $payload, ?int $conductorCompanyUserId = null): object
     {
         $ticket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
 
@@ -230,16 +233,48 @@ class TicketService
             ]);
         }
 
-        $tripDate = $ticket->trip?->trip_date;
-        if ($tripDate && now()->startOfDay()->lt($tripDate->startOfDay())) {
+        // ── Trip ownership check ────────────────────────────────────────────
+        // Verify the ticket belongs to the conductor's currently active trip.
+        // This is the primary guard against scanning future-trip tickets:
+        // a conductor can only board passengers onto the trip they are
+        // currently running, regardless of the ticket's date.
+        if ($conductorCompanyUserId !== null) {
+            $activeTrip = $this->tripService->getCurrentTripForConductor($conductorCompanyUserId);
+
+            if (!$activeTrip) {
+                throw ValidationException::withMessages([
+                    'ticket' => ['No active trip found. You must have an active trip to scan tickets.'],
+                ]);
+            }
+
+            if ((int) $ticket->trip_id !== (int) $activeTrip->trip_id) {
+                throw ValidationException::withMessages([
+                    'ticket' => ['This ticket is for a different trip and cannot be scanned on your current trip.'],
+                ]);
+            }
+        }
+
+        // ── Date check (secondary guard, uses string comparison for reliability) ─
+        // Avoid Carbon method chaining which can silently fail when $trip is null.
+        // String comparison works correctly for ISO date strings (YYYY-MM-DD).
+        $tripDateStr = $ticket->trip?->trip_date?->toDateString();
+        $todayStr    = now()->toDateString();
+
+        if ($tripDateStr === null) {
             throw ValidationException::withMessages([
-                'ticket' => ['This ticket is not yet active. It can only be used on the scheduled trip date.'],
+                'ticket' => ['Ticket does not have a valid trip date and cannot be boarded.'],
             ]);
         }
 
-        if ($tripDate && now()->gt($tripDate->copy()->endOfDay())) {
+        if ($tripDateStr > $todayStr) {
             throw ValidationException::withMessages([
-                'ticket' => ['This ticket has expired. Tickets are only valid until 11:59 PM of the scheduled trip date.'],
+                'ticket' => ['This ticket is not yet active. It can only be used on the scheduled trip date (' . $tripDateStr . ').'],
+            ]);
+        }
+
+        if ($tripDateStr < $todayStr) {
+            throw ValidationException::withMessages([
+                'ticket' => ['This ticket has expired. Tickets are only valid on their scheduled trip date (' . $tripDateStr . ').'],
             ]);
         }
 
@@ -281,6 +316,21 @@ class TicketService
     }
 
     /**
+     * Retrieve a ticket by UUID for ownership/authorization checks.
+     * Throws ModelNotFoundException (auto-resolved as 404) if not found.
+     */
+    public function getTicketByUuidOrFail(string $uuid): Ticket
+    {
+        $ticket = $this->ticketRepository->findByUuid($uuid);
+
+        if (!$ticket) {
+            throw (new \Illuminate\Database\Eloquent\ModelNotFoundException())->setModel(Ticket::class);
+        }
+
+        return $ticket;
+    }
+
+    /**
      * Trip earnings summary — total fare collected, broken down by payment method.
      * Computed server-side from verified payment/ticket records only.
      */
@@ -318,7 +368,7 @@ class TicketService
     }
 
 
-    public function scanGroup(array $payload): array
+    public function scanGroup(array $payload, ?int $conductorCompanyUserId = null): array
     {
         $tickets = $this->ticketRepository->findByTransactionRef($payload['transaction_reference']);
 
@@ -328,8 +378,22 @@ class TicketService
             ]);
         }
 
+        // Resolve conductor's active trip once for the whole group scan.
+        $activeTripId = null;
+        if ($conductorCompanyUserId !== null) {
+            $activeTrip   = $this->tripService->getCurrentTripForConductor($conductorCompanyUserId);
+            $activeTripId = $activeTrip?->trip_id;
+
+            if (!$activeTripId) {
+                throw ValidationException::withMessages([
+                    'transaction_reference' => ['No active trip found. You must have an active trip to scan group tickets.'],
+                ]);
+            }
+        }
+
+        $todayStr     = now()->toDateString();
         $boardedCount = 0;
-        $results = [];
+        $results      = [];
 
         foreach ($tickets as $ticket) {
             $base = [
@@ -350,14 +414,27 @@ class TicketService
                 continue;
             }
 
-            $tripDate = $ticket->trip?->trip_date;
-            if ($tripDate && now()->startOfDay()->lt($tripDate->startOfDay())) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket not yet active']);
+            // Trip ownership check — same logic as single-ticket scan.
+            if ($activeTripId !== null && (int) $ticket->trip_id !== (int) $activeTripId) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket is for a different trip']);
                 continue;
             }
 
-            if ($tripDate && now()->gt($tripDate->copy()->endOfDay())) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket expired']);
+            // Date check — string comparison, avoids Carbon null/timezone issues.
+            $tripDateStr = $ticket->trip?->trip_date?->toDateString();
+
+            if ($tripDateStr === null) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'No trip date on ticket']);
+                continue;
+            }
+
+            if ($tripDateStr > $todayStr) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket not yet active (scheduled for ' . $tripDateStr . ')']);
+                continue;
+            }
+
+            if ($tripDateStr < $todayStr) {
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket expired (was for ' . $tripDateStr . ')']);
                 continue;
             }
 
@@ -385,7 +462,18 @@ class TicketService
     {
         $tripDate = $ticket->trip?->trip_date;
         if ($tripDate) {
-            $expiresAt = $tripDate->copy()->endOfDay();
+            $tz          = config('app.timezone', 'UTC');
+            $dateStr     = $tripDate->toDateString(); // "YYYY-MM-DD"
+
+            // valid_from — use the fleet route's scheduled departure time so
+            // passengers see the actual boarding time, not midnight UTC which
+            // renders incorrectly when the browser converts to local time.
+            $startTime   = $ticket->trip?->fleetRoute?->start_time ?? '00:00:00';
+            $validFrom   = \Illuminate\Support\Carbon::parse($dateStr . ' ' . $startTime, $tz);
+
+            // expires_at — end of the trip day in the app's local timezone.
+            // A ticket is only usable on its scheduled trip date (23:59:59 local).
+            $expiresAt   = \Illuminate\Support\Carbon::parse($dateStr . ' 23:59:59', $tz);
 
             // Mark expired and persist BEFORE setting virtual attributes,
             // so that valid_from / expires_at (which are not real DB columns)
@@ -395,7 +483,7 @@ class TicketService
                 $ticket->save();
             }
 
-            $ticket->setAttribute('valid_from', $tripDate->copy()->startOfDay()->toIso8601String());
+            $ticket->setAttribute('valid_from', $validFrom->toIso8601String());
             $ticket->setAttribute('expires_at', $expiresAt->toIso8601String());
         } else {
             $ticket->setAttribute('valid_from', null);
