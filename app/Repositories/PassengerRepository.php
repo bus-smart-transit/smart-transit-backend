@@ -1,52 +1,55 @@
 <?php
-
 namespace App\Repositories;
 
 use App\Models\PassengerUser;
+use Illuminate\Support\Str;
 
 class PassengerRepository
 {
     public function paginate(int $perPage = 15)
     {
-        return PassengerUser::latest()->paginate($perPage);
+        return PassengerUser::with('user')->latest()->paginate($perPage);
     }
 
-    public function create(array $payload)
+    public function create(array $payload): PassengerUser
     {
+        // Generate UUID here — no HasUuids trait on the model
+        $payload['passenger_uuid'] = (string) Str::uuid();
         return PassengerUser::create($payload);
     }
 
-    public function findByUuid(string $uuid)
+    public function findByUuid(string $uuid): ?PassengerUser
     {
-        // FIX: Match the column declaration from your PassengerUser model
-        return PassengerUser::where('passenger_uuid', $uuid)->first();
+        return PassengerUser::with('user')
+            ->where('passenger_uuid', $uuid)
+            ->first();
     }
 
-    public function findByField(string $field, $value)
+    public function findByField(string $field, mixed $value): ?PassengerUser
     {
         return PassengerUser::where($field, $value)->first();
     }
 
-    public function update(string $uuid, array $payload)
+    public function update(string $uuid, array $payload): PassengerUser
     {
         $model = $this->findByUuid($uuid);
         $model->update($payload);
-
-        return $model;
+        return $model->fresh();
     }
 
-    public function delete(string $uuid)
+    public function delete(string $uuid): bool
     {
         $model = $this->findByUuid($uuid);
-
         return $model->delete();
     }
 
-    public function restore(string $uuid)
+    public function restore(string $uuid): PassengerUser
     {
-        $model = PassengerUser::withTrashed()->where('uuid', $uuid)->first();
+        // Fixed: was querying wrong column 'uuid' — correct column is 'passenger_uuid'
+        $model = PassengerUser::withTrashed()
+            ->where('passenger_uuid', $uuid)
+            ->firstOrFail();
         $model->restore();
-
         return $model;
     }
 }

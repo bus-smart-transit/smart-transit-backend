@@ -1,9 +1,8 @@
 <?php
-
 namespace App\Repositories;
 
 use App\Models\User;
-use Illuminate\Support\Facades\Hash;
+use App\Models\PassengerUser;
 
 class UserRepository
 {
@@ -12,13 +11,18 @@ class UserRepository
         return User::create([
             'username' => $payload['username'] ?? explode('@', $payload['email'])[0],
             'email' => $payload['email'],
-            'password' => Hash::make($payload['password']),
+            'password' => $payload['password'],
             'role' => $payload['role'] ?? 'passenger',
         ]);
     }
 
-    public function findByField(string $field, $value): ?User
+    public function findByField(string $field, mixed $value): ?User
     {
         return User::where($field, $value)->first();
+    }
+
+    public function getPassengerProfile(int $userId): ?PassengerUser
+    {
+        return PassengerUser::with('user')->where('user_id', $userId)->first();
     }
 }

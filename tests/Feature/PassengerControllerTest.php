@@ -1,31 +1,27 @@
 <?php
 
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
 test('it can create a passenger user', function () {
-    $user = User::create([
-        'username' => 'testpassenger',
-        'email' => 'test@example.com',
-        'password' => bcrypt('password'),
-        'role' => 'passenger',
-    ]);
-
-    $response = $this->postJson('/api/passengers', [
-        'user_id' => $user->user_id,
+    $response = $this->postJson('/api/passengers/register', [
+        'email' => 'test+' . uniqid() . '@example.com',
+        'password' => 'password123',
+        'password_confirmation' => 'password123',
         'name' => 'John Doe',
         'phone_num' => '1234567890',
         'address' => '123 Smart St',
+        'birthdate' => '2000-01-01',
     ]);
 
     $response->assertStatus(201);
+    $response->assertJsonStructure(['data' => ['passenger', 'token']]);
 });
 
 test('it validates request data when creating a passenger user', function () {
-    $response = $this->postJson('/api/passengers', []);
+    $response = $this->postJson('/api/passengers/register', []);
 
     $response->assertStatus(422);
-    $response->assertJsonValidationErrors(['user_id', 'name', 'phone_num', 'address']);
+    $response->assertJsonValidationErrors(['name', 'email', 'password', 'phone_num', 'birthdate']);
 });

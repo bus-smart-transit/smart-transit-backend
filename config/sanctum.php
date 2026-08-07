@@ -50,7 +50,7 @@ return [
     |
     */
 
-    'expiration' => null,
+    'expiration' => 60 * 24, // 24 hours — tokens expire daily; set to null to disable
 
     /*
     |--------------------------------------------------------------------------

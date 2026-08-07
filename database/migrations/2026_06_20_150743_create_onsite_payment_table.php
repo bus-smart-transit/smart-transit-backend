@@ -11,7 +11,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('onsite_payment', function (Blueprint $table) {
-            $table->id('onsite_pay_id');
+            $table->id('onsite_payment_id');
             $table->foreignId('payment_id')->constrained('payments', 'payment_id')->onDelete('cascade');
             $table->foreignId('conductor_id')->constrained('company_users', 'company_user_id');
             $table->timestamps();

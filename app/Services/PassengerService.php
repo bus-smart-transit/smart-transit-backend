@@ -1,6 +1,5 @@
 <?php
-
-namespace App\Services; // Double-check if your folder is named 'Service' or 'Services'
+namespace App\Services;
 
 use App\Repositories\PassengerRepository;
 use App\Repositories\UserRepository;
@@ -8,15 +7,10 @@ use Illuminate\Support\Facades\DB;
 
 class PassengerService
 {
-    private PassengerRepository $passengerRepository;
-    private UserRepository $userRepository;
-
     public function __construct(
-        PassengerRepository $passengerRepository,
-        UserRepository $userRepository
+        private PassengerRepository $passengerRepository,
+        private UserRepository $userRepository,
     ) {
-        $this->passengerRepository = $passengerRepository;
-        $this->userRepository = $userRepository;
     }
 
     public function listPassenger(int $perPage = 15)
@@ -24,42 +18,57 @@ class PassengerService
         return $this->passengerRepository->paginate($perPage);
     }
 
-    public function createPassenger(array $payload)
+    // $payload = ['name','email','password','phone_num','address','birthdate']
+    public function createPassenger(array $payload): object
     {
         return DB::transaction(function () use ($payload) {
-            // Now passing an array to an array-expecting repository safely
             $user = $this->userRepository->create($payload);
 
-            // FIX: Match your custom primary key field 'user_id'
-            $payload['user_id'] = $user->user_id;
-
-            return $this->passengerRepository->create($payload);
+            return $this->passengerRepository->create([
+                'user_id' => $user->user_id,
+                'name' => $payload['name'],
+                'phone_num' => $payload['phone_num'],
+                'address' => $payload['address'] ?? '',
+                'birthdate' => $payload['birthdate'],
+            ]);
         });
     }
 
-    public function getPassenger(string $uuid)
+    /**
+     * Register a new passenger and issue their first API token.
+     * Returns ['passenger' => PassengerUser, 'token' => string].
+     */
+    public function registerPassenger(array $payload): array
+    {
+        $passenger = $this->createPassenger($payload);
+        $passenger->load('user');
+        $token = $passenger->user->createToken('passenger-token')->plainTextToken;
+
+        return ['passenger' => $passenger, 'token' => $token];
+    }
+
+    public function getPassenger(string $uuid): ?object
     {
         return $this->passengerRepository->findByUuid($uuid);
     }
 
-    public function getPassengerByField(string $field, $value)
+    public function getPassengerByField(string $field, mixed $value): ?object
     {
         return $this->passengerRepository->findByField($field, $value);
     }
 
-    public function updatePassenger(string $uuid, array $payload)
+    // $payload = validated fields only — never $request->all()
+    public function updatePassenger(string $uuid, array $payload): object
     {
         return $this->passengerRepository->update($uuid, $payload);
     }
 
     public function deletePassenger(string $uuid): bool
     {
-        $this->passengerRepository->delete($uuid);
-
-        return true;
+        return $this->passengerRepository->delete($uuid);
     }
 
-    public function restorePassenger(string $uuid)
+    public function restorePassenger(string $uuid): object
     {
         return $this->passengerRepository->restore($uuid);
     }

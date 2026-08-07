@@ -40,7 +40,6 @@ class MakePattern extends Command
 
     use App\Services\DummyService;
     use Illuminate\Http\Request;
-    use Illuminate\Http\JsonResponse;
 
     class DummyController extends Controller
     {

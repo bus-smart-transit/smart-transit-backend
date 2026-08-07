@@ -11,11 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('company_fleets', function (Blueprint $table) {
-            $table->id('company_id');
-            $table->string('company_name');
-            $table->string('fleet_name');
-            $table->timestamps();
+        Schema::table('company_users', function (Blueprint $table) {
+            $table->timestamp('birth_date')->nullable()->change();
         });
     }
 
@@ -24,6 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('company_fleets');
+        Schema::table('company_users', function (Blueprint $table) {
+            $table->timestamp('birth_date')->nullable(false)->change();
+        });
     }
 };

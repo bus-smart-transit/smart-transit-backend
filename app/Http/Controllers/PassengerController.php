@@ -1,71 +1,71 @@
 <?php
-
 namespace App\Http\Controllers;
 
-use App\Http\Requests\PassengerStoreRequest;
+use App\Http\Requests\RegisterPassengerRequest;
+use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
-use App\Services\PassengerService; // Import the Resource here instead!
+use App\Services\PassengerService;
+use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class PassengerController extends Controller
 {
-    private PassengerService $passengerService;
+    use ApiResponse;
 
-    public function __construct(PassengerService $passengerService)
+    public function __construct(private PassengerService $passengerService)
     {
-        $this->passengerService = $passengerService;
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(): JsonResponse
     {
-        $paginatedModels = $this->passengerService->listPassenger($request->input('per_page', 15));
-
-        // Transforms the paginated collection and automatically appends metadata
-        return response()->json(PassengerResource::collection($paginatedModels)->response()->getData(true));
+        $paginated = $this->passengerService->listPassenger(request()->input('per_page', 15));
+        return $this->success(PassengerResource::collection($paginated)->response()->getData(true));
     }
 
-    public function store(PassengerStoreRequest $request): JsonResponse
+    public function store(RegisterPassengerRequest $request): JsonResponse
     {
-        $model = $this->passengerService->createPassenger($request->validated());
+        ['passenger' => $passenger, 'token' => $token] = $this->passengerService->registerPassenger($request->validated());
 
-        $model->load('user');
-        $token = $model->user->createToken('passenger-token')->plainTextToken;
-
-        return response()->json([
-            'passenger' => new PassengerResource($model),
-            'token' => $token,
-        ], 201);
+        return $this->success(
+            ['passenger' => new PassengerResource($passenger), 'token' => $token],
+            'Registered successfully',
+            201
+        );
     }
 
     public function show(string $uuid): JsonResponse
     {
-        $model = $this->passengerService->getPassenger($uuid);
-
-        return response()->json(new PassengerResource($model), 200);
+        return $this->success(new PassengerResource($this->passengerService->getPassenger($uuid)));
     }
 
-    public function update(Request $request, string $uuid): JsonResponse
+    public function update(UpdatePassengerProfileRequest $request): JsonResponse
     {
-        $model = $this->passengerService->updatePassenger($uuid, $request->all());
+        // Enforce ownership: always update the authenticated user's own profile
+        $passengerProfile = $request->user()?->passengerProfile;
+        if (!$passengerProfile) {
+            return $this->error('Passenger profile not found.', 404);
+        }
 
-        return response()->json(new PassengerResource($model), 200);
+        $model = $this->passengerService->updatePassenger(
+            $passengerProfile->passenger_uuid,
+            $request->validated()
+        );
+
+        // Revoke all other tokens when profile is updated (session hygiene)
+        $request->user()->tokens()->where('id', '!=', $request->user()->currentAccessToken()->id)->delete();
+
+        return $this->success(new PassengerResource($model), 'Profile updated successfully');
     }
 
     public function destroy(string $uuid): JsonResponse
     {
         $this->passengerService->deletePassenger($uuid);
-
-        return response()->json(['message' => 'Deleted successfully'], 200);
+        return $this->success(null, 'Deleted successfully');
     }
 
     public function restore(string $uuid): JsonResponse
     {
         $model = $this->passengerService->restorePassenger($uuid);
-
-        return response()->json([
-            'message' => 'Restored successfully',
-            'data' => new PassengerResource($model),
-        ], 200);
+        return $this->success(new PassengerResource($model), 'Restored successfully');
     }
 }
