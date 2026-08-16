@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Route;
 // PUBLIC — no auth required
 // Login endpoints use controller-level RateLimiter (failed-only counting).
 Route::post('passengers/login', [AuthController::class, 'login']);
+Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
 Route::post('passengers/reset-password',  [AuthController::class, 'resetPassword'])->middleware('throttle:3,15');

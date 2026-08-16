@@ -17,6 +17,12 @@ if [ -z "$APP_KEY" ]; then
   php artisan key:generate --force
 fi
 
+# Ensure writable framework directories exist (excluded from Docker build by .dockerignore)
+# Must run BEFORE config:cache so realpath() in config/view.php resolves correctly.
+mkdir -p storage/framework/views storage/framework/sessions storage/framework/cache/data
+chown -R www-data:www-data storage/framework/views storage/framework/sessions storage/framework/cache
+chmod -R 775 storage/framework/views storage/framework/sessions storage/framework/cache
+
 # Cache config/routes for production
 php artisan config:cache
 php artisan route:cache

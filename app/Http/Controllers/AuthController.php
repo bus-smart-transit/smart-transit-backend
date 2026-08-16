@@ -19,12 +19,13 @@ class AuthController extends Controller
     {
     }
 
+    /**
+     * Step 1: validate credentials and send OTP.
+     * Returns { otp_required: true, user_id, email_masked } — NO token yet.
+     */
     public function login(LoginRequest $request)
     {
         // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        // The route-level throttle (throttle:5,15,passenger-login) increments
-        // on every call regardless of outcome, so successful logins consumed
-        // the counter and eventually triggered the lockout message.
         $key = 'passenger-login:' . $request->ip();
 
         if (RateLimiter::tooManyAttempts($key, 5)) {
@@ -35,18 +36,49 @@ class AuthController extends Controller
         }
 
         try {
-            $response = $this->userService->loginUser($request->validated());
+            $result = $this->userService->initiateLoginOtp($request->validated());
         } catch (ValidationException $e) {
-            // Only FAILED logins count toward the rate limit.
-            RateLimiter::hit($key, 900); // decay: 15 minutes
+            RateLimiter::hit($key, 900);
             throw $e;
         }
 
-        // Successful login — reset the counter so the user is not penalised
-        // for previous mistakes once they authenticate correctly.
         RateLimiter::clear($key);
+        return $this->success($result, 'OTP sent to your email address.');
+    }
 
-        return $this->success($response, 'Logged in successfully');
+    /**
+     * Step 2: verify OTP and issue Sanctum token.
+     * POST /passengers/verify-otp  { user_id, otp }
+     */
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|integer',
+            'otp'     => 'required|string|size:6',
+        ]);
+
+        // Separate rate limit for OTP guessing — max 5 wrong codes per 15 min.
+        $otpKey = 'passenger-otp-verify:' . $request->ip() . ':' . $request->input('user_id');
+
+        if (RateLimiter::tooManyAttempts($otpKey, 5)) {
+            $seconds = RateLimiter::availableIn($otpKey);
+            throw ValidationException::withMessages([
+                'otp' => ["Too many incorrect attempts. Please wait {$seconds} seconds."],
+            ]);
+        }
+
+        try {
+            $result = $this->userService->verifyLoginOtp(
+                (int) $request->input('user_id'),
+                (string) $request->input('otp')
+            );
+        } catch (ValidationException $e) {
+            RateLimiter::hit($otpKey, 900);
+            throw $e;
+        }
+
+        RateLimiter::clear($otpKey);
+        return $this->success(['token' => $result['token']], 'Logged in successfully.');
     }
 
     public function profile(Request $request)
