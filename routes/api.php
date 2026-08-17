@@ -27,7 +27,10 @@ Route::post('passengers/register', [PassengerController::class, 'store'])->middl
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
 Route::post('passengers/reset-password',  [AuthController::class, 'resetPassword'])->middleware('throttle:3,15');
 Route::post('staff/login', [StaffAuthController::class, 'login']);
+Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:10,15');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
@@ -54,6 +57,7 @@ Route::prefix('passengers')
     ->group(function () {
         Route::delete('logout', [AuthController::class, 'logout']);
         Route::get('profile', [AuthController::class, 'profile']);
+        Route::patch('2fa-preference', [AuthController::class, 'updateTwoFactorPreference']);
         Route::put('profile', [PassengerController::class, 'update']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);

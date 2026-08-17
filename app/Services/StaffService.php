@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Repositories\UserRepository;
 use App\Repositories\StaffRepository;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
@@ -19,6 +18,7 @@ class StaffService
     public function __construct(
         UserRepository $userRepository,
         StaffRepository $staffRepository,
+        private UserService $userService,
     ) {
         $this->userRepository = $userRepository;
         $this->staffRepository = $staffRepository;
@@ -26,24 +26,12 @@ class StaffService
 
     public function loginStaff(array $credentials): array
     {
-        $user = $this->userRepository->findByField('email', $credentials['email']);
+        return $this->userService->initiateStaffLoginOtp($credentials);
+    }
 
-        if (!$user || !Hash::check($credentials['password'], $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
-            ]);
-        }
-
-        if (!in_array($user->role, self::STAFF_ROLES)) {
-            throw ValidationException::withMessages([
-                'email' => ['Access unauthorized via staff terminal.'],
-            ]);
-        }
-
-        return [
-            'user' => $user,
-            'token' => $user->createToken('staff-session-token', [$user->role])->plainTextToken,
-        ];
+    public function verifyStaffLoginOtp(int $userId, string $otp): array
+    {
+        return $this->userService->verifyStaffLoginOtp($userId, $otp);
     }
 
     public function getStaffProfile(object $user): ?object

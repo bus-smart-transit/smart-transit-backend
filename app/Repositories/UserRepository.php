@@ -8,11 +8,14 @@ class UserRepository
 {
     public function create(array $payload): User
     {
+        $role = $payload['role'] ?? 'passenger';
+
         return User::create([
             'username' => $payload['username'] ?? explode('@', $payload['email'])[0],
             'email' => $payload['email'],
             'password' => $payload['password'],
-            'role' => $payload['role'] ?? 'passenger',
+            'role' => $role,
+            'two_factor_enabled' => $payload['two_factor_enabled'] ?? ($role === 'passenger'),
         ]);
     }
 

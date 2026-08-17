@@ -36,7 +36,45 @@ class StaffAuthController extends Controller
 
         RateLimiter::clear($key);
 
-        return $this->success($response, 'Logged in successfully');
+        $message = ($response['otp_required'] ?? false)
+            ? 'OTP sent to your email address.'
+            : 'Logged in successfully';
+
+        return $this->success($response, $message);
+    }
+
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|integer',
+            'otp'     => 'required|string|size:6',
+        ]);
+
+        $otpKey = 'staff-otp-verify:' . $request->ip() . ':' . $request->input('user_id');
+
+        if (RateLimiter::tooManyAttempts($otpKey, 5)) {
+            $seconds = RateLimiter::availableIn($otpKey);
+            throw ValidationException::withMessages([
+                'otp' => ["Too many incorrect attempts. Please wait {$seconds} seconds."],
+            ]);
+        }
+
+        try {
+            $result = $this->staffService->verifyStaffLoginOtp(
+                (int) $request->input('user_id'),
+                (string) $request->input('otp')
+            );
+        } catch (ValidationException $e) {
+            RateLimiter::hit($otpKey, 900);
+            throw $e;
+        }
+
+        RateLimiter::clear($otpKey);
+
+        return $this->success([
+            'token' => $result['token'],
+            'user'  => $result['user'],
+        ], 'Logged in successfully.');
     }
 
     public function profile(Request $request)
@@ -49,6 +87,21 @@ class StaffAuthController extends Controller
     {
         $request->user()->currentAccessToken()->delete();
         return $this->success(null, 'Logged out successfully');
+    }
+
+    public function updateTwoFactorPreference(Request $request)
+    {
+        $validated = $request->validate([
+            'enabled' => 'required|boolean',
+        ]);
+
+        $request->user()->forceFill([
+            'two_factor_enabled' => (bool) $validated['enabled'],
+        ])->save();
+
+        return $this->success([
+            'two_factor_enabled' => (bool) $request->user()->two_factor_enabled,
+        ], '2FA preference updated successfully.');
     }
 
     // Admin hits POST /admin/accounts   → creates operator

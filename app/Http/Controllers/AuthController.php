@@ -43,7 +43,12 @@ class AuthController extends Controller
         }
 
         RateLimiter::clear($key);
-        return $this->success($result, 'OTP sent to your email address.');
+
+        $message = ($result['otp_required'] ?? false)
+            ? 'OTP sent to your email address.'
+            : 'Logged in successfully.';
+
+        return $this->success($result, $message);
     }
 
     /**
@@ -109,6 +114,21 @@ class AuthController extends Controller
     {
         $this->userService->logoutUser($request->user());
         return $this->success(null, 'Logged out successfully');
+    }
+
+    public function updateTwoFactorPreference(Request $request)
+    {
+        $validated = $request->validate([
+            'enabled' => 'required|boolean',
+        ]);
+
+        $request->user()->forceFill([
+            'two_factor_enabled' => (bool) $validated['enabled'],
+        ])->save();
+
+        return $this->success([
+            'two_factor_enabled' => (bool) $request->user()->two_factor_enabled,
+        ], '2FA preference updated successfully.');
     }
 
     public function forgotPassword(Request $request)

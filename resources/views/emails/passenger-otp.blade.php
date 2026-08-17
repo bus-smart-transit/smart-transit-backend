@@ -15,7 +15,7 @@
           <tr>
             <td style="background:linear-gradient(135deg,#16a34a,#22c55e);padding:28px 32px;">
               <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">SmartTransit</p>
-              <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.85);">Secure Login Code</p>
+              <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.85);">One-Time Password (OTP)</p>
             </td>
           </tr>
 
@@ -26,7 +26,7 @@
                 Hi <strong>{{ $name }}</strong>,
               </p>
               <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6;">
-                Use the code below to complete your sign-in. It expires in <strong>10 minutes</strong> and can only be used once.
+                Use the code below to complete your sign-in. It expires in <strong>10 minutes</strong>
               </p>
 
               <!-- OTP box -->
@@ -35,7 +35,7 @@
               </div>
 
               <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">
-                If you did not request this code, you can safely ignore this email. Your account has not been accessed.
+                If you did not request this code, contact us at <a href="mailto:support@smarttransit.com">support@smarttransit.com</a>.
               </p>
             </td>
           </tr>
