@@ -155,16 +155,9 @@ class TicketController extends Controller
     public function currentTripEarnings(Request $request)
     {
         $user = $request->user();
-        $companyUser = $user?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (!$user?->companyProfile) return $this->error('Staff profile not found.', 404);
 
-        // Works for both driver and conductor — each has their own current-trip endpoint.
-        $role = $user->role ?? null;
-        $trip = match ($role) {
-            'conductor' => $this->tripService->getCurrentTripForConductor($companyUser->company_user_id),
-            'driver'    => $this->tripService->getCurrentTripForDriver($companyUser->company_user_id),
-            default     => null,
-        };
+        $trip = $this->tripService->getCurrentTripForUser($user);
 
         if (!$trip) {
             return $this->error('No active trip found.', 404);

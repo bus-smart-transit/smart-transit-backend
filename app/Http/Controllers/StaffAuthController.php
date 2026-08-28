@@ -4,7 +4,9 @@ use App\Services\StaffService;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\CreateStaffAccountRequest;
 use App\Traits\ApiResponse;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
@@ -95,6 +97,11 @@ class StaffAuthController extends Controller
             'enabled' => 'required|boolean',
         ]);
 
+        // Operator and Admin MFA is mandatory — cannot be disabled.
+        if (!$validated['enabled'] && in_array($request->user()?->role, ['operator', 'admin'])) {
+            return $this->error('Two-factor authentication cannot be disabled for operator and admin accounts.', 403);
+        }
+
         $request->user()->forceFill([
             'two_factor_enabled' => (bool) $validated['enabled'],
         ])->save();
@@ -102,6 +109,42 @@ class StaffAuthController extends Controller
         return $this->success([
             'two_factor_enabled' => (bool) $request->user()->two_factor_enabled,
         ], '2FA preference updated successfully.');
+    }
+
+    public function forgotPassword(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        // Always return a generic message to prevent email enumeration.
+        Password::sendResetLink($request->only('email'));
+
+        return $this->success(null, 'If that email is registered, a reset link has been sent.');
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'token'                 => 'required|string',
+            'email'                 => 'required|email',
+            'password'              => 'required|string|min:8|confirmed',
+            'password_confirmation' => 'required|string',
+        ]);
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function ($user, $password) {
+                $user->forceFill(['password' => $password])->save();
+                // Invalidate all active sessions on password reset.
+                $user->tokens()->delete();
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return $this->success(null, 'Password reset successfully. Please log in again.');
+        }
+
+        return $this->error('Invalid or expired password reset token. Please request a new one.', 422);
     }
 
     // Admin hits POST /admin/accounts   → creates operator

@@ -5,46 +5,52 @@ use App\Mail\PassengerOtpMail;
 use App\Repositories\UserRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
 class UserService
 {
-    private const PASSENGER_ROLES = ['passenger'];
-    private const STAFF_ROLES = ['driver', 'conductor', 'operator', 'admin'];
-    private const OTP_TTL_MINUTES = 3;
-
     public function __construct(private UserRepository $userRepository)
     {
     }
 
     /**
      * Step 1 of 2-step login.
-     * Validates credentials, and if 2FA is enabled, sends a 6-digit OTP.
-     * If 2FA is disabled, this issues a token immediately.
+     * Validates credentials, generates a 6-digit OTP, stores it in cache
+     * (10-minute TTL) and emails it to the passenger.
      * Returns the masked email so the frontend can show "code sent to a*****@gmail.com".
+     * Does NOT issue a Sanctum token yet.
      */
     public function initiateLoginOtp(array $payload): array
     {
-        return $this->initiateRoleAwareLoginOtp(
-            $payload,
-            self::PASSENGER_ROLES,
-            'passenger-login-otp',
-            'passenger-session-token',
-            []
-        );
-    }
+        $user = $this->userRepository->findByField('email', $payload['email']);
 
-    public function initiateStaffLoginOtp(array $payload): array
-    {
-        return $this->initiateRoleAwareLoginOtp(
-            $payload,
-            self::STAFF_ROLES,
-            'staff-login-otp',
-            'staff-session-token',
-            null
-        );
+        if (!$user || !Hash::check($payload['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['Invalid email or password credentials provided.'],
+            ]);
+        }
+
+        if ($user->role !== 'passenger') {
+            throw ValidationException::withMessages([
+                'email' => ['Invalid email or password credentials provided.'],
+            ]);
+        }
+
+        $otp       = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $cacheKey  = 'passenger-otp:' . $user->user_id;
+
+        // Store hashed OTP — prevents cache-leak from exposing the code directly.
+        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+
+        $name      = $user->username ?? explode('@', $user->email)[0];
+        Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
+
+        return [
+            'otp_required'   => true,
+            'user_id'        => $user->user_id,
+            'email_masked'   => $this->maskEmail($user->email),
+        ];
     }
 
     /**
@@ -53,27 +59,132 @@ class UserService
      */
     public function verifyLoginOtp(int $userId, string $otpInput): array
     {
-        return $this->verifyRoleAwareLoginOtp(
-            $userId,
-            $otpInput,
-            self::PASSENGER_ROLES,
-            'passenger-login-otp',
-            'passenger-session-token',
-            []
-        );
+        $cacheKey = 'passenger-otp:' . $userId;
+        $stored   = Cache::get($cacheKey);
+
+        if (!$stored) {
+            throw ValidationException::withMessages([
+                'otp' => ['OTP has expired or was never issued. Please log in again.'],
+            ]);
+        }
+
+        if (!Hash::check($otpInput, $stored)) {
+            throw ValidationException::withMessages([
+                'otp' => ['Incorrect code. Please check your email and try again.'],
+            ]);
+        }
+
+        // Single-use — delete immediately after successful check.
+        Cache::forget($cacheKey);
+
+        $user = $this->userRepository->findByField('user_id', $userId);
+
+        if (!$user || $user->role !== 'passenger') {
+            throw ValidationException::withMessages([
+                'otp' => ['Account not found.'],
+            ]);
+        }
+
+        return [
+            'user'  => $user,
+            'token' => $user->createToken('passenger-session-token')->plainTextToken,
+        ];
     }
 
+    // ── Staff authentication ───────────────────────────────────────────────
+    // Operator and Admin roles require OTP regardless of their two_factor_enabled
+    // flag — MFA is mandatory for those roles (ACCOUNT_SECURITY_AUDIT §1).
+    // Driver and Conductor respect the per-account two_factor_enabled flag.
+
+    private const MFA_MANDATORY_ROLES = ['operator', 'admin'];
+
+    /**
+     * Step 1 of staff login.
+     * Validates credentials, then either issues a Sanctum token directly
+     * (driver/conductor with two_factor_enabled = false) or sends an OTP
+     * and returns the masked email (operator/admin and any staff with MFA on).
+     */
+    public function initiateStaffLoginOtp(array $credentials): array
+    {
+        $user = $this->userRepository->findByField('email', $credentials['email']);
+
+        if (!$user || !Hash::check($credentials['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['Invalid email or password credentials provided.'],
+            ]);
+        }
+
+        if (!in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
+            throw ValidationException::withMessages([
+                'email' => ['Invalid email or password credentials provided.'],
+            ]);
+        }
+
+        $requiresMfa = in_array($user->role, self::MFA_MANDATORY_ROLES)
+            || (bool) $user->two_factor_enabled;
+
+        if (!$requiresMfa) {
+            return [
+                'otp_required' => false,
+                'user'         => $user,
+                'token'        => $user->createToken('staff-session-token')->plainTextToken,
+            ];
+        }
+
+        $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $cacheKey = 'staff-otp:' . $user->user_id;
+
+        // Store hashed OTP to prevent cache-leak exposure.
+        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+
+        $name = $user->username ?? explode('@', $user->email)[0];
+        Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
+
+        return [
+            'otp_required' => true,
+            'user_id'      => $user->user_id,
+            'email_masked' => $this->maskEmail($user->email),
+        ];
+    }
+
+    /**
+     * Step 2 of staff login — validates OTP and issues Sanctum token.
+     */
     public function verifyStaffLoginOtp(int $userId, string $otpInput): array
     {
-        return $this->verifyRoleAwareLoginOtp(
-            $userId,
-            $otpInput,
-            self::STAFF_ROLES,
-            'staff-login-otp',
-            'staff-session-token',
-            null
-        );
+        $cacheKey = 'staff-otp:' . $userId;
+        $stored   = Cache::get($cacheKey);
+
+        if (!$stored) {
+            throw ValidationException::withMessages([
+                'otp' => ['OTP has expired or was never issued. Please log in again.'],
+            ]);
+        }
+
+        if (!Hash::check($otpInput, $stored)) {
+            throw ValidationException::withMessages([
+                'otp' => ['Incorrect code. Please check your email and try again.'],
+            ]);
+        }
+
+        // Single-use — delete immediately after a successful check.
+        Cache::forget($cacheKey);
+
+        $user = $this->userRepository->findByField('user_id', $userId);
+
+        if (!$user || !in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
+            throw ValidationException::withMessages([
+                'otp' => ['Account not found.'],
+            ]);
+        }
+
+        return [
+            'user'  => $user,
+            'token' => $user->createToken('staff-session-token')->plainTextToken,
+        ];
     }
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
 
     public function getPassengerProfile(object $user): ?object
     {
@@ -93,137 +204,5 @@ class UserService
         $visible = substr($local, 0, min(2, strlen($local)));
         $masked  = str_repeat('*', max(0, strlen($local) - 2));
         return $visible . $masked . '@' . $domain;
-    }
-
-    private function initiateRoleAwareLoginOtp(
-        array $payload,
-        array $allowedRoles,
-        string $cachePrefix,
-        string $tokenName,
-        ?array $abilities
-    ): array {
-        $user = $this->userRepository->findByField('email', $payload['email']);
-
-        if (!$user || !Hash::check($payload['password'], $user->password) || !in_array($user->role, $allowedRoles, true)) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
-            ]);
-        }
-
-        if (!$user->two_factor_enabled) {
-            $token = $abilities === null
-                ? $user->createToken($tokenName, [$user->role])->plainTextToken
-                : $user->createToken($tokenName, $abilities)->plainTextToken;
-
-            return [
-                'otp_required' => false,
-                'token' => $token,
-                'user' => $user,
-            ];
-        }
-
-        $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        $cacheKey = $cachePrefix . ':' . $user->user_id;
-
-        // Store hashed OTP — prevents cache-leak from exposing the code directly.
-        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(self::OTP_TTL_MINUTES));
-
-        $name = $user->username ?? explode('@', $user->email)[0];
-
-        // Always log OTP first so it is visible even if mail delivery fails.
-        Log::info('[DEV] Login OTP issued', [
-            'user_id' => $user->user_id,
-            'email' => $user->email,
-            'otp' => $otp,
-            'ttl_minutes' => self::OTP_TTL_MINUTES,
-        ]);
-
-        $mailDeliveryFailed = false;
-        $mailDeliveryError = null;
-
-        try {
-            Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
-        } catch (\Throwable $e) {
-            // Mail is non-critical during development (e.g. missing RESEND_API_KEY).
-            // OTP is already persisted in cache and visible in the log above.
-            $mailDeliveryFailed = true;
-            $mailDeliveryError = $e->getMessage();
-            Log::warning('[DEV] OTP mail failed — check RESEND_API_KEY or mail config', [
-                'error' => $e->getMessage(),
-            ]);
-        }
-
-        $response = [
-            'otp_required' => true,
-            'user_id' => $user->user_id,
-            'email_masked' => $this->maskEmail($user->email),
-            'otp_expires_in_seconds' => self::OTP_TTL_MINUTES * 60,
-        ];
-
-        if ($mailDeliveryFailed) {
-            $response['otp_delivery_failed'] = true;
-            $response['otp_delivery_message'] = $this->humanizeMailDeliveryError($mailDeliveryError);
-        }
-
-        return $response;
-    }
-
-    private function verifyRoleAwareLoginOtp(
-        int $userId,
-        string $otpInput,
-        array $allowedRoles,
-        string $cachePrefix,
-        string $tokenName,
-        ?array $abilities
-    ): array {
-        $cacheKey = $cachePrefix . ':' . $userId;
-        $stored = Cache::get($cacheKey);
-
-        if (!$stored) {
-            throw ValidationException::withMessages([
-                'otp' => ['OTP has expired or was never issued. Please log in again.'],
-            ]);
-        }
-
-        if (!Hash::check($otpInput, $stored)) {
-            throw ValidationException::withMessages([
-                'otp' => ['Incorrect code. Please check your email and try again.'],
-            ]);
-        }
-
-        // Single-use — delete immediately after successful check.
-        Cache::forget($cacheKey);
-
-        $user = $this->userRepository->findByField('user_id', $userId);
-
-        if (!$user || !in_array($user->role, $allowedRoles, true)) {
-            throw ValidationException::withMessages([
-                'otp' => ['Account not found.'],
-            ]);
-        }
-
-        $token = $abilities === null
-            ? $user->createToken($tokenName, [$user->role])->plainTextToken
-            : $user->createToken($tokenName, $abilities)->plainTextToken;
-
-        return [
-            'user' => $user,
-            'token' => $token,
-        ];
-    }
-
-    private function humanizeMailDeliveryError(?string $rawError): string
-    {
-        $raw = (string) $rawError;
-
-        if (str_contains($raw, 'You can only send testing emails to your own email address')) {
-            return 'Resend test mode only sends to your account email. Verify a domain in Resend and use a sender from that domain to deliver OTPs to other recipients.';
-        }
-
-        if (str_contains($raw, 'invalid_api_key') || str_contains($raw, 'Unauthorized')) {
-            return 'Resend rejected the API key. Please check RESEND_API_KEY.';
-        }
-
-        return 'OTP email delivery failed. Please check Resend configuration.';
     }
 }

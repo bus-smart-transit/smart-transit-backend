@@ -15,7 +15,9 @@ class UserRepository
             'email' => $payload['email'],
             'password' => $payload['password'],
             'role' => $role,
-            'two_factor_enabled' => $payload['two_factor_enabled'] ?? ($role === 'passenger'),
+            // Operator and Admin always start with MFA enabled — matches the
+            // mandatory-MFA policy in UserService::initiateStaffLoginOtp.
+            'two_factor_enabled' => $payload['two_factor_enabled'] ?? in_array($role, ['passenger', 'operator', 'admin']),
         ]);
     }
 

@@ -12,7 +12,11 @@ class PayMongoService
     private string $secretKey;
     private PaymongoClient $client;
 
-    public function __construct()
+    /**
+     * @param PaymongoClient|null $client  Inject a mock in tests; production
+     *                                     receives null and auto-builds the real client.
+     */
+    public function __construct(?PaymongoClient $client = null)
     {
         $this->secretKey = config('services.paymongo.secret_key');
 
@@ -20,7 +24,7 @@ class PayMongoService
             throw new \RuntimeException('PayMongo secret key is not configured. Set PAYMONGO_SECRET_KEY in your .env file.');
         }
 
-        $this->client = new PaymongoClient($this->secretKey);
+        $this->client = $client ?? new PaymongoClient($this->secretKey);
     }
 
     public function createCheckoutSession(object $payment, array $lineItems, string $successUrl, string $cancelUrl): array

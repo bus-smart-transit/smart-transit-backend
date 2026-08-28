@@ -12,6 +12,16 @@ class PassengerResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        return parent::toArray($request);
+        return [
+            'passenger_uuid' => $this->passenger_uuid,
+            'name'           => $this->name,
+            'phone_num'      => $this->phone_num,
+            'address'        => $this->address,
+            'birth_date'     => $this->birth_date,
+            'reward_points'  => $this->reward_points,
+            'email'          => $this->user?->email,
+            'username'       => $this->user?->username,
+            'created_at'     => $this->created_at,
+        ];
     }
 }

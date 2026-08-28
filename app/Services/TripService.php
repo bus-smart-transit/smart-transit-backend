@@ -160,6 +160,24 @@ class TripService
     }
 
     /**
+     * Resolve the current active trip for a staff user by their role.
+     * Removes the role-dispatch match block from callers (O-01 fix).
+     */
+    public function getCurrentTripForUser(object $user): ?object
+    {
+        $companyUser = $user->companyProfile;
+        if (!$companyUser) {
+            return null;
+        }
+
+        return match ($user->role) {
+            'conductor' => $this->getCurrentTripForConductor($companyUser->company_user_id),
+            'driver'    => $this->getCurrentTripForDriver($companyUser->company_user_id),
+            default     => null,
+        };
+    }
+
+    /**
      * Called internally by TicketService — not from any controller.
      * $seatType = 'seated' | 'standing'
      *
