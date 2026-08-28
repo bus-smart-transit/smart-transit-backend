@@ -29,7 +29,7 @@ function makeStaffForAuth(string $role): User
 
 describe('Authentication & Authorization', function () {
 
-    it('authenticates admin user and returns token', function () {
+    it('authenticates admin user and requires OTP step-up', function () {
         $admin = makeStaffForAuth('admin');
 
         $response = $this->postJson('/api/staff/login', [
@@ -41,8 +41,9 @@ describe('Authentication & Authorization', function () {
         $response->assertJsonStructure([
             'status',
             'message',
-            'data' => ['token', 'user'],
+            'data' => ['otp_required', 'user_id', 'email_masked'],
         ]);
+        $response->assertJsonPath('data.otp_required', true);
         $response->assertJsonPath('status', 'success');
     });
 

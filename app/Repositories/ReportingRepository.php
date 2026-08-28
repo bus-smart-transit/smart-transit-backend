@@ -28,15 +28,15 @@ class ReportingRepository
         // models into PHP memory for every report request.
         $row = \Illuminate\Support\Facades\DB::selectOne("
             SELECT
-                COALESCE(SUM(p.amount) FILTER (WHERE p.payment_method = 'online'), 0)  AS online_revenue,
-                COALESCE(SUM(p.amount) FILTER (WHERE p.payment_method = 'cash'), 0)    AS onsite_revenue,
-                COALESCE(SUM(p.amount), 0)                                              AS total_revenue,
-                COUNT(DISTINCT t.ticket_id)                                             AS total_tickets,
-                COUNT(DISTINCT tr.trip_id) FILTER (WHERE tr.status = 'completed')      AS completed_trips
+                COALESCE(SUM(CASE WHEN p.payment_method = 'online' THEN p.amount ELSE 0 END), 0) AS online_revenue,
+                COALESCE(SUM(CASE WHEN p.payment_method = 'cash' THEN p.amount ELSE 0 END), 0)   AS onsite_revenue,
+                COALESCE(SUM(p.amount), 0)                                                         AS total_revenue,
+                COUNT(DISTINCT t.ticket_id)                                                        AS total_tickets,
+                COUNT(DISTINCT CASE WHEN tr.status = 'completed' THEN tr.trip_id ELSE NULL END)   AS completed_trips
             FROM trips tr
-            JOIN fleet_routes fr  ON fr.fleet_route_id = tr.fleet_route_id
-            JOIN tickets t        ON t.trip_id = tr.trip_id
-            JOIN payments p       ON p.payment_id = t.payment_id
+            JOIN fleet_routes fr ON fr.fleet_route_id = tr.fleet_route_id
+            JOIN tickets t       ON t.trip_id = tr.trip_id
+            JOIN payments p      ON p.payment_id = t.payment_id
             WHERE fr.fleet_id = ?
               AND tr.trip_date BETWEEN ? AND ?
               AND p.status IN ('paid','completed','success','succeeded')

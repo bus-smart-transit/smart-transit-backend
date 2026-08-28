@@ -6,6 +6,7 @@ use App\Repositories\FleetRepository;
 use App\Repositories\ReportingRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class ReportingService
 {
@@ -31,7 +32,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -45,7 +46,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -66,7 +67,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -80,7 +81,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -105,7 +106,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 

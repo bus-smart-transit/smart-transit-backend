@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Fleet;
 use App\Models\StaffUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -29,123 +30,100 @@ function makeOperatorWithProfile(): User
 
 describe('Fleet Reporting System', function () {
 
+    function issueOperatorToken(User $operator): string
+    {
+        return $operator->createToken('operator-test-token')->plainTextToken;
+    }
+
+    function createOwnedFleet(User $operator): Fleet
+    {
+        $companyUser = StaffUser::where('user_id', $operator->user_id)->firstOrFail();
+
+        return Fleet::create([
+            'company_user_id' => $companyUser->company_user_id,
+            'plate_number' => 'TEST-' . strtoupper(substr((string) Str::uuid(), 0, 6)),
+            'capacity' => 40,
+            'seated_capacity' => 30,
+            'standing_capacity' => 10,
+            'status' => 'active',
+            'fleet_type' => 'public',
+        ]);
+    }
+
     it('operator can retrieve financial audit for fleet', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/financial');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/financial');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('operator can retrieve revenue breakdown by route', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/revenue-by-route');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/revenue-by-route');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('operator can retrieve route adherence data', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/route-adherence');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/route-adherence');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('operator can retrieve occupancy trends', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/occupancy-trends');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/occupancy-trends');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('operator can retrieve daily summary', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/daily-summary');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/daily-summary');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('operator can retrieve payment channel breakdown', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
+        $fleet = createOwnedFleet($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/operator/fleets/1/reports/payment-channels');
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/payment-channels');
 
         expect($response->status())->toBeIn([200, 404]);
     });
 
     it('rejects reporting request for non-existent fleet', function () {
         $operator = makeOperatorWithProfile();
-
-        $operatorLogin = $this->postJson('/api/staff/login', [
-            'email' => $operator->email,
-            'password' => 'password123',
-        ]);
-        $operatorLogin->assertStatus(200);
-
-        $token = $operatorLogin->json('data.token');
+        $token = issueOperatorToken($operator);
 
         $response = $this->withHeader('Authorization', "Bearer $token")
             ->getJson('/api/operator/fleets/99999/reports/financial');
 
-        $response->assertStatus(404);
+        $response->assertStatus(403);
     });
 
 });
