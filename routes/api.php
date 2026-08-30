@@ -58,6 +58,7 @@ Route::prefix('passengers')
         Route::delete('logout', [AuthController::class, 'logout']);
         Route::get('profile', [AuthController::class, 'profile']);
         Route::put('profile', [PassengerController::class, 'update']);
+        Route::patch('two-factor', [AuthController::class, 'updateTwoFactor']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
         Route::get('dashboard-summary', [PassengerDashboardController::class, 'summary']);

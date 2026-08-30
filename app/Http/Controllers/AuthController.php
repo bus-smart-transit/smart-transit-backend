@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
@@ -43,7 +44,12 @@ class AuthController extends Controller
         }
 
         RateLimiter::clear($key);
-        return $this->success($result, 'OTP sent to your email address.');
+
+        $message = ($result['otp_required'] ?? false)
+            ? 'OTP sent to your email address.'
+            : 'Logged in successfully.';
+
+        return $this->success($result, $message);
     }
 
     /**
@@ -109,6 +115,24 @@ class AuthController extends Controller
     {
         $this->userService->logoutUser($request->user());
         return $this->success(null, 'Logged out successfully');
+    }
+
+    /**
+     * Passenger: toggle two-factor authentication on/off.
+     * PATCH /passengers/two-factor
+     */
+    public function updateTwoFactor(Request $request)
+    {
+        $request->validate(['enabled' => 'required|boolean']);
+
+        $request->user()->forceFill([
+            'two_factor_enabled' => (bool) $request->input('enabled'),
+        ])->save();
+
+        return $this->success(
+            ['two_factor_enabled' => (bool) $request->user()->two_factor_enabled],
+            '2FA preference updated successfully.'
+        );
     }
 
     public function forgotPassword(Request $request)

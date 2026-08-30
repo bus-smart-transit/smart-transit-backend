@@ -37,6 +37,15 @@ class UserService
             ]);
         }
 
+        // If the passenger has disabled 2FA, issue a Sanctum token immediately
+        // without sending an OTP — respects their stored preference.
+        if (!(bool) $user->two_factor_enabled) {
+            return [
+                'otp_required' => false,
+                'token'        => $user->createToken('passenger-session-token')->plainTextToken,
+            ];
+        }
+
         $otp       = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $cacheKey  = 'passenger-otp:' . $user->user_id;
 

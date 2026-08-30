@@ -56,7 +56,10 @@ class ReportingService
                 'start_date' => $startDate,
                 'end_date' => $endDate,
             ],
-            'routes' => $this->reportingRepository->getRevenueByRoute($fleetId, $startDate, $endDate)->toArray(),
+            // ->values() resets Collection keys to 0-indexed so the JSON
+            // serialises as an array [ {...}, {...} ] instead of an object
+            // keyed by route_id, which would break Array.map() on the frontend.
+            'routes' => $this->reportingRepository->getRevenueByRoute($fleetId, $startDate, $endDate)->values()->toArray(),
         ];
     }
 

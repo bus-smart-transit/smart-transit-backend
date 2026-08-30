@@ -24,27 +24,30 @@ class ReportingRepository
      */
     public function getFleetFinancialSummary(int $fleetId, string $startDate, string $endDate): array
     {
-        // Single aggregation query — avoids hydrating thousands of trip/ticket/payment
-        // models into PHP memory for every report request.
-        $row = \Illuminate\Support\Facades\DB::selectOne("
-            SELECT
-                COALESCE(SUM(CASE WHEN p.payment_method = 'online' THEN p.amount ELSE 0 END), 0) AS online_revenue,
-                COALESCE(SUM(CASE WHEN p.payment_method = 'cash' THEN p.amount ELSE 0 END), 0)   AS onsite_revenue,
-                COALESCE(SUM(p.amount), 0)                                                         AS total_revenue,
-                COUNT(DISTINCT t.ticket_id)                                                        AS total_tickets,
-                COUNT(DISTINCT CASE WHEN tr.status = 'completed' THEN tr.trip_id ELSE NULL END)   AS completed_trips
-            FROM trips tr
-            JOIN fleet_routes fr ON fr.fleet_route_id = tr.fleet_route_id
-            JOIN tickets t       ON t.trip_id = tr.trip_id
-            JOIN payments p      ON p.payment_id = t.payment_id
-            WHERE fr.fleet_id = ?
-              AND tr.trip_date BETWEEN ? AND ?
-              AND p.status IN ('paid','completed','success','succeeded')
-        ", [$fleetId, $startDate, $endDate]);
+        // Pure Eloquent aggregation — works on both SQLite (tests) and PostgreSQL (production).
+        // We scope to payments on trips that belong to this fleet within the date window.
+        $fleetTripIds = Trip::whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
+            ->whereBetween('trip_date', [$startDate, $endDate])
+            ->pluck('trip_id');
 
-        $completedTrips = (int) ($row->completed_trips ?? 0);
-        $totalRevenue   = (float) ($row->total_revenue  ?? 0);
-        $totalTickets   = (int) ($row->total_tickets    ?? 0);
+        $payments = \App\Models\Payment::whereIn('payment_id', function ($sub) use ($fleetTripIds) {
+            $sub->select('payment_id')
+                ->from('tickets')
+                ->whereIn('trip_id', $fleetTripIds);
+        })->whereIn('status', ['paid', 'completed', 'success', 'succeeded'])->get();
+
+        $totalRevenue  = $payments->sum('amount');
+        $onlineRevenue = $payments->where('payment_method', 'online')->sum('amount');
+        $onsiteRevenue = $payments->where('payment_method', 'cash')->sum('amount');
+
+        $totalTickets = \App\Models\Ticket::whereIn('trip_id', $fleetTripIds)
+            ->whereIn('payment_id', $payments->pluck('payment_id'))
+            ->distinct('ticket_id')
+            ->count('ticket_id');
+
+        $completedTrips = Trip::whereIn('trip_id', $fleetTripIds)
+            ->where('status', 'completed')
+            ->count();
 
         return [
             'fleet_id' => $fleetId,
@@ -53,9 +56,9 @@ class ReportingRepository
                 'end_date'   => $endDate,
             ],
             'revenue' => [
-                'total'       => round($totalRevenue, 2),
-                'online'      => round((float) ($row->online_revenue  ?? 0), 2),
-                'onsite_cash' => round((float) ($row->onsite_revenue  ?? 0), 2),
+                'total'       => round((float) $totalRevenue, 2),
+                'online'      => round((float) $onlineRevenue, 2),
+                'onsite_cash' => round((float) $onsiteRevenue, 2),
                 'currency'    => 'PHP',
             ],
             'tickets' => [
