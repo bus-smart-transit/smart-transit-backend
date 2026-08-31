@@ -8,6 +8,36 @@ class FleetLocationRepository
     // ⚠ ST_MakePoint(lng, lat) — longitude FIRST, then latitude. Always.
     public function upsertLocation(array $payload): void
     {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'sqlite') {
+            // SQLite (test) path: store "lat,lng" string
+            $locationStr = $payload['latitude'] . ',' . $payload['longitude'];
+            DB::table('fleet_locations')->updateOrInsert(
+                ['fleet_id' => $payload['fleet_id']],
+                [
+                    'trip_id'     => $payload['trip_id']    ?? null,
+                    'location'    => $locationStr,
+                    'heading'     => $payload['heading']    ?? null,
+                    'speed_kmh'   => $payload['speed_kmh']  ?? null,
+                    'recorded_at' => now(),
+                    'updated_at'  => now(),
+                ]
+            );
+
+            DB::table('fleet_location_history')->insert([
+                'fleet_id'    => $payload['fleet_id'],
+                'trip_id'     => $payload['trip_id']    ?? null,
+                'location'    => $locationStr,
+                'heading'     => $payload['heading']    ?? null,
+                'speed_kmh'   => $payload['speed_kmh']  ?? null,
+                'recorded_at' => now(),
+            ]);
+
+            return;
+        }
+
+        // PostgreSQL + PostGIS path
         DB::statement("
             INSERT INTO fleet_locations
                 (fleet_id, trip_id, location, heading, speed_kmh, recorded_at, updated_at)
@@ -28,6 +58,58 @@ class FleetLocationRepository
             $payload['heading']    ?? null,
             $payload['speed_kmh']  ?? null,
         ]);
+
+        // Append to history (time-series, no conflict handling)
+        DB::statement("
+            INSERT INTO fleet_location_history
+                (fleet_id, trip_id, location, heading, speed_kmh, recorded_at)
+            VALUES
+                (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, NOW())
+        ", [
+            $payload['fleet_id'],
+            $payload['trip_id'],
+            $payload['longitude'],
+            $payload['latitude'],
+            $payload['heading']    ?? null,
+            $payload['speed_kmh']  ?? null,
+        ]);
+    }
+
+    /**
+     * Return GPS breadcrumb trail for a trip (most recent first, capped at 500 rows).
+     */
+    public function getTripHistory(int $tripId, int $limit = 500): Collection
+    {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'sqlite') {
+            return collect(DB::select("
+                SELECT history_id, fleet_id, trip_id,
+                       CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
+                       CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
+                       heading, speed_kmh, recorded_at
+                FROM fleet_location_history
+                WHERE trip_id = ?
+                ORDER BY recorded_at DESC
+                LIMIT ?
+            ", [$tripId, $limit]));
+        }
+
+        return collect(DB::select("
+            SELECT
+                history_id,
+                fleet_id,
+                trip_id,
+                ST_Y(location::geometry) AS latitude,
+                ST_X(location::geometry) AS longitude,
+                heading,
+                speed_kmh,
+                recorded_at
+            FROM fleet_location_history
+            WHERE trip_id = ?
+            ORDER BY recorded_at DESC
+            LIMIT ?
+        ", [$tripId, $limit]));
     }
 
     public function getAllActiveLocations(): Collection

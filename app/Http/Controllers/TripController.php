@@ -2,6 +2,7 @@
 namespace App\Http\Controllers;
 use App\Services\TripService;
 use App\Services\DriverNavigationService;
+use App\Services\AuditLogger;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\AssignDriverRequest;
 use App\Http\Requests\AssignConductorRequest;
@@ -27,6 +28,7 @@ class TripController extends Controller
             $request->validated(),
             ['company_user_id' => $companyUser->company_user_id]
         ));
+        AuditLogger::log('trip.schedule', 'Trip', $trip->trip_id ?? null, ['fleet_route_id' => $request->fleet_route_id ?? null]);
         return $this->success($trip, 'Trip scheduled successfully');
     }
 
@@ -34,6 +36,7 @@ class TripController extends Controller
     public function assignDriver(AssignDriverRequest $request, int $tripId)
     {
         $this->tripService->assignDriver($tripId, $request->validated());
+        AuditLogger::log('trip.assign_driver', 'Trip', $tripId, $request->validated());
         return $this->success(null, 'Driver assigned successfully');
     }
 
@@ -41,25 +44,32 @@ class TripController extends Controller
     public function assignConductor(AssignConductorRequest $request, int $tripId)
     {
         $this->tripService->assignConductor($tripId, $request->validated());
+        AuditLogger::log('trip.assign_conductor', 'Trip', $tripId, $request->validated());
         return $this->success(null, 'Conductor assigned successfully');
     }
 
     // Operator / Admin: open boarding
     public function startBoarding(int $tripId)
     {
-        return $this->success($this->tripService->startBoarding($tripId), 'Boarding started');
+        $result = $this->tripService->startBoarding($tripId);
+        AuditLogger::log('trip.boarding', 'Trip', $tripId);
+        return $this->success($result, 'Boarding started');
     }
 
     // Driver / Operator / Admin: mark departed
     public function depart(int $tripId)
     {
-        return $this->success($this->tripService->departTrip($tripId), 'Trip departed');
+        $result = $this->tripService->departTrip($tripId);
+        AuditLogger::log('trip.depart', 'Trip', $tripId);
+        return $this->success($result, 'Trip departed');
     }
 
     // Driver / Operator / Admin: mark completed
     public function complete(int $tripId)
     {
-        return $this->success($this->tripService->completeTrip($tripId), 'Trip completed');
+        $result = $this->tripService->completeTrip($tripId);
+        AuditLogger::log('trip.complete', 'Trip', $tripId);
+        return $this->success($result, 'Trip completed');
     }
 
     // Driver: see today's assigned trips

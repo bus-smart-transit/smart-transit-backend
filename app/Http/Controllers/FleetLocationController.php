@@ -39,4 +39,14 @@ class FleetLocationController extends Controller
         $nearest = $this->fleetLocationService->findNearestFleet($request->validated());
         return $this->success($nearest, 'Nearest fleet retrieved');
     }
+
+    // Operator / Admin: GPS breadcrumb trail for a trip (for route adherence + replay)
+    public function tripHistory(int $tripId)
+    {
+        $limit = min((int) request()->query('limit', 500), 1000);
+        return $this->success(
+            $this->fleetLocationService->getTripHistory($tripId, $limit),
+            'GPS history retrieved'
+        );
+    }
 }

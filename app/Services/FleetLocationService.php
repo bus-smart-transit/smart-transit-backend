@@ -42,4 +42,9 @@ class FleetLocationService
     {
         return $this->fleetLocationRepository->findNearest($payload);
     }
+
+    public function getTripHistory(int $tripId, int $limit = 500): object
+    {
+        return $this->fleetLocationRepository->getTripHistory($tripId, $limit);
+    }
 }

@@ -7,6 +7,7 @@ use App\Models\Ticket;
 use App\Models\Payment;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ReportingRepository
 {
@@ -141,38 +142,132 @@ class ReportingRepository
      */
     public function getRouteAdherence(int $fleetId, string $startDate, string $endDate): array
     {
-        $trips = Trip::with('fleetRoute.route')
+        $trips = Trip::with(['fleetRoute.route.stops' => fn($q) => $q->orderBy('sequence')])
             ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['departed', 'completed'])
             ->get();
 
-        $totalTrips = count($trips);
-        $onTimeTrips = 0; // Would require actual departure vs scheduled time
-        $delayedTrips = 0;
+        $totalTrips       = count($trips);
+        $driver           = DB::getDriverName();
+        $tripAdherences   = [];
+        $stopCoverageSum  = 0;
+        $deviatedTrips    = 0;
+        $PROXIMITY_METERS = 300; // metres — bus considered "at" a stop if within 300 m
 
-        // For now, calculate based on trip completion
         foreach ($trips as $trip) {
-            if ($trip->status === 'completed') {
-                $onTimeTrips++;
+            $stops = $trip->fleetRoute?->route?->stops ?? collect();
+            $stopCount = $stops->count();
+
+            if ($stopCount === 0) {
+                continue; // no route geometry — skip adherence calc
             }
+
+            // Fetch GPS trail for this trip (chronological)
+            $gpsPoints = $this->getTripGpsPoints($trip->trip_id, $driver);
+
+            if ($gpsPoints->isEmpty()) {
+                // No GPS data — fall back to completion-based proxy
+                $tripAdherences[] = [
+                    'trip_id'           => $trip->trip_id,
+                    'trip_date'         => $trip->trip_date,
+                    'status'            => $trip->status,
+                    'stop_coverage_pct' => $trip->status === 'completed' ? 100.0 : null,
+                    'gps_points'        => 0,
+                    'data_source'       => 'proxy',
+                ];
+                continue;
+            }
+
+            // For each scheduled stop, find whether a GPS point came within PROXIMITY_METERS
+            $stopsVisited = 0;
+            foreach ($stops as $stop) {
+                $stopLat = (float) $stop->latitude;
+                $stopLng = (float) $stop->longitude;
+
+                $nearestDist = $gpsPoints->min(function ($pt) use ($stopLat, $stopLng) {
+                    return $this->haversineMeters($pt->latitude, $pt->longitude, $stopLat, $stopLng);
+                });
+
+                if ($nearestDist !== null && $nearestDist <= $PROXIMITY_METERS) {
+                    $stopsVisited++;
+                }
+            }
+
+            $coveragePct = $stopCount > 0 ? round(($stopsVisited / $stopCount) * 100, 1) : 0;
+            $stopCoverageSum += $coveragePct;
+
+            if ($coveragePct < 80) {
+                $deviatedTrips++;
+            }
+
+            $tripAdherences[] = [
+                'trip_id'           => $trip->trip_id,
+                'trip_date'         => $trip->trip_date,
+                'status'            => $trip->status,
+                'stops_scheduled'   => $stopCount,
+                'stops_visited'     => $stopsVisited,
+                'stop_coverage_pct' => $coveragePct,
+                'gps_points'        => $gpsPoints->count(),
+                'data_source'       => 'gps',
+            ];
         }
 
-        $delayedTrips = $totalTrips - $onTimeTrips;
+        $tripsWithData  = count($tripAdherences);
+        $avgCoverage    = $tripsWithData > 0 ? round($stopCoverageSum / $tripsWithData, 1) : null;
 
         return [
             'fleet_id' => $fleetId,
-            'period' => [
-                'start_date' => $startDate,
-                'end_date' => $endDate,
+            'period'   => ['start_date' => $startDate, 'end_date' => $endDate],
+            'summary'  => [
+                'total_trips'             => $totalTrips,
+                'trips_with_gps_data'     => collect($tripAdherences)->where('data_source', 'gps')->count(),
+                'avg_stop_coverage_pct'   => $avgCoverage,
+                'deviated_trips'          => $deviatedTrips,
+                'adherence_rate_pct'      => $tripsWithData > 0
+                    ? round((($tripsWithData - $deviatedTrips) / $tripsWithData) * 100, 1)
+                    : null,
             ],
-            'on_time_performance' => [
-                'total_trips' => $totalTrips,
-                'on_time_trips' => $onTimeTrips,
-                'delayed_trips' => $delayedTrips,
-                'on_time_percentage' => $totalTrips > 0 ? ($onTimeTrips / $totalTrips) * 100 : 0,
-            ],
+            'trips' => $tripAdherences,
         ];
+    }
+
+    private function getTripGpsPoints(int $tripId, string $driver): Collection
+    {
+        if ($driver === 'sqlite') {
+            return collect(DB::select("
+                SELECT
+                    CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
+                    CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
+                    recorded_at
+                FROM fleet_location_history
+                WHERE trip_id = ?
+                ORDER BY recorded_at ASC
+            ", [$tripId]));
+        }
+
+        return collect(DB::select("
+            SELECT
+                ST_Y(location::geometry) AS latitude,
+                ST_X(location::geometry) AS longitude,
+                recorded_at
+            FROM fleet_location_history
+            WHERE trip_id = ?
+            ORDER BY recorded_at ASC
+        ", [$tripId]));
+    }
+
+    /**
+     * Haversine great-circle distance in metres.
+     */
+    private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $R    = 6371000; // Earth radius in metres
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a    = sin($dLat / 2) ** 2
+              + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+        return $R * 2 * asin(sqrt($a));
     }
 
     /**

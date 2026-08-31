@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Controllers;
 use App\Services\FareRuleService;
+use App\Services\AuditLogger;
 use App\Http\Requests\StoreFareRuleRequest;
 use App\Http\Requests\FareQuoteRequest;
 use App\Http\Requests\FareQuoteFromCoordinatesRequest;
@@ -19,7 +20,9 @@ class FareRuleController extends Controller
     // Admin — create a fare rule for a fleet + seat type
     public function storeRule(StoreFareRuleRequest $request)
     {
-        return $this->success($this->fareRuleService->createFareRule($request->validated()), 'Fare rule created successfully');
+        $rule = $this->fareRuleService->createFareRule($request->validated());
+        AuditLogger::log('fare_rule.create', 'FareRule', $rule->fare_rule_id ?? null, $request->validated());
+        return $this->success($rule, 'Fare rule created successfully');
     }
 
     // Passenger — get fare quote before buying, for a known route/fleet/stop pair

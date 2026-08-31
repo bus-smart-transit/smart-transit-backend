@@ -32,6 +32,13 @@ Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPasswor
 Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:3,15');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+
+// Step-up re-auth (requires an active Sanctum session — any staff role)
+Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:3,5']);
+Route::post('step-up/verify', [StaffAuthController::class, 'stepUpVerify'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:5,15']);
+
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -103,8 +110,7 @@ Route::prefix('operator')
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
         // Fare rules
-        Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
-        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
+        Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
     
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);
@@ -122,6 +128,9 @@ Route::prefix('operator')
         Route::get('fleets/{fleetId}/reports/occupancy-trends', [ReportingController::class, 'occupancyTrends']);
         Route::get('fleets/{fleetId}/reports/daily-summary', [ReportingController::class, 'dailySummary']);
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
+
+        // GPS history for a trip (route adherence + replay)
+        Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);
     });
 
 // DRIVER
@@ -219,8 +228,8 @@ Route::prefix('admin')
         Route::apiResource('fleets', FleetController::class);
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
-        // Fare rules + recalculation
-        Route::post('fare-rules', [FareRuleController::class, 'storeRule']);
+        // Fare rules + recalculation (step-up required — irreversible pricing change)
+        Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');
         // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
     
         // Trips — full control
@@ -238,4 +247,39 @@ Route::prefix('admin')
         Route::get('fleets/{fleetId}/reports/occupancy-trends', [ReportingController::class, 'occupancyTrends']);
         Route::get('fleets/{fleetId}/reports/daily-summary', [ReportingController::class, 'dailySummary']);
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
+
+        // Audit log viewer — admin only
+        Route::get('audit-logs', function (\Illuminate\Http\Request $request) {
+            $query = \Illuminate\Support\Facades\DB::table('audit_logs')
+                ->orderByDesc('created_at')
+                ->limit(min((int) $request->query('limit', 100), 500));
+
+            if ($request->filled('action'))       $query->where('action', $request->query('action'));
+            if ($request->filled('actor_type'))   $query->where('actor_type', $request->query('actor_type'));
+            if ($request->filled('actor_id'))     $query->where('actor_id', (int) $request->query('actor_id'));
+            if ($request->filled('subject_type')) $query->where('subject_type', $request->query('subject_type'));
+            if ($request->filled('subject_id'))   $query->where('subject_id', (int) $request->query('subject_id'));
+
+            return response()->json(['data' => $query->get(), 'message' => 'Audit logs retrieved']);
+        });
+
+        // Stored scheduled reports (nightly generated)
+        Route::get('reports/stored', function (\Illuminate\Http\Request $request) {
+            $query = \Illuminate\Support\Facades\DB::table('scheduled_reports')
+                ->orderByDesc('report_date')
+                ->orderByDesc('generated_at')
+                ->limit(min((int) $request->query('limit', 100), 500));
+
+            if ($request->filled('fleet_id'))    $query->where('fleet_id', (int) $request->query('fleet_id'));
+            if ($request->filled('report_type')) $query->where('report_type', $request->query('report_type'));
+            if ($request->filled('date'))        $query->where('report_date', $request->query('date'));
+            if ($request->filled('status'))      $query->where('status', $request->query('status'));
+
+            $rows = $query->get()->map(function ($row) {
+                $row->payload = json_decode($row->payload, true);
+                return $row;
+            });
+
+            return response()->json(['data' => $rows, 'message' => 'Stored reports retrieved']);
+        });
     });

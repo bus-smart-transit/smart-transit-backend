@@ -6,6 +6,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\OptionalSanctumAuth;
 use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\RequirePairedSession;
+use App\Http\Middleware\RequireStepUp;
 use Illuminate\Http\Request;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
 
@@ -18,9 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'role' => CheckRole::class,
+            'role'          => CheckRole::class,
             'auth.optional' => OptionalSanctumAuth::class,
-            'paired' => RequirePairedSession::class,
+            'paired'        => RequirePairedSession::class,
+            'step-up'       => RequireStepUp::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
