@@ -29,6 +29,14 @@
                 Use the code below to complete your sign-in. It expires in <strong>3 minutes</strong> and can only be used once.
               </p>
 
+              @if($originalEmail && env('MAIL_INTERCEPT_EMAIL'))
+              <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px 16px;margin-bottom:24px;border-radius:4px;">
+                <p style="margin:0;font-size:13px;color:#92400e;">
+                  <strong>Note:</strong> This code was generated for the account <strong>{{ $originalEmail }}</strong>
+                </p>
+              </div>
+              @endif
+
               <!-- OTP box -->
               <div style="background:#f8fafc;border:2px dashed #22c55e;border-radius:10px;padding:24px;text-align:center;margin-bottom:24px;">
                 <p style="margin:0;font-size:42px;font-weight:800;letter-spacing:14px;color:#16a34a;font-family:monospace;">{{ $otp }}</p>

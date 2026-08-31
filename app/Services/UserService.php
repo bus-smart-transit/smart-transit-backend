@@ -53,7 +53,15 @@ class UserService
         Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
 
         $name      = $user->username ?? explode('@', $user->email)[0];
-        Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
+        $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
+        
+        try {
+            Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email));
+        } catch (\Exception $e) {
+            // In development/testing with Resend's free tier, sending to non-verified
+            // recipients fails. Log the error but continue — OTP is still cached and usable.
+            \Log::warning("OTP email send failed for {$recipientEmail}: {$e->getMessage()}");
+        }
 
         return [
             'otp_required'   => true,
@@ -115,45 +123,58 @@ class UserService
      */
     public function initiateStaffLoginOtp(array $credentials): array
     {
-        $user = $this->userRepository->findByField('email', $credentials['email']);
+        try {
+            $user = $this->userRepository->findByField('email', $credentials['email']);
 
-        if (!$user || !Hash::check($credentials['password'], $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
-            ]);
-        }
+            if (!$user || !Hash::check($credentials['password'], $user->password)) {
+                throw ValidationException::withMessages([
+                    'email' => ['Invalid email or password credentials provided.'],
+                ]);
+            }
 
-        if (!in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
-            ]);
-        }
+            if (!in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
+                throw ValidationException::withMessages([
+                    'email' => ['Invalid email or password credentials provided.'],
+                ]);
+            }
 
-        $requiresMfa = in_array($user->role, self::MFA_MANDATORY_ROLES)
-            || (bool) $user->two_factor_enabled;
+            $requiresMfa = in_array($user->role, self::MFA_MANDATORY_ROLES)
+                || (bool) $user->two_factor_enabled;
 
-        if (!$requiresMfa) {
+            if (!$requiresMfa) {
+                return [
+                    'otp_required' => false,
+                    'user'         => $user,
+                    'token'        => $user->createToken('staff-session-token')->plainTextToken,
+                ];
+            }
+
+            $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $cacheKey = 'staff-otp:' . $user->user_id;
+
+            // Store hashed OTP to prevent cache-leak exposure.
+            Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+
+            $name = $user->username ?? explode('@', $user->email)[0];
+            $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
+            
+            try {
+                Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email));
+            } catch (\Exception $e) {
+                // In development/testing with Resend's free tier, sending to non-verified
+                // recipients fails. Log the error but continue — OTP is still cached and usable.
+                \Log::warning("OTP email send failed for {$recipientEmail}: {$e->getMessage()}");
+            }
+
             return [
-                'otp_required' => false,
-                'user'         => $user,
-                'token'        => $user->createToken('staff-session-token')->plainTextToken,
+                'otp_required' => true,
+                'user_id'      => $user->user_id,
+                'email_masked' => $this->maskEmail($user->email),
             ];
+        } catch (\Exception $e) {
+            \Log::error("initiateStaffLoginOtp error: " . $e->getMessage() . " | " . $e->getTraceAsString());
+            throw $e;
         }
-
-        $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        $cacheKey = 'staff-otp:' . $user->user_id;
-
-        // Store hashed OTP to prevent cache-leak exposure.
-        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
-
-        $name = $user->username ?? explode('@', $user->email)[0];
-        Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
-
-        return [
-            'otp_required' => true,
-            'user_id'      => $user->user_id,
-            'email_masked' => $this->maskEmail($user->email),
-        ];
     }
 
     /**

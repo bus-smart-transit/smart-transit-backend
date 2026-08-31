@@ -15,6 +15,7 @@ class PassengerOtpMail extends Mailable
     public function __construct(
         public readonly string $otp,
         public readonly string $name,
+        public readonly string $recipientEmail = '',
     ) {}
 
     public function envelope(): Envelope
@@ -28,6 +29,9 @@ class PassengerOtpMail extends Mailable
     {
         return new Content(
             view: 'emails.passenger-otp',
+            with: [
+                'originalEmail' => $this->recipientEmail,
+            ],
         );
     }
 }
