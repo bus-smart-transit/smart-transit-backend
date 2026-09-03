@@ -58,7 +58,12 @@ class Trip extends Model
         'fleet_route_id',
         'company_user_id',
         'trip_date',
+        'departure_time',
         'status',
+        'dispatch_decision',
+        'dispatch_route',
+        'dispatch_reason',
+        'dispatch_decided_at',
         'current_seated_capacity',
         'current_standing_capacity',
         'total_occupancy',
@@ -92,6 +97,22 @@ class Trip extends Model
     public function fleetRoute()
     {
         return $this->belongsTo(FleetRoute::class, 'fleet_route_id', 'fleet_route_id');
+    }
+
+    /**
+     * Assigned driver profile for this trip.
+     */
+    public function driver()
+    {
+        return $this->belongsTo(StaffUser::class, 'driver_id', 'company_user_id');
+    }
+
+    /**
+     * Assigned conductor profile for this trip.
+     */
+    public function conductor()
+    {
+        return $this->belongsTo(StaffUser::class, 'conductor_id', 'company_user_id');
     }
 
     /**

@@ -111,6 +111,31 @@ class TripService
         }
     }
 
+    public function saveDispatchDecision(int $tripId, array $payload): object
+    {
+        $trip = $this->tripRepository->findById($tripId);
+
+        if (!$trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        $decision = $payload['decision'] ?? null;
+        if (!in_array($decision, ['accept', 'keep'], true)) {
+            throw ValidationException::withMessages([
+                'decision' => ['Dispatch decision must be either "accept" or "keep".'],
+            ]);
+        }
+
+        $this->tripRepository->updateDispatchDecision(
+            $tripId,
+            $decision,
+            $payload['route'] ?? null,
+            $payload['reason'] ?? null,
+        );
+
+        return $this->tripRepository->findById($tripId);
+    }
+
     public function getDriverTrips(int $driverCompanyUserId): object
     {
         return $this->tripRepository->listByDriver($driverCompanyUserId);
@@ -137,21 +162,25 @@ class TripService
     }
 
     /**
-     * Returns any trip assigned to this driver today (including scheduled),
-     * used to resolve fleet context for PIN endpoints.
+     * Returns assigned trip context for pairing/PIN flows:
+     * prefers today's active/scheduled trip, then falls back to nearest
+     * upcoming assigned trip when today's assignment does not exist.
      */
     public function getCurrentOrScheduledTripForDriver(int $driverCompanyUserId): ?object
     {
-        return $this->tripRepository->findTodayByDriver($driverCompanyUserId);
+        return $this->tripRepository->findTodayByDriver($driverCompanyUserId)
+            ?? $this->tripRepository->findCurrentOrUpcomingByDriver($driverCompanyUserId);
     }
 
     /**
-     * Returns any trip assigned to this conductor today (including scheduled),
-     * used to resolve fleet context for PIN endpoints.
+     * Returns assigned trip context for pairing/PIN flows:
+     * prefers today's active/scheduled trip, then falls back to nearest
+     * upcoming assigned trip when today's assignment does not exist.
      */
     public function getCurrentOrScheduledTripForConductor(int $conductorCompanyUserId): ?object
     {
-        return $this->tripRepository->findTodayByConductor($conductorCompanyUserId);
+        return $this->tripRepository->findTodayByConductor($conductorCompanyUserId)
+            ?? $this->tripRepository->findCurrentOrUpcomingByConductor($conductorCompanyUserId);
     }
 
     public function getAvailableTripsForPassengers(bool $includeStops = true): object

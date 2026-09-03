@@ -30,6 +30,6 @@ class RouteStopRepository
 
     public function delete(int $routeStopId): bool
     {
-        return RouteStop::where('route_stop_id', $routeStopId)->delete() > 0;
+        return RouteStop::where('id', $routeStopId)->delete() > 0;
     }
 }

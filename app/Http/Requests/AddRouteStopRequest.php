@@ -12,7 +12,7 @@ class AddRouteStopRequest extends FormRequest
         return [
             'stop_id' => 'required|integer|exists:stops,stop_id',
             'stop_order' => 'required|integer|min:1',
-            'distance_from_origin_km' => 'required|numeric|min:0',
+            'distance_from_origin_km' => 'nullable|numeric|min:0',
         ];
     }
 }

@@ -26,7 +26,11 @@ class RouteRepository
 
     public function all(): Collection
     {
-        return Route::all();
+        return Route::with([
+            'routeStops' => function ($q) {
+                $q->orderBy('stop_order')->with('stop');
+            }
+        ])->get();
     }
 
     public function update(int $routeId, array $payload): bool

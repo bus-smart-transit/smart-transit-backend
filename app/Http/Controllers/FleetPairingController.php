@@ -73,7 +73,7 @@ class FleetPairingController extends Controller
             : $this->tripService->getCurrentOrScheduledTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
-            return $this->error('No trip assigned for today. Contact your operator.', 404);
+            return $this->error('No assigned trip was found. Contact your operator.', 404);
         }
 
         $fleetId = (int) ($trip->fleetRoute?->fleet_id ?? 0);
@@ -120,7 +120,7 @@ class FleetPairingController extends Controller
             : $this->tripService->getCurrentOrScheduledTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
-            return $this->error('No trip assigned for today.', 404);
+            return $this->error('No assigned trip was found.', 404);
         }
 
         $fleetId = (int) ($trip->fleetRoute?->fleet_id ?? 0);

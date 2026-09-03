@@ -125,6 +125,7 @@ class FleetLocationRepository
                 fl.speed_kmh,
                 fl.recorded_at,
                 f.plate_number,
+                f.fleet_type,
                 t.status AS trip_status
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id

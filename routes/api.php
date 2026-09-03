@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\PassengerController;
-use App\Http\Controllers\PassengerDashboardController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\RouteController;
@@ -31,6 +30,8 @@ Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->midd
 Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
 Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:3,15');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
@@ -68,7 +69,7 @@ Route::prefix('passengers')
         Route::patch('two-factor', [AuthController::class, 'updateTwoFactor']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
-        Route::get('dashboard-summary', [PassengerDashboardController::class, 'summary']);
+        Route::get('dashboard-summary', [PassengerController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
         Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
@@ -88,6 +89,7 @@ Route::prefix('operator')
     ->group(function () {
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
+        Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         // Account management — operator can only create driver/conductor accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount']);
@@ -117,6 +119,7 @@ Route::prefix('operator')
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
         Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
+        Route::patch('trips/{tripId}/dispatch-decision', [TripController::class, 'saveDispatchDecision']);
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
@@ -142,6 +145,7 @@ Route::prefix('driver')
     ->group(function () {
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
+        Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         Route::get('trips', [TripController::class, 'myTrips']);
         Route::get('trips/current', [TripController::class, 'currentTripDriver']);
@@ -151,6 +155,7 @@ Route::prefix('driver')
             Route::get('trips/current/stops', [TripController::class, 'currentTripStops']);
             Route::get('trips/current/stops/{stopId}', [TripController::class, 'currentTripStopDetail']);
             Route::post('trips/current/stops/{stopId}/acknowledge', [TripController::class, 'acknowledgeStop']);
+            Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
             Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
             Route::post('location', [FleetLocationController::class, 'updateLocation']);
             Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
@@ -175,6 +180,7 @@ Route::prefix('conductor')
     ->group(function () {
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
+        Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         Route::get('trips', [TripController::class, 'myConductorTrips']);
 
@@ -210,6 +216,7 @@ Route::prefix('admin')
     ->group(function () {
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
+        Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         // Admin creates operator accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount']);
@@ -236,6 +243,7 @@ Route::prefix('admin')
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
         Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
+        Route::patch('trips/{tripId}/dispatch-decision', [TripController::class, 'saveDispatchDecision']);
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);

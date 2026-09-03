@@ -8,8 +8,9 @@ class UpdateStopRequest extends FormRequest
     {
         return [
             'stop_name' => 'sometimes|string|max:255',
-            'latitude'  => 'sometimes|numeric|between:-90,90',
-            'longitude' => 'sometimes|numeric|between:-180,180',
+            'location'  => 'sometimes|nullable|string|max:255',
+            'latitude'  => 'sometimes|nullable|numeric|between:-90,90|required_with:longitude',
+            'longitude' => 'sometimes|nullable|numeric|between:-180,180|required_with:latitude',
         ];
     }
 }

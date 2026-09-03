@@ -4,16 +4,68 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegisterPassengerRequest;
 use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
+use App\Services\PaymentService;
 use App\Services\PassengerService;
+use App\Services\RewardService;
+use App\Services\TicketService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class PassengerController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private PassengerService $passengerService)
+    public function __construct(
+        private PassengerService $passengerService,
+        private TicketService $ticketService,
+        private RewardService $rewardService,
+        private PaymentService $paymentService,
+    )
     {
+    }
+
+    public function summary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $passenger = $request->user()?->passengerProfile;
+
+        if (!$passenger) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
+        $tickets = $this->ticketService->getPassengerTickets($passenger->passenger_id);
+        $rewards = $this->rewardService->getHistory($passenger->passenger_id);
+        $payments = $this->paymentService->getPassengerHistoryFromPayments($passenger->passenger_id);
+
+        return $this->success([
+            'profile' => [
+                'passenger_uuid' => $passenger->passenger_uuid,
+                'name' => $passenger->name,
+                'phone_num' => $passenger->phone_num,
+                'address' => $passenger->address,
+                'birth_date' => $passenger->birth_date,
+                'reward_points' => $passenger->reward_points,
+                'email' => $user?->email,
+                'username' => $user?->username,
+                'two_factor_enabled' => (bool) ($user?->two_factor_enabled ?? false),
+                'user' => [
+                    'email' => $user?->email,
+                    'username' => $user?->username,
+                    'two_factor_enabled' => (bool) ($user?->two_factor_enabled ?? false),
+                ],
+                'created_at' => $passenger->created_at,
+            ],
+            'tickets' => $tickets,
+            'rewards' => $rewards,
+            'payments' => $payments,
+            'meta' => [
+                'tickets_count' => $tickets->count(),
+                'rewards_count' => $rewards->count(),
+                'payments_count' => $payments->count(),
+                'synced_at' => now()->toISOString(),
+            ],
+        ], 'Dashboard summary retrieved successfully');
     }
 
     public function index(): JsonResponse

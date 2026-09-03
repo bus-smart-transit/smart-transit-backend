@@ -1,6 +1,7 @@
 <?php
 namespace App\Repositories;
 use App\Models\Trip;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -33,7 +34,9 @@ class TripRepository
 
     public function listUpcomingByOperator(int $operatorCompanyUserId): Collection
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+        $this->markOverdueScheduledAsDelayed($operatorCompanyUserId);
+
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('company_user_id', $operatorCompanyUserId)
             ->where('trip_date', '>=', today())
             ->orderBy('trip_date', 'asc')
@@ -42,7 +45,9 @@ class TripRepository
 
     public function listByDriver(int $driverCompanyUserId): Collection
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('driver_id', $driverCompanyUserId)
             ->where('trip_date', '>=', today())
             ->orderBy('trip_date', 'asc')
@@ -51,7 +56,9 @@ class TripRepository
 
     public function listByConductor(int $conductorCompanyUserId): Collection
     {
-        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet'])
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->where('trip_date', '>=', today())
             ->orderBy('trip_date', 'asc')
@@ -60,22 +67,26 @@ class TripRepository
 
     public function findCurrentByDriver(int $driverCompanyUserId): ?Trip
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('driver_id', $driverCompanyUserId)
-            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', today())
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->orderBy('trip_date', 'asc')
             ->first();
     }
 
     public function findCurrentByConductor(int $conductorCompanyUserId): ?Trip
     {
-        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet'])
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('conductor_id', $conductorCompanyUserId)
-            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', today())
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'scheduled' THEN 3 ELSE 4 END")
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->orderBy('trip_date', 'asc')
             ->first();
     }
@@ -97,19 +108,63 @@ class TripRepository
             ->update(['conductor_id' => $conductorCompanyUserId]) > 0;
     }
 
+    public function updateDispatchDecision(int $tripId, string $decision, ?string $route = null, ?string $reason = null): bool
+    {
+        return Trip::where('trip_id', $tripId)->update([
+            'dispatch_decision' => $decision,
+            'dispatch_route' => $route,
+            'dispatch_reason' => $reason,
+            'dispatch_decided_at' => now(),
+        ]) > 0;
+    }
+
     public function findTodayByDriver(int $driverCompanyUserId): ?Trip
     {
+        $this->markOverdueScheduledAsDelayed();
+
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
-            ->where('trip_date', today())
+            ->whereDate('trip_date', today())
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
     }
 
     public function findTodayByConductor(int $conductorCompanyUserId): ?Trip
     {
+        $this->markOverdueScheduledAsDelayed();
+
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
-            ->where('trip_date', today())
+            ->whereDate('trip_date', today())
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->first();
+    }
+
+    public function findCurrentOrUpcomingByDriver(int $driverCompanyUserId): ?Trip
+    {
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('driver_id', $driverCompanyUserId)
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->whereDate('trip_date', '>=', today())
+            ->orderBy('trip_date', 'asc')
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->first();
+    }
+
+    public function findCurrentOrUpcomingByConductor(int $conductorCompanyUserId): ?Trip
+    {
+        $this->markOverdueScheduledAsDelayed();
+
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('conductor_id', $conductorCompanyUserId)
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->whereDate('trip_date', '>=', today())
+            ->orderBy('trip_date', 'asc')
+            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
     }
 
@@ -153,6 +208,8 @@ class TripRepository
      */
     public function listAvailableForPassengers(bool $includeStops = true): \Illuminate\Support\Collection
     {
+        $this->markOverdueScheduledAsDelayed();
+
         $with = [
             'fleetRoute.fleet',
             'fleetRoute.route',
@@ -163,10 +220,43 @@ class TripRepository
         }
 
         return Trip::query()
-            ->whereIn('status', ['scheduled', 'boarding'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
             ->where('trip_date', '>=', now()->toDateString())
             ->with($with)
             ->orderBy('trip_date', 'asc')
             ->get();
+    }
+
+    public function markOverdueScheduledAsDelayed(?int $operatorCompanyUserId = null): int
+    {
+        $query = Trip::with('fleetRoute')
+            ->whereDate('trip_date', today())
+            ->where('status', 'scheduled');
+
+        if ($operatorCompanyUserId !== null) {
+            $query->where('company_user_id', $operatorCompanyUserId);
+        }
+
+        $timezone = config('app.timezone', 'UTC');
+        $now = Carbon::now($timezone);
+        $updated = 0;
+
+        $query->chunkById(100, function ($trips) use ($now, $timezone, &$updated) {
+            foreach ($trips as $trip) {
+                $departureTime = $trip->departure_time ?: $trip->fleetRoute?->start_time;
+                if (!$departureTime) {
+                    continue;
+                }
+
+                $scheduledAt = Carbon::parse($trip->trip_date->toDateString() . ' ' . $departureTime, $timezone);
+                if ($scheduledAt->lte($now)) {
+                    $updated += Trip::where('trip_id', $trip->trip_id)
+                        ->where('status', 'scheduled')
+                        ->update(['status' => 'delayed']);
+                }
+            }
+        }, 'trip_id', 'trip_id');
+
+        return $updated;
     }
 }

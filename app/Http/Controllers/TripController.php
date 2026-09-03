@@ -48,6 +48,21 @@ class TripController extends Controller
         return $this->success(null, 'Conductor assigned successfully');
     }
 
+    // Operator / Admin: save reroute decision
+    public function saveDispatchDecision(Request $request, int $tripId)
+    {
+        $validated = $request->validate([
+            'decision' => ['required', 'string', 'in:accept,keep'],
+            'route' => ['nullable', 'string', 'max:255'],
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $result = $this->tripService->saveDispatchDecision($tripId, $validated);
+        AuditLogger::log('trip.dispatch_decision', 'Trip', $tripId, $validated);
+
+        return $this->success($result, 'Dispatch decision saved successfully');
+    }
+
     // Operator / Admin: open boarding
     public function startBoarding(int $tripId)
     {

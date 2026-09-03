@@ -8,8 +8,9 @@ class StoreStopRequest extends FormRequest
     {
         return [
             'stop_name' => 'required|string|max:255',
-            'latitude'  => 'required|numeric|between:-90,90',
-            'longitude' => 'required|numeric|between:-180,180',
+            'location'  => 'nullable|string|max:255',
+            'latitude'  => 'nullable|numeric|between:-90,90|required_with:longitude',
+            'longitude' => 'nullable|numeric|between:-180,180|required_with:latitude',
         ];
     }
 }

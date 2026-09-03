@@ -21,6 +21,12 @@ class PassengerResource extends JsonResource
             'reward_points'  => $this->reward_points,
             'email'          => $this->user?->email,
             'username'       => $this->user?->username,
+            'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
+            'user' => [
+                'email' => $this->user?->email,
+                'username' => $this->user?->username,
+                'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
+            ],
             'created_at'     => $this->created_at,
         ];
     }

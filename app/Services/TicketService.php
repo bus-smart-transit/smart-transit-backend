@@ -37,6 +37,23 @@ class TicketService
             ]);
         }
 
+        $seatType = strtolower((string) ($item['seat_type'] ?? ''));
+        $fleetType = strtolower((string) ($trip->fleetRoute->fleet->fleet_type ?? 'public'));
+        $tripDate = $trip->trip_date?->toDateString();
+        $today = now()->toDateString();
+
+        if ($fleetType === 'private' && $seatType === 'standing') {
+            throw ValidationException::withMessages([
+                'seat_type' => ['Private fleets allow seated bookings only.'],
+            ]);
+        }
+
+        if ($seatType === 'standing' && $tripDate !== null && $tripDate > $today) {
+            throw ValidationException::withMessages([
+                'seat_type' => ['Standing bookings are available only on the trip date. Please choose seated for advance bookings.'],
+            ]);
+        }
+
         if (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
             $reserved = $this->priceByStops($trip, $item);
         } elseif (isset($item['origin_lat'], $item['origin_lng'], $item['destination_lat'], $item['destination_lng'])) {

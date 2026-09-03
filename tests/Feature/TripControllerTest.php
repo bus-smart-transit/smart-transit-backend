@@ -212,6 +212,36 @@ test('operator can start boarding', function () {
     $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'boarding']);
 });
 
+test('operator can persist a reroute dispatch decision on a trip', function () {
+    $operator   = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id'            => $fleetRoute->fleet_route_id,
+        'company_user_id'           => $operator->companyProfile->company_user_id,
+        'trip_date'                 => now()->toDateString(),
+        'status'                    => 'scheduled',
+        'current_seated_capacity'   => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy'           => 0,
+    ]);
+
+    $response = $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/dispatch-decision", [
+        'decision' => 'accept',
+        'route' => 'Route A via North Bypass',
+        'reason' => 'High congestion on the assigned route.',
+    ]);
+
+    $response->assertSuccessful()
+        ->assertJsonPath('message', 'Dispatch decision saved successfully');
+
+    $this->assertDatabaseHas('trips', [
+        'trip_id' => $trip->trip_id,
+        'dispatch_decision' => 'accept',
+        'dispatch_route' => 'Route A via North Bypass',
+    ]);
+});
+
 test('driver can depart a trip', function () {
     $driver     = makeStaffUser('driver');
     $conductor  = makeStaffUser('conductor');
