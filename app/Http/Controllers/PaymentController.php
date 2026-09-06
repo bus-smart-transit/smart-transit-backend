@@ -1,6 +1,8 @@
 <?php
 namespace App\Http\Controllers;
 use App\Services\PaymentService;
+use App\Services\ConductorShiftService;
+use App\Services\TripService;
 use App\Http\Requests\OnlineCheckoutRequest;
 use App\Http\Requests\OnsiteCheckoutRequest;
 use App\Traits\ApiResponse;
@@ -13,7 +15,10 @@ use Illuminate\Database\QueryException;
 class PaymentController extends Controller
 {
     use ApiResponse;
-    public function __construct(private PaymentService $paymentService)
+    public function __construct(
+        private PaymentService $paymentService,
+        private TripService $tripService,
+    )
     {
     }
 
@@ -58,9 +63,32 @@ class PaymentController extends Controller
     {
         $conductor = $request->user()?->companyProfile;
         if (!$conductor) return $this->error('Staff profile not found.', 404);
+
+        $shiftStatus = app(ConductorShiftService::class)->getStatusForConductor($conductor->company_user_id);
+        $openShift = $shiftStatus['open_shift'] ?? null;
+        $hasOpenShift = (bool) ($shiftStatus['has_open_shift'] ?? false);
+        if (!$hasOpenShift || !$openShift) {
+            return $this->error('Start your shift first.', 422);
+        }
+
+        $activeTrip = $this->tripService->getCurrentTripForConductor($conductor->company_user_id);
+        if (!$activeTrip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        $payload = $request->validated();
+        $requestedTripId = (int) ($payload['items'][0]['trip_id'] ?? 0);
+        if ($requestedTripId > 0 && (int) ($activeTrip->trip_id ?? 0) !== $requestedTripId) {
+            return $this->error('Your active shift is assigned to a different trip.', 422);
+        }
+
+        if ((int) ($openShift->trip_id ?? 0) !== (int) ($activeTrip->trip_id ?? 0)) {
+            return $this->error('Your active shift is assigned to a different trip.', 422);
+        }
+
         $result = $this->paymentService->checkoutOnsite(
             $conductor->company_user_id,
-            $request->validated()
+            $payload
         );
         return $this->success($result, 'Onsite sale recorded successfully');
     }

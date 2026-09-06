@@ -2,6 +2,7 @@
 namespace App\Http\Controllers;
 use App\Services\TripService;
 use App\Services\DriverNavigationService;
+use App\Services\DriverShiftService;
 use App\Services\AuditLogger;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\AssignDriverRequest;
@@ -64,16 +65,26 @@ class TripController extends Controller
     }
 
     // Operator / Admin: open boarding
-    public function startBoarding(int $tripId)
+    public function startBoarding(Request $request, int $tripId)
     {
+        $guard = $this->assertDriverShiftForTrip($request, $tripId);
+        if ($guard !== null) {
+            return $guard;
+        }
+
         $result = $this->tripService->startBoarding($tripId);
         AuditLogger::log('trip.boarding', 'Trip', $tripId);
         return $this->success($result, 'Boarding started');
     }
 
     // Driver / Operator / Admin: mark departed
-    public function depart(int $tripId)
+    public function depart(Request $request, int $tripId)
     {
+        $guard = $this->assertDriverShiftForTrip($request, $tripId);
+        if ($guard !== null) {
+            return $guard;
+        }
+
         $result = $this->tripService->departTrip($tripId);
         AuditLogger::log('trip.depart', 'Trip', $tripId);
         return $this->success($result, 'Trip departed');
@@ -190,5 +201,33 @@ class TripController extends Controller
         $trips = $this->tripService->getAvailableTripsForPassengers($includeStops);
 
         return $this->success($trips, 'Available trips retrieved successfully');
+    }
+
+    private function assertDriverShiftForTrip(Request $request, int $tripId)
+    {
+        $user = $request->user();
+        $role = strtolower((string) data_get($user, 'role', data_get($user, 'role_name', '')));
+        if (!$user || $role === '' || $role !== 'driver') {
+            return null;
+        }
+
+        $companyUser = $user->companyProfile;
+        if (!$companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $shiftStatus = app(DriverShiftService::class)->getStatusForDriver($companyUser->company_user_id);
+        $openShift = $shiftStatus['open_shift'] ?? null;
+        $hasOpenShift = (bool) ($shiftStatus['has_open_shift'] ?? false);
+
+        if (!$hasOpenShift || !$openShift) {
+            return $this->error('Start your shift first.', 422);
+        }
+
+        if ((int) ($openShift->trip_id ?? 0) !== $tripId) {
+            return $this->error('Your active shift is assigned to a different trip.', 422);
+        }
+
+        return null;
     }
 }

@@ -126,4 +126,17 @@ describe('Fleet Reporting System', function () {
         $response->assertStatus(403);
     });
 
+    it('rejects reporting request for another operators fleet', function () {
+        $operatorA = makeOperatorWithProfile();
+        $operatorB = makeOperatorWithProfile();
+
+        $tokenA = issueOperatorToken($operatorA);
+        $fleetB = createOwnedFleet($operatorB);
+
+        $response = $this->withHeader('Authorization', "Bearer $tokenA")
+            ->getJson('/api/operator/fleets/' . $fleetB->fleet_id . '/reports/financial');
+
+        $response->assertStatus(403);
+    });
+
 });

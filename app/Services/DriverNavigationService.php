@@ -39,6 +39,15 @@ class DriverNavigationService
 
         $routeId = $trip->fleetRoute->route_id;
         $stops = $this->routeStopRepository->getOrderedStops($routeId);
+        $acknowledgedStopId = (int) ($trip->last_acknowledged_stop_id ?? 0);
+
+        $acknowledgedOrder = null;
+        if ($acknowledgedStopId > 0) {
+            $matchedRouteStop = $stops->firstWhere('stop_id', $acknowledgedStopId);
+            if ($matchedRouteStop) {
+                $acknowledgedOrder = (int) $matchedRouteStop->stop_order;
+            }
+        }
 
         $stopsData = $stops->map(function ($routeStop) use ($trip) {
             $passengers = $this->ticketRepository->getPassengersAlightingAtStop(
@@ -61,18 +70,32 @@ class DriverNavigationService
                 })->values();
 
             return [
+                'route_stop_id' => $routeStop->id,
                 'stop_id' => $routeStop->stop_id,
                 'stop_name' => $routeStop->stop->stop_name,
                 'sequence_number' => $routeStop->stop_order,
-                'distance_from_origin_km' => $routeStop->distance_from_origin,
+                'distance_from_origin_km' => $routeStop->distance_from_origin_km,
+                'latitude' => $routeStop->stop->latitude !== null ? (float) $routeStop->stop->latitude : null,
+                'longitude' => $routeStop->stop->longitude !== null ? (float) $routeStop->stop->longitude : null,
                 'passengers_by_destination' => $passengersByDestination
             ];
+        })->map(function ($row) use ($acknowledgedOrder, $acknowledgedStopId) {
+            $isAcknowledged = false;
+            if ($acknowledgedOrder !== null) {
+                $isAcknowledged = (int) $row['sequence_number'] <= $acknowledgedOrder;
+            } elseif ($acknowledgedStopId > 0) {
+                $isAcknowledged = (int) $row['stop_id'] === $acknowledgedStopId;
+            }
+
+            $row['is_acknowledged'] = $isAcknowledged;
+            return $row;
         })->toArray();
 
         return [
             'trip_id' => $trip->trip_id,
             'trip_status' => $trip->status,
             'route_name' => $trip->fleetRoute->route->route_name,
+            'last_acknowledged_stop_id' => $trip->last_acknowledged_stop_id,
             'stops' => $stopsData
         ];
     }
@@ -122,10 +145,14 @@ class DriverNavigationService
             })->values();
 
         return [
+            'route_stop_id' => $routeStop->id,
             'stop_id' => $routeStop->stop_id,
             'stop_name' => $routeStop->stop->stop_name,
             'sequence_number' => $routeStop->stop_order,
-            'distance_from_origin_km' => $routeStop->distance_from_origin,
+            'distance_from_origin_km' => $routeStop->distance_from_origin_km,
+            'latitude' => $routeStop->stop->latitude !== null ? (float) $routeStop->stop->latitude : null,
+            'longitude' => $routeStop->stop->longitude !== null ? (float) $routeStop->stop->longitude : null,
+            'is_acknowledged' => (int) $stopId === (int) ($trip->last_acknowledged_stop_id ?? 0),
             'passengers_by_destination' => $passengersByDestination
         ];
     }

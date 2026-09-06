@@ -126,6 +126,22 @@ class PaymentRepository
                 $originName = $originId ? ($stopNames[$originId] ?? "Stop {$originId}") : null;
                 $destinationName = $destinationId ? ($stopNames[$destinationId] ?? "Stop {$destinationId}") : null;
 
+                if (!$originName && isset($item['origin_label'])) {
+                    $originName = trim((string) $item['origin_label']) ?: null;
+                }
+
+                if (!$destinationName && isset($item['destination_label'])) {
+                    $destinationName = trim((string) $item['destination_label']) ?: null;
+                }
+
+                if (!$originName && isset($item['origin_lat'], $item['origin_lng'])) {
+                    $originName = 'Custom pickup point';
+                }
+
+                if (!$destinationName && isset($item['destination_lat'], $item['destination_lng'])) {
+                    $destinationName = 'Custom drop-off point';
+                }
+
                 return [
                     'trip_id' => $item['trip_id'] ?? null,
                     'seat_type' => $item['seat_type'] ?? null,

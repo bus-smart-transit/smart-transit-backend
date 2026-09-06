@@ -148,7 +148,7 @@ class FleetDailyPinController extends Controller
 
     private function resolveTripForDriver(int $driverId): object
     {
-        $trip = $this->tripService->getCurrentOrScheduledTripForDriver($driverId);
+        $trip = $this->tripService->getTodayAssignedTripForDriver($driverId);
 
         if (!$trip) {
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
@@ -159,7 +159,7 @@ class FleetDailyPinController extends Controller
 
     private function resolveTripForConductor(int $conductorId): object
     {
-        $trip = $this->tripService->getCurrentOrScheduledTripForConductor($conductorId);
+        $trip = $this->tripService->getTodayAssignedTripForConductor($conductorId);
 
         if (!$trip) {
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');

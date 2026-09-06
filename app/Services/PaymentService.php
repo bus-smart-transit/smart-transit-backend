@@ -77,9 +77,12 @@ class PaymentService
             $groupedItems = [];
 
             foreach ($payload['items'] as $item) {
+                $item['booking_date'] = $payload['booking_date'] ?? null;
+
                 $itemKey = json_encode([
                     'trip_id' => (int) ($item['trip_id'] ?? 0),
                     'seat_type' => (string) ($item['seat_type'] ?? ''),
+                    'booking_date' => isset($item['booking_date']) ? (string) $item['booking_date'] : null,
                     'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
                     'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
                     'origin_lat' => isset($item['origin_lat']) ? (float) $item['origin_lat'] : null,

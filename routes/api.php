@@ -16,6 +16,8 @@ use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\RewardController;
 use App\Http\Controllers\ReportingController;
+use App\Http\Controllers\DriverShiftController;
+use App\Http\Controllers\ConductorShiftController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -149,6 +151,9 @@ Route::prefix('driver')
 
         Route::get('trips', [TripController::class, 'myTrips']);
         Route::get('trips/current', [TripController::class, 'currentTripDriver']);
+        Route::get('shift/status', [DriverShiftController::class, 'status']);
+        Route::post('shift/start', [DriverShiftController::class, 'start']);
+        Route::post('shift/end', [DriverShiftController::class, 'end']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
 
         Route::middleware('paired:driver')->group(function () {
@@ -183,6 +188,9 @@ Route::prefix('conductor')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         Route::get('trips', [TripController::class, 'myConductorTrips']);
+        Route::get('shift/status', [ConductorShiftController::class, 'status']);
+        Route::post('shift/start', [ConductorShiftController::class, 'start']);
+        Route::post('shift/end', [ConductorShiftController::class, 'end']);
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);

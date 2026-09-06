@@ -1,6 +1,10 @@
 <?php
 namespace App\Http\Requests;
+
+use App\Models\Trip;
+use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Validator;
 
 class OnlineCheckoutRequest extends FormRequest
 {
@@ -12,6 +16,7 @@ class OnlineCheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'booking_date' => 'required|date|after_or_equal:today',
             'items' => 'required|array|min:1',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             'items.*.seat_type' => 'required|string|in:seated,standing',
@@ -40,5 +45,50 @@ class OnlineCheckoutRequest extends FormRequest
         $this->merge([
             'guest_checkout' => $this->user()?->passengerProfile === null,
         ]);
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            $bookingDate = (string) $this->input('booking_date', '');
+            if ($bookingDate === '') {
+                return;
+            }
+
+            $items = $this->input('items', []);
+            if (!is_array($items) || $items === []) {
+                return;
+            }
+
+            $tripIds = collect($items)
+                ->pluck('trip_id')
+                ->filter(fn ($id) => is_numeric($id))
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            if ($tripIds->isEmpty()) {
+                return;
+            }
+
+            $tripDateById = Trip::query()
+                ->whereIn('trip_id', $tripIds)
+                ->get(['trip_id', 'trip_date'])
+                ->mapWithKeys(function (Trip $trip) {
+                    return [(int) $trip->trip_id => optional($trip->trip_date)->toDateString()];
+                });
+
+            foreach ($items as $index => $item) {
+                $tripId = (int) ($item['trip_id'] ?? 0);
+                $tripDate = $tripDateById->get($tripId);
+
+                if (!$tripDate || $tripDate === $bookingDate) {
+                    continue;
+                }
+
+                $displayDate = Carbon::parse($tripDate)->format('m/d/Y');
+                $validator->errors()->add("items.{$index}.trip_id", "This trip is scheduled for {$displayDate}.");
+            }
+        });
     }
 }

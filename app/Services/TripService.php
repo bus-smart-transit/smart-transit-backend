@@ -5,6 +5,7 @@ use App\Repositories\StaffRepository;
 use App\Services\FleetDailyPinService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 
 class TripService
 {
@@ -18,13 +19,17 @@ class TripService
     {
         // current_* fields represent occupied slots; new trips must start at 0.
         $trip = $this->tripRepository->create(array_merge($payload, [
+            'trip_type'                 => $payload['trip_type'] ?? 'one_way',
+            'return_departure_time'     => $payload['trip_type'] === 'round_trip'
+                ? ($payload['return_departure_time'] ?? null)
+                : null,
             'status'                    => 'scheduled',
             'current_seated_capacity'   => 0,
             'current_standing_capacity' => 0,
             'total_occupancy'           => 0,
         ]));
 
-        if (!empty($trip->driver_id) && !empty($trip->conductor_id)) {
+        if (!empty($trip->driver_id) && !empty($trip->conductor_id) && $this->isTripToday($trip)) {
             $this->pinService->generateOrGet(
                 $trip->trip_id,
                 $trip->driver_id,
@@ -79,7 +84,7 @@ class TripService
 
         // Auto-generate daily PIN if conductor is already assigned
         $trip = $this->tripRepository->findById($tripId);
-        if ($trip && $trip->conductor_id) {
+        if ($trip && $trip->conductor_id && $this->isTripToday($trip)) {
             $this->pinService->generateOrGet(
                 $trip->trip_id,
                 $payload['driver_id'],
@@ -102,7 +107,7 @@ class TripService
 
         // Auto-generate daily PIN if driver is already assigned
         $trip = $this->tripRepository->findById($tripId);
-        if ($trip && $trip->driver_id) {
+        if ($trip && $trip->driver_id && $this->isTripToday($trip)) {
             $this->pinService->generateOrGet(
                 $trip->trip_id,
                 $trip->driver_id,
@@ -181,6 +186,22 @@ class TripService
     {
         return $this->tripRepository->findTodayByConductor($conductorCompanyUserId)
             ?? $this->tripRepository->findCurrentOrUpcomingByConductor($conductorCompanyUserId);
+    }
+
+    /**
+     * Returns only today's assigned trip context for PIN/QR shift actions.
+     */
+    public function getTodayAssignedTripForDriver(int $driverCompanyUserId): ?object
+    {
+        return $this->tripRepository->findTodayByDriver($driverCompanyUserId);
+    }
+
+    /**
+     * Returns only today's assigned trip context for PIN/QR shift actions.
+     */
+    public function getTodayAssignedTripForConductor(int $conductorCompanyUserId): ?object
+    {
+        return $this->tripRepository->findTodayByConductor($conductorCompanyUserId);
     }
 
     public function getAvailableTripsForPassengers(bool $includeStops = true): object
@@ -291,5 +312,10 @@ class TripService
         }
 
         return DB::transaction($execute);
+    }
+
+    private function isTripToday(object $trip): bool
+    {
+        return Carbon::parse((string) $trip->trip_date)->isToday();
     }
 }

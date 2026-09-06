@@ -126,12 +126,19 @@ class FleetLocationRepository
                 fl.recorded_at,
                 f.plate_number,
                 f.fleet_type,
-                t.status AS trip_status
+                t.status AS trip_status,
+                t.last_acknowledged_stop_id,
+                t.last_acknowledged_at,
+                fr.route_id,
+                r.route_name,
+                r.origin,
+                r.destination
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id
             LEFT JOIN trips t ON t.trip_id = fl.trip_id
+            LEFT JOIN fleets_routes fr ON fr.fleet_route_id = t.fleet_route_id
+            LEFT JOIN routes r ON r.route_id = fr.route_id
             WHERE t.status IN ('boarding', 'departed', 'in-progress')
-               OR fl.updated_at > NOW() - INTERVAL '2 minutes'
         "));
     }
 
@@ -156,8 +163,7 @@ class FleetLocationRepository
                 ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
                 ?
             )
-            AND (t.status IN ('boarding', 'departed', 'in-progress')
-                OR fl.updated_at > NOW() - INTERVAL '2 minutes')
+            AND t.status IN ('boarding', 'departed', 'in-progress')
             ORDER BY distance_meters ASC
             LIMIT 1
         ", [

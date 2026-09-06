@@ -36,11 +36,13 @@ class TripRepository
     {
         $this->markOverdueScheduledAsDelayed($operatorCompanyUserId);
 
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('company_user_id', $operatorCompanyUserId)
-            ->where('trip_date', '>=', today())
-            ->orderBy('trip_date', 'asc')
-            ->get();
+            ->orderBy('trip_date', 'asc');
+
+        $this->applyUpcomingDateTimeFilter($query);
+
+        return $query->get();
     }
 
     public function listByDriver(int $driverCompanyUserId): Collection
@@ -212,6 +214,7 @@ class TripRepository
 
         $with = [
             'fleetRoute.fleet',
+            'fleetRoute.fleet.fareRules',
             'fleetRoute.route',
         ];
 
@@ -219,12 +222,49 @@ class TripRepository
             $with[] = 'fleetRoute.route.routeStops.stop';
         }
 
-        return Trip::query()
+        $query = Trip::query()
             ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
-            ->where('trip_date', '>=', now()->toDateString())
             ->with($with)
-            ->orderBy('trip_date', 'asc')
-            ->get();
+            ->orderBy('trip_date', 'asc');
+
+        $this->applyUpcomingDateTimeFilter($query, ['boarding']);
+
+        return $query->get();
+    }
+
+    private function applyUpcomingDateTimeFilter($query, array $activeStatuses = []): void
+    {
+        $today = now()->toDateString();
+        $timeNow = now()->format('H:i:s');
+
+        $query->where(function ($outer) use ($today, $timeNow, $activeStatuses) {
+            if (!empty($activeStatuses)) {
+                $outer->where(function ($active) use ($activeStatuses, $today) {
+                    $active->whereIn('status', $activeStatuses)
+                        ->whereDate('trip_date', '>=', $today);
+                })->orWhere(function ($upcoming) use ($today, $timeNow) {
+                    $upcoming->whereIn('status', ['scheduled', 'delayed'])
+                        ->where(function ($dateFilter) use ($today, $timeNow) {
+                            $dateFilter->whereDate('trip_date', '>', $today)
+                                ->orWhere(function ($sameDay) use ($today, $timeNow) {
+                                    $sameDay->whereDate('trip_date', '=', $today)
+                                        ->whereRaw("COALESCE(departure_time, '23:59:59') >= ?", [$timeNow]);
+                                });
+                        });
+                });
+
+                return;
+            }
+
+            $outer->whereIn('status', ['scheduled', 'delayed'])
+                ->where(function ($dateFilter) use ($today, $timeNow) {
+                    $dateFilter->whereDate('trip_date', '>', $today)
+                        ->orWhere(function ($sameDay) use ($today, $timeNow) {
+                            $sameDay->whereDate('trip_date', '=', $today)
+                                ->whereRaw("COALESCE(departure_time, '23:59:59') >= ?", [$timeNow]);
+                        });
+                });
+        });
     }
 
     public function markOverdueScheduledAsDelayed(?int $operatorCompanyUserId = null): int

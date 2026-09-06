@@ -69,8 +69,8 @@ class FleetPairingController extends Controller
         }
 
         $trip = $role === 'driver'
-            ? $this->tripService->getCurrentOrScheduledTripForDriver($companyUser->company_user_id)
-            : $this->tripService->getCurrentOrScheduledTripForConductor($companyUser->company_user_id);
+            ? $this->tripService->getTodayAssignedTripForDriver($companyUser->company_user_id)
+            : $this->tripService->getTodayAssignedTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
             return $this->error('No assigned trip was found. Contact your operator.', 404);
@@ -116,8 +116,8 @@ class FleetPairingController extends Controller
         }
 
         $trip = $role === 'driver'
-            ? $this->tripService->getCurrentOrScheduledTripForDriver($companyUser->company_user_id)
-            : $this->tripService->getCurrentOrScheduledTripForConductor($companyUser->company_user_id);
+            ? $this->tripService->getTodayAssignedTripForDriver($companyUser->company_user_id)
+            : $this->tripService->getTodayAssignedTripForConductor($companyUser->company_user_id);
 
         if (!$trip) {
             return $this->error('No assigned trip was found.', 404);

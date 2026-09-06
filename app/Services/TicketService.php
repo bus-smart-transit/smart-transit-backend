@@ -5,6 +5,7 @@ use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\FareRuleRepository;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 
@@ -19,6 +20,7 @@ class TicketService
         private FareCalculationService $fareCalculationService,
         private TripService $tripService,
         private RewardService $rewardService,
+        private ReverseGeocodingService $reverseGeocodingService,
     ) {
     }
 
@@ -41,6 +43,13 @@ class TicketService
         $fleetType = strtolower((string) ($trip->fleetRoute->fleet->fleet_type ?? 'public'));
         $tripDate = $trip->trip_date?->toDateString();
         $today = now()->toDateString();
+
+        $bookingDate = isset($item['booking_date']) ? (string) $item['booking_date'] : null;
+        if ($bookingDate !== null && $tripDate !== null && $bookingDate !== $tripDate) {
+            throw ValidationException::withMessages([
+                'trip' => ['This trip is scheduled for ' . Carbon::parse($tripDate)->format('m/d/Y') . '.'],
+            ]);
+        }
 
         if ($fleetType === 'private' && $seatType === 'standing') {
             throw ValidationException::withMessages([
@@ -165,6 +174,14 @@ class TicketService
             'origin_lng'      => (float) $item['origin_lng'],
             'destination_lat' => (float) $item['destination_lat'],
             'destination_lng' => (float) $item['destination_lng'],
+            'origin_label' => $this->reverseGeocodingService->resolvePlaceName(
+                (float) $item['origin_lat'],
+                (float) $item['origin_lng'],
+            ) ?? 'Custom pickup point',
+            'destination_label' => $this->reverseGeocodingService->resolvePlaceName(
+                (float) $item['destination_lat'],
+                (float) $item['destination_lng'],
+            ) ?? 'Custom drop-off point',
         ];
     }
 
@@ -355,7 +372,11 @@ class TicketService
     {
         $tickets = Ticket::with('payment')
             ->where('trip_id', $tripId)
-            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereIn('status', ['valid', 'boarded', 'alighted'])
+            ->whereHas('payment', function ($query) {
+                $query->where('status', 'paid')
+                    ->where('is_valid', true);
+            })
             ->get();
 
         $totalFare    = 0.0;
@@ -422,18 +443,18 @@ class TicketService
             ];
 
             if ($ticket->status !== 'valid') {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => "Already {$ticket->status}"]);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid/used.']);
                 continue;
             }
 
             if (!$ticket->payment || $ticket->payment->status !== 'paid' || !$ticket->payment->is_valid) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Payment not completed']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
                 continue;
             }
 
             // Trip ownership check — same logic as single-ticket scan.
             if ($activeTripId !== null && (int) $ticket->trip_id !== (int) $activeTripId) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket is for a different trip']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
                 continue;
             }
 
@@ -441,7 +462,7 @@ class TicketService
             $tripDateStr = $ticket->trip?->trip_date?->toDateString();
 
             if ($tripDateStr === null) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'No trip date on ticket']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
                 continue;
             }
 
@@ -451,7 +472,7 @@ class TicketService
             }
 
             if ($tripDateStr < $todayStr) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket expired (was for ' . $tripDateStr . ')']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
                 continue;
             }
 
@@ -507,10 +528,91 @@ class TicketService
             $ticket->setAttribute('expires_at', null);
         }
 
+        if (!$ticket->originStop?->stop_name || !$ticket->destinationStop?->stop_name) {
+            ['origin' => $originLabel, 'destination' => $destinationLabel] = $this->resolveCustomLocationLabelsFromPayload($ticket);
+
+            if (!$ticket->originStop?->stop_name && $originLabel) {
+                $ticket->setAttribute('origin', $originLabel);
+            }
+
+            if (!$ticket->destinationStop?->stop_name && $destinationLabel) {
+                $ticket->setAttribute('destination', $destinationLabel);
+            }
+        }
+
         // Sync so these virtual attributes are never treated as dirty
         // if something calls save() again downstream.
         $ticket->syncOriginal();
 
         return $ticket;
+    }
+
+    private function resolveCustomLocationLabelsFromPayload(Ticket $ticket): array
+    {
+        $fallback = [
+            'origin' => null,
+            'destination' => null,
+        ];
+
+        $itemsPayload = $ticket->payment?->items_payload;
+        if (!is_array($itemsPayload) || empty($itemsPayload)) {
+            return $fallback;
+        }
+
+        $matchesCoordinates = static function ($itemValue, $ticketValue): bool {
+            if (!is_numeric($itemValue) || !is_numeric($ticketValue)) {
+                return false;
+            }
+
+            return abs((float) $itemValue - (float) $ticketValue) <= 0.00002;
+        };
+
+        foreach ($itemsPayload as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if ((int) ($item['trip_id'] ?? 0) !== (int) $ticket->trip_id) {
+                continue;
+            }
+
+            if (($item['seat_type'] ?? null) !== $ticket->seat_type) {
+                continue;
+            }
+
+            if (!$matchesCoordinates($item['origin_lat'] ?? null, $ticket->origin_lat)
+                || !$matchesCoordinates($item['origin_lng'] ?? null, $ticket->origin_lng)
+                || !$matchesCoordinates($item['destination_lat'] ?? null, $ticket->destination_lat)
+                || !$matchesCoordinates($item['destination_lng'] ?? null, $ticket->destination_lng)) {
+                continue;
+            }
+
+            $origin = trim((string) ($item['origin_label'] ?? '')) ?: null;
+            $destination = trim((string) ($item['destination_label'] ?? '')) ?: null;
+
+            if ($origin || $destination) {
+                return [
+                    'origin' => $origin,
+                    'destination' => $destination,
+                ];
+            }
+        }
+
+        foreach ($itemsPayload as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $origin = trim((string) ($item['origin_label'] ?? '')) ?: null;
+            $destination = trim((string) ($item['destination_label'] ?? '')) ?: null;
+            if ($origin || $destination) {
+                return [
+                    'origin' => $origin,
+                    'destination' => $destination,
+                ];
+            }
+        }
+
+        return $fallback;
     }
 }

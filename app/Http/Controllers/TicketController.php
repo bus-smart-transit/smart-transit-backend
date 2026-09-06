@@ -4,11 +4,13 @@ use App\Services\TicketService;
 use App\Services\OccupancyService;
 use App\Services\QRCodeService;
 use App\Services\TripService;
+use App\Services\ConductorShiftService;
 use App\Http\Requests\ScanTicketRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
 use App\Http\Requests\ScanGroupRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class TicketController extends Controller
 {
@@ -43,6 +45,11 @@ class TicketController extends Controller
         $companyUser = $request->user()?->companyProfile;
         if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
+        $guard = $this->assertConductorShiftForCurrentTrip($request);
+        if ($guard !== null) {
+            return $guard;
+        }
+
         $ticket = $this->ticketService->validateScan(
             $request->validated(),
             $companyUser->company_user_id
@@ -56,11 +63,68 @@ class TicketController extends Controller
         $companyUser = $request->user()?->companyProfile;
         if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
+        $guard = $this->assertConductorShiftForCurrentTrip($request);
+        if ($guard !== null) {
+            return $guard;
+        }
+
         $result = $this->ticketService->scanGroup(
             $request->validated(),
             $companyUser->company_user_id
         );
-        $msg = "{$result['boarded_count']} of {$result['total_tickets']} ticket(s) boarded successfully.";
+
+        $boardedCount = (int) ($result['boarded_count'] ?? 0);
+        $totalCount = (int) ($result['total_tickets'] ?? 0);
+        $tickets = is_array($result['tickets'] ?? null) ? $result['tickets'] : [];
+
+        if ($boardedCount === 0 && $totalCount > 0) {
+            $allUsedOrRescanned = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
+                $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+                return str_contains($reason, 'invalid/used');
+            });
+
+            $allFutureDated = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
+                $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+                return str_contains($reason, 'not yet active') || str_contains($reason, 'scheduled for');
+            });
+
+            $allInvalid = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
+                $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+                return str_contains($reason, 'this ticket is invalid.');
+            });
+
+            if ($allUsedOrRescanned) {
+                return $this->error('This ticket is invalid/used.', 422, [
+                    'tickets' => $tickets,
+                ]);
+            }
+
+            if ($allFutureDated) {
+                $firstReason = (string) (collect($tickets)->pluck('skip_reason')->filter()->first() ?? '');
+                $scheduledDate = null;
+                if (preg_match('/scheduled for\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/i', $firstReason, $matches)) {
+                    $scheduledDate = $matches[1];
+                }
+
+                $displayDate = $scheduledDate ? Carbon::parse($scheduledDate)->format('m/d/Y') : 'a future date';
+                $result['scan_outcome'] = 'info_future';
+
+                return $this->success($result, "This ticket is scheduled for {$displayDate}. It cannot be boarded yet.");
+            }
+
+            if ($allInvalid) {
+                return $this->error('This ticket is invalid.', 422, [
+                    'tickets' => $tickets,
+                ]);
+            }
+
+            return $this->error('Invalid ticket. This ticket cannot be boarded.', 422, [
+                'tickets' => $tickets,
+            ]);
+        }
+
+        $result['scan_outcome'] = 'success';
+        $msg = "{$boardedCount} of {$totalCount} ticket(s) boarded successfully.";
         return $this->success($result, $msg);
     }
 
@@ -187,5 +251,38 @@ class TicketController extends Controller
 
         $qrData = $this->qrCodeService->generateQRData($ticket);
         return $this->success($qrData, 'QR code generated successfully');
+    }
+
+    private function assertConductorShiftForCurrentTrip(Request $request)
+    {
+        $user = $request->user();
+        $role = strtolower((string) data_get($user, 'role', data_get($user, 'role_name', '')));
+        if (!$user || $role === '' || $role !== 'conductor') {
+            return null;
+        }
+
+        $companyUser = $user->companyProfile;
+        if (!$companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $shiftStatus = app(ConductorShiftService::class)->getStatusForConductor($companyUser->company_user_id);
+        $openShift = $shiftStatus['open_shift'] ?? null;
+        $hasOpenShift = (bool) ($shiftStatus['has_open_shift'] ?? false);
+
+        if (!$hasOpenShift || !$openShift) {
+            return $this->error('Start your shift first.', 422);
+        }
+
+        $activeTrip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (!$activeTrip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        if ((int) ($openShift->trip_id ?? 0) !== (int) ($activeTrip->trip_id ?? 0)) {
+            return $this->error('Your active shift is assigned to a different trip.', 422);
+        }
+
+        return null;
     }
 }

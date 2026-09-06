@@ -59,6 +59,8 @@ class Trip extends Model
         'company_user_id',
         'trip_date',
         'departure_time',
+        'trip_type',
+        'return_departure_time',
         'status',
         'dispatch_decision',
         'dispatch_route',
