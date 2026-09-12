@@ -1,23 +1,25 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ConductorShiftController;
+use App\Http\Controllers\DriverShiftController;
+use App\Http\Controllers\FareRuleController;
+use App\Http\Controllers\FleetController;
+use App\Http\Controllers\FleetDailyPinController;
+use App\Http\Controllers\FleetLocationController;
+use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\PassengerController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PayMongoController;
+use App\Http\Controllers\ReportingController;
+use App\Http\Controllers\RewardController;
+use App\Http\Controllers\RouteController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
-use App\Http\Controllers\RouteController;
-use App\Http\Controllers\FleetController;
-use App\Http\Controllers\FareRuleController;
-use App\Http\Controllers\PayMongoController;
-use App\Http\Controllers\TripController;
 use App\Http\Controllers\TicketController;
-use App\Http\Controllers\PaymentController;
-use App\Http\Controllers\FleetLocationController;       
-use App\Http\Controllers\FleetDailyPinController;
-use App\Http\Controllers\FleetPairingController;
-use App\Http\Controllers\RewardController;
-use App\Http\Controllers\ReportingController;
-use App\Http\Controllers\DriverShiftController;
-use App\Http\Controllers\ConductorShiftController;
+use App\Http\Controllers\TripController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -26,7 +28,7 @@ Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
-Route::post('passengers/reset-password',  [AuthController::class, 'resetPassword'])->middleware('throttle:3,15');
+Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:3,15');
 Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:5,15');
 Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
@@ -52,11 +54,11 @@ Route::get('trips', [TripController::class, 'availableTrips']);
 
 // Remove:
 
-//PAYMONGO / PAYMENT 
+// PAYMONGO / PAYMENT
 
 Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
-    ->middleware('auth.optional');
-Route::get('tickets/lookup', [TicketController::class, 'guestLookup']);
+    ->middleware(['auth.optional', 'throttle:10,15']);
+Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:10,15');
 Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
 
 // PASSENGER
@@ -74,7 +76,7 @@ Route::prefix('passengers')
         Route::get('dashboard-summary', [PassengerController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
-        Route::post('checkout', [PaymentController::class, 'checkoutOnline']);
+        Route::post('checkout', [PaymentController::class, 'checkoutOnline'])->middleware('throttle:10,15');
 
         // Route::post('fare/quote', [FareRuleController::class, 'quote']);
         // Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -115,7 +117,7 @@ Route::prefix('operator')
 
         // Fare rules
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
-    
+
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);
         Route::post('trips', [TripController::class, 'store']);
@@ -150,18 +152,19 @@ Route::prefix('driver')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         Route::get('trips', [TripController::class, 'myTrips']);
-        Route::get('trips/current', [TripController::class, 'currentTripDriver']);
         Route::get('shift/status', [DriverShiftController::class, 'status']);
         Route::post('shift/start', [DriverShiftController::class, 'start']);
         Route::post('shift/end', [DriverShiftController::class, 'end']);
+
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
+        Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
+        Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
 
         Route::middleware('paired:driver')->group(function () {
+            Route::get('trips/current', [TripController::class, 'currentTripDriver']);
             Route::get('trips/current/stops', [TripController::class, 'currentTripStops']);
             Route::get('trips/current/stops/{stopId}', [TripController::class, 'currentTripStopDetail']);
             Route::post('trips/current/stops/{stopId}/acknowledge', [TripController::class, 'acknowledgeStop']);
-            Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
-            Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
             Route::post('location', [FleetLocationController::class, 'updateLocation']);
             Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
         });
@@ -194,9 +197,9 @@ Route::prefix('conductor')
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);
-            Route::post('tickets/scan', [TicketController::class, 'scan']);
-            Route::post('tickets/scan-group', [TicketController::class, 'scanGroup']);
-            Route::post('checkout', [PaymentController::class, 'checkoutOnsite']);
+            Route::post('tickets/scan', [TicketController::class, 'scan'])->middleware('throttle:30,1');
+            Route::post('tickets/scan-group', [TicketController::class, 'scanGroup'])->middleware('throttle:20,1');
+            Route::post('checkout', [PaymentController::class, 'checkoutOnsite'])->middleware('throttle:20,1');
 
             // Occupancy monitoring dashboard
             Route::get('trips/current/occupancy', [TicketController::class, 'currentTripOccupancy']);
@@ -246,7 +249,7 @@ Route::prefix('admin')
         // Fare rules + recalculation (step-up required — irreversible pricing change)
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');
         // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
-    
+
         // Trips — full control
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
@@ -265,34 +268,53 @@ Route::prefix('admin')
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
 
         // Audit log viewer — admin only
-        Route::get('audit-logs', function (\Illuminate\Http\Request $request) {
-            $query = \Illuminate\Support\Facades\DB::table('audit_logs')
+        Route::get('audit-logs', function (Request $request) {
+            $query = DB::table('audit_logs')
                 ->orderByDesc('created_at')
                 ->limit(min((int) $request->query('limit', 100), 500));
 
-            if ($request->filled('action'))       $query->where('action', $request->query('action'));
-            if ($request->filled('actor_type'))   $query->where('actor_type', $request->query('actor_type'));
-            if ($request->filled('actor_id'))     $query->where('actor_id', (int) $request->query('actor_id'));
-            if ($request->filled('subject_type')) $query->where('subject_type', $request->query('subject_type'));
-            if ($request->filled('subject_id'))   $query->where('subject_id', (int) $request->query('subject_id'));
+            if ($request->filled('action')) {
+                $query->where('action', $request->query('action'));
+            }
+            if ($request->filled('actor_type')) {
+                $query->where('actor_type', $request->query('actor_type'));
+            }
+            if ($request->filled('actor_id')) {
+                $query->where('actor_id', (int) $request->query('actor_id'));
+            }
+            if ($request->filled('subject_type')) {
+                $query->where('subject_type', $request->query('subject_type'));
+            }
+            if ($request->filled('subject_id')) {
+                $query->where('subject_id', (int) $request->query('subject_id'));
+            }
 
             return response()->json(['data' => $query->get(), 'message' => 'Audit logs retrieved']);
         });
 
         // Stored scheduled reports (nightly generated)
-        Route::get('reports/stored', function (\Illuminate\Http\Request $request) {
-            $query = \Illuminate\Support\Facades\DB::table('scheduled_reports')
+        Route::get('reports/stored', function (Request $request) {
+            $query = DB::table('scheduled_reports')
                 ->orderByDesc('report_date')
                 ->orderByDesc('generated_at')
                 ->limit(min((int) $request->query('limit', 100), 500));
 
-            if ($request->filled('fleet_id'))    $query->where('fleet_id', (int) $request->query('fleet_id'));
-            if ($request->filled('report_type')) $query->where('report_type', $request->query('report_type'));
-            if ($request->filled('date'))        $query->where('report_date', $request->query('date'));
-            if ($request->filled('status'))      $query->where('status', $request->query('status'));
+            if ($request->filled('fleet_id')) {
+                $query->where('fleet_id', (int) $request->query('fleet_id'));
+            }
+            if ($request->filled('report_type')) {
+                $query->where('report_type', $request->query('report_type'));
+            }
+            if ($request->filled('date')) {
+                $query->where('report_date', $request->query('date'));
+            }
+            if ($request->filled('status')) {
+                $query->where('status', $request->query('status'));
+            }
 
             $rows = $query->get()->map(function ($row) {
                 $row->payload = json_decode($row->payload, true);
+
                 return $row;
             });
 

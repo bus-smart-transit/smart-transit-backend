@@ -1,12 +1,14 @@
 <?php
 
 use App\Models\Fleet;
+use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -21,7 +23,7 @@ function makeConductorShiftStaffUser(string $role): User
 
     StaffUser::create([
         'user_id' => $user->user_id,
-        'company_user_uuid' => (string) \Illuminate\Support\Str::uuid(),
+        'company_user_uuid' => (string) Str::uuid(),
         'name' => fake()->name(),
         'phone_num' => fake()->phoneNumber(),
         'address' => fake()->address(),
@@ -42,7 +44,7 @@ function makeConductorShiftFleetRoute(): FleetRoute
 
     $fleet = Fleet::create([
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'plate_number' => 'CND-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'CND-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -129,4 +131,57 @@ test('conductor cannot end shift while trip is active but can end after completi
         'trip_id' => $trip->trip_id,
         'end_source' => 'dashboard',
     ]);
+});
+
+test('conductor current trip prefers the open shift trip when another same-day trip exists', function () {
+    $conductor = makeShiftStaffUser('conductor');
+    $operator = makeShiftStaffUser('operator');
+    $tripA = makeAssignedConductorTrip($conductor, 'scheduled');
+
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+
+    // /trips/current is gated by the 'paired' middleware — establish a
+    // completed pairing for tripA (the shift's actual trip) so the request
+    // isn't rejected with 423 regardless of which trip gets resolved.
+    FleetDailyPin::create([
+        'trip_id' => $tripA->trip_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'pin_code' => '123456',
+        'pin_date' => now()->toDateString(),
+        'driver_verified_at' => now(),
+        'conductor_verified_at' => now(),
+    ]);
+
+    $fleetRoute = makeShiftFleetRoute();
+    Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'boarding',
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($conductor)
+        ->getJson('/api/conductor/trips/current')
+        ->assertSuccessful()
+        ->assertJsonPath('data.trip_id', $tripA->trip_id);
+});
+
+test('conductor current trip is unavailable after the shift is closed', function () {
+    $conductor = makeShiftStaffUser('conductor');
+    $trip = makeAssignedConductorTrip($conductor, 'scheduled');
+
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+
+    $trip->status = 'completed';
+    $trip->save();
+
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/end')->assertSuccessful();
+
+    $this->actingAs($conductor)
+        ->getJson('/api/conductor/trips/current')
+        ->assertStatus(404);
 });

@@ -1,11 +1,14 @@
 <?php
+
 namespace App\Services;
-use App\Repositories\TripRepository;
+
+use App\Repositories\ConductorShiftLogRepository;
+use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\StaffRepository;
-use App\Services\FleetDailyPinService;
-use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\DB;
+use App\Repositories\TripRepository;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class TripService
 {
@@ -13,23 +16,25 @@ class TripService
         private TripRepository $tripRepository,
         private StaffRepository $StaffRepository,
         private FleetDailyPinService $pinService,
+        private DriverShiftLogRepository $driverShiftLogRepository,
+        private ConductorShiftLogRepository $conductorShiftLogRepository,
     ) {}
 
     public function scheduleTrip(array $payload): object
     {
         // current_* fields represent occupied slots; new trips must start at 0.
         $trip = $this->tripRepository->create(array_merge($payload, [
-            'trip_type'                 => $payload['trip_type'] ?? 'one_way',
-            'return_departure_time'     => $payload['trip_type'] === 'round_trip'
+            'trip_type' => $payload['trip_type'] ?? 'one_way',
+            'return_departure_time' => $payload['trip_type'] === 'round_trip'
                 ? ($payload['return_departure_time'] ?? null)
                 : null,
-            'status'                    => 'scheduled',
-            'current_seated_capacity'   => 0,
+            'status' => 'scheduled',
+            'current_seated_capacity' => 0,
             'current_standing_capacity' => 0,
-            'total_occupancy'           => 0,
+            'total_occupancy' => 0,
         ]));
 
-        if (!empty($trip->driver_id) && !empty($trip->conductor_id) && $this->isTripToday($trip)) {
+        if (! empty($trip->driver_id) && ! empty($trip->conductor_id) && $this->isTripToday($trip)) {
             $this->pinService->generateOrGet(
                 $trip->trip_id,
                 $trip->driver_id,
@@ -43,6 +48,7 @@ class TripService
     public function startBoarding(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'boarding');
+
         return $this->tripRepository->findById($tripId);
     }
 
@@ -50,23 +56,25 @@ class TripService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
 
-        if (!$this->pinService->isBothVerified($trip->trip_id)) {
+        if (! $this->pinService->isBothVerified($trip->trip_id)) {
             throw ValidationException::withMessages([
                 'pin' => ['Both the driver and conductor must complete QR pairing before the trip can depart.'],
             ]);
         }
 
         $this->tripRepository->updateStatus($tripId, 'departed');
+
         return $this->tripRepository->findById($tripId);
     }
 
     public function completeTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'completed');
+
         return $this->tripRepository->findById($tripId);
     }
 
@@ -74,7 +82,7 @@ class TripService
     {
         $driver = $this->StaffRepository->findById($payload['driver_id']);
 
-        if (!$driver || $driver->user->role !== 'driver') {
+        if (! $driver || $driver->user->role !== 'driver') {
             throw ValidationException::withMessages([
                 'driver_id' => ['The selected user is not a driver.'],
             ]);
@@ -97,7 +105,7 @@ class TripService
     {
         $conductor = $this->StaffRepository->findById($payload['conductor_id']);
 
-        if (!$conductor || $conductor->user->role !== 'conductor') {
+        if (! $conductor || $conductor->user->role !== 'conductor') {
             throw ValidationException::withMessages([
                 'conductor_id' => ['The selected user is not a conductor.'],
             ]);
@@ -120,12 +128,12 @@ class TripService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
 
         $decision = $payload['decision'] ?? null;
-        if (!in_array($decision, ['accept', 'keep'], true)) {
+        if (! in_array($decision, ['accept', 'keep'], true)) {
             throw ValidationException::withMessages([
                 'decision' => ['Dispatch decision must be either "accept" or "keep".'],
             ]);
@@ -141,29 +149,29 @@ class TripService
         return $this->tripRepository->findById($tripId);
     }
 
-    public function getDriverTrips(int $driverCompanyUserId): object
+    public function getDriverTrips(int $driverCompanyUserId, string $statusFilter = 'all'): object
     {
-        return $this->tripRepository->listByDriver($driverCompanyUserId);
+        return $this->tripRepository->listByDriver($driverCompanyUserId, $statusFilter);
     }
 
-    public function getConductorTrips(int $conductorCompanyUserId): object
+    public function getConductorTrips(int $conductorCompanyUserId, string $statusFilter = 'all'): object
     {
-        return $this->tripRepository->listByConductor($conductorCompanyUserId);
+        return $this->tripRepository->listByConductor($conductorCompanyUserId, $statusFilter);
     }
 
-    public function getOperatorUpcomingTrips(int $operatorCompanyUserId): object
+    public function getOperatorUpcomingTrips(int $operatorCompanyUserId, string $statusFilter = 'all'): object
     {
-        return $this->tripRepository->listUpcomingByOperator($operatorCompanyUserId);
+        return $this->tripRepository->listUpcomingByOperator($operatorCompanyUserId, $statusFilter);
     }
 
     public function getCurrentTripForDriver(int $driverCompanyUserId): ?object
     {
-        return $this->tripRepository->findCurrentByDriver($driverCompanyUserId);
+        return $this->resolveOpenDriverShiftTrip($driverCompanyUserId);
     }
 
     public function getCurrentTripForConductor(int $conductorCompanyUserId): ?object
     {
-        return $this->tripRepository->findCurrentByConductor($conductorCompanyUserId);
+        return $this->resolveOpenConductorShiftTrip($conductorCompanyUserId);
     }
 
     /**
@@ -204,9 +212,9 @@ class TripService
         return $this->tripRepository->findTodayByConductor($conductorCompanyUserId);
     }
 
-    public function getAvailableTripsForPassengers(bool $includeStops = true): object
+    public function getAvailableTripsForPassengers(bool $includeStops = true, ?string $tripDate = null): object
     {
-        return $this->tripRepository->listAvailableForPassengers($includeStops);
+        return $this->tripRepository->listAvailableForPassengers($includeStops, $tripDate);
     }
 
     /**
@@ -216,14 +224,14 @@ class TripService
     public function getCurrentTripForUser(object $user): ?object
     {
         $companyUser = $user->companyProfile;
-        if (!$companyUser) {
+        if (! $companyUser) {
             return null;
         }
 
         return match ($user->role) {
             'conductor' => $this->getCurrentTripForConductor($companyUser->company_user_id),
-            'driver'    => $this->getCurrentTripForDriver($companyUser->company_user_id),
-            default     => null,
+            'driver' => $this->getCurrentTripForDriver($companyUser->company_user_id),
+            default => null,
         };
     }
 
@@ -251,7 +259,7 @@ class TripService
         $execute = function () use ($tripId, $seatType, $count) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
-            if (!$trip) {
+            if (! $trip) {
                 throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
             }
 
@@ -292,7 +300,7 @@ class TripService
         $execute = function () use ($tripId, $seatType) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
-            if (!$trip) {
+            if (! $trip) {
                 throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
             }
 
@@ -316,6 +324,44 @@ class TripService
 
     private function isTripToday(object $trip): bool
     {
-        return Carbon::parse((string) $trip->trip_date)->isToday();
+        $date = $trip->trip_date instanceof Carbon
+            ? $trip->trip_date
+            : Carbon::parse((string) $trip->trip_date, config('app.timezone', 'Asia/Manila'));
+
+        return $date->setTimezone(config('app.timezone', 'Asia/Manila'))->isToday();
+    }
+
+    private function resolveOpenDriverShiftTrip(int $driverCompanyUserId): ?object
+    {
+        $openShift = $this->driverShiftLogRepository->findOpenByDriver($driverCompanyUserId);
+        $trip = $openShift?->trip;
+
+        if (! $trip) {
+            return null;
+        }
+
+        $status = strtolower((string) ($trip->status ?? ''));
+        if (in_array($status, ['completed', 'cancelled'], true)) {
+            return null;
+        }
+
+        return $trip->loadMissing(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user']);
+    }
+
+    private function resolveOpenConductorShiftTrip(int $conductorCompanyUserId): ?object
+    {
+        $openShift = $this->conductorShiftLogRepository->findOpenByConductor($conductorCompanyUserId);
+        $trip = $openShift?->trip;
+
+        if (! $trip) {
+            return null;
+        }
+
+        $status = strtolower((string) ($trip->status ?? ''));
+        if (in_array($status, ['completed', 'cancelled'], true)) {
+            return null;
+        }
+
+        return $trip->loadMissing(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user']);
     }
 }
