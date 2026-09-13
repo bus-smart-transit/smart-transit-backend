@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\Trip;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -7,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 
 class TripRepository
 {
+    private const ACTIVE_STATUSES = ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'];
+
     public function create(array $payload): Trip
     {
         return Trip::create($payload);
@@ -32,39 +36,74 @@ class TripRepository
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
     }
 
-    public function listUpcomingByOperator(int $operatorCompanyUserId): Collection
+    public function listUpcomingByOperator(int $operatorCompanyUserId, string $statusFilter = 'all'): Collection
     {
         $this->markOverdueScheduledAsDelayed($operatorCompanyUserId);
 
+        $today = $this->serviceToday();
+
         $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('company_user_id', $operatorCompanyUserId)
-            ->orderBy('trip_date', 'asc');
+            ->orderBy('trip_date', 'asc')
+            ->orderBy('departure_time', 'asc');
 
-        $this->applyUpcomingDateTimeFilter($query);
+        $normalized = $this->normalizeStatusFilter($statusFilter);
+
+        if ($normalized === 'completed') {
+            return $query->where('status', 'completed')->get()->values();
+        }
+
+        if ($normalized === 'scheduled') {
+            return $query
+                ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+                ->whereDate('trip_date', '>=', $today)
+                ->get()
+                ->values();
+        }
+
+        if ($normalized === 'all') {
+            return $query->get()->values();
+        }
+
+        $trips = $query
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->get();
+
+        return $trips->filter(function (Trip $trip) {
+            return $this->isUpcomingScheduledAt($trip);
+        })->values();
+    }
+
+    public function listByDriver(int $driverCompanyUserId, string $statusFilter = 'all'): Collection
+    {
+        $this->markOverdueScheduledAsDelayed();
+
+        $today = $this->serviceToday();
+
+        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+            ->where('driver_id', $driverCompanyUserId)
+            ->orderBy('trip_date', 'asc')
+            ->orderBy('departure_time', 'asc');
+
+        $this->applyStatusFilter($query, $statusFilter, $today);
 
         return $query->get();
     }
 
-    public function listByDriver(int $driverCompanyUserId): Collection
+    public function listByConductor(int $conductorCompanyUserId, string $statusFilter = 'all'): Collection
     {
         $this->markOverdueScheduledAsDelayed();
 
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
-            ->where('driver_id', $driverCompanyUserId)
-            ->where('trip_date', '>=', today())
-            ->orderBy('trip_date', 'asc')
-            ->get();
-    }
+        $today = $this->serviceToday();
 
-    public function listByConductor(int $conductorCompanyUserId): Collection
-    {
-        $this->markOverdueScheduledAsDelayed();
-
-        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        $query = Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('conductor_id', $conductorCompanyUserId)
-            ->where('trip_date', '>=', today())
             ->orderBy('trip_date', 'asc')
-            ->get();
+            ->orderBy('departure_time', 'asc');
+
+        $this->applyStatusFilter($query, $statusFilter, $today);
+
+        return $query->get();
     }
 
     public function findCurrentByDriver(int $driverCompanyUserId): ?Trip
@@ -74,7 +113,7 @@ class TripRepository
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->whereDate('trip_date', today())
+            ->whereDate('trip_date', $this->serviceToday())
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->orderBy('trip_date', 'asc')
             ->first();
@@ -87,7 +126,7 @@ class TripRepository
         return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->whereDate('trip_date', today())
+            ->whereDate('trip_date', $this->serviceToday())
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->orderBy('trip_date', 'asc')
             ->first();
@@ -126,7 +165,7 @@ class TripRepository
 
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
-            ->whereDate('trip_date', today())
+            ->whereDate('trip_date', $this->serviceToday())
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
@@ -138,7 +177,7 @@ class TripRepository
 
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
-            ->whereDate('trip_date', today())
+            ->whereDate('trip_date', $this->serviceToday())
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
@@ -151,7 +190,7 @@ class TripRepository
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->whereDate('trip_date', '>=', today())
+            ->whereDate('trip_date', '>=', $this->serviceToday())
             ->orderBy('trip_date', 'asc')
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
@@ -164,7 +203,7 @@ class TripRepository
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->whereDate('trip_date', '>=', today())
+            ->whereDate('trip_date', '>=', $this->serviceToday())
             ->orderBy('trip_date', 'asc')
             ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
             ->first();
@@ -174,9 +213,9 @@ class TripRepository
     {
         // Single atomic UPDATE — avoids SELECT+UPDATE race condition under concurrent scans
         return Trip::where('trip_id', $tripId)->update([
-            'current_seated_capacity'   => DB::raw("current_seated_capacity + {$seatedDelta}"),
+            'current_seated_capacity' => DB::raw("current_seated_capacity + {$seatedDelta}"),
             'current_standing_capacity' => DB::raw("current_standing_capacity + {$standingDelta}"),
-            'total_occupancy'           => DB::raw("total_occupancy + {$seatedDelta} + {$standingDelta}"),
+            'total_occupancy' => DB::raw("total_occupancy + {$seatedDelta} + {$standingDelta}"),
         ]) > 0;
     }
 
@@ -187,9 +226,9 @@ class TripRepository
     public function decrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
         return Trip::where('trip_id', $tripId)->update([
-            'current_seated_capacity'   => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta})"),
+            'current_seated_capacity' => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta})"),
             'current_standing_capacity' => DB::raw("GREATEST(0, current_standing_capacity - {$standingDelta})"),
-            'total_occupancy'           => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta}) + GREATEST(0, current_standing_capacity - {$standingDelta})"),
+            'total_occupancy' => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta}) + GREATEST(0, current_standing_capacity - {$standingDelta})"),
         ]) > 0;
     }
 
@@ -200,7 +239,7 @@ class TripRepository
     {
         return Trip::where('trip_id', $tripId)->update([
             'last_acknowledged_stop_id' => $stopId,
-            'last_acknowledged_at' => now()
+            'last_acknowledged_at' => now(),
         ]) > 0;
     }
 
@@ -208,9 +247,11 @@ class TripRepository
      * All trips currently bookable by passengers.
      * Used by the public GET /trips endpoint.
      */
-    public function listAvailableForPassengers(bool $includeStops = true): \Illuminate\Support\Collection
+    public function listAvailableForPassengers(bool $includeStops = true, ?string $tripDate = null): Collection
     {
         $this->markOverdueScheduledAsDelayed();
+
+        $today = $this->serviceToday();
 
         $with = [
             'fleetRoute.fleet',
@@ -227,68 +268,109 @@ class TripRepository
             ->with($with)
             ->orderBy('trip_date', 'asc');
 
-        $this->applyUpcomingDateTimeFilter($query, ['boarding']);
+        if ($tripDate) {
+            $query->whereDate('trip_date', $tripDate);
+        } else {
+            $query->whereDate('trip_date', '>=', $today);
+        }
 
         return $query->get();
     }
 
-    private function applyUpcomingDateTimeFilter($query, array $activeStatuses = []): void
+    private function applyStatusFilter($query, string $statusFilter, Carbon $today): void
     {
-        $today = now()->toDateString();
-        $timeNow = now()->format('H:i:s');
+        $normalized = $this->normalizeStatusFilter($statusFilter);
 
-        $query->where(function ($outer) use ($today, $timeNow, $activeStatuses) {
-            if (!empty($activeStatuses)) {
-                $outer->where(function ($active) use ($activeStatuses, $today) {
-                    $active->whereIn('status', $activeStatuses)
-                        ->whereDate('trip_date', '>=', $today);
-                })->orWhere(function ($upcoming) use ($today, $timeNow) {
-                    $upcoming->whereIn('status', ['scheduled', 'delayed'])
-                        ->where(function ($dateFilter) use ($today, $timeNow) {
-                            $dateFilter->whereDate('trip_date', '>', $today)
-                                ->orWhere(function ($sameDay) use ($today, $timeNow) {
-                                    $sameDay->whereDate('trip_date', '=', $today)
-                                        ->whereRaw("COALESCE(departure_time, '23:59:59') >= ?", [$timeNow]);
-                                });
-                        });
-                });
+        if ($normalized === 'completed') {
+            $query->where('status', 'completed');
 
-                return;
+            return;
+        }
+
+        if ($normalized === 'scheduled') {
+            $query->whereIn('status', self::ACTIVE_STATUSES)
+                ->whereDate('trip_date', '>=', $today);
+        }
+    }
+
+    private function isUpcomingScheduledAt(Trip $trip): bool
+    {
+        $timezone = config('app.timezone', 'Asia/Manila');
+        $scheduledAt = $this->resolveScheduledAt($trip, $timezone);
+
+        if ($scheduledAt === null) {
+            return true;
+        }
+
+        return $scheduledAt->greaterThanOrEqualTo(Carbon::now($timezone));
+    }
+
+    private function resolveScheduledAt(Trip $trip, ?string $timezone = null): ?Carbon
+    {
+        $timezone ??= config('app.timezone', 'Asia/Manila');
+
+        $tripDate = $trip->trip_date;
+        $departureTime = $trip->departure_time ?: $trip->fleetRoute?->start_time;
+
+        if (! $tripDate || ! $departureTime) {
+            return null;
+        }
+
+        $dateString = $tripDate instanceof Carbon
+            ? $tripDate->format('Y-m-d')
+            : Carbon::parse((string) $tripDate)->format('Y-m-d');
+
+        foreach (['!Y-m-d H:i:s', '!Y-m-d H:i'] as $format) {
+            try {
+                $parsed = Carbon::createFromFormat($format, $dateString.' '.$departureTime, $timezone);
+                if ($parsed !== false) {
+                    return $parsed;
+                }
+            } catch (\Throwable) {
+                continue;
             }
+        }
 
-            $outer->whereIn('status', ['scheduled', 'delayed'])
-                ->where(function ($dateFilter) use ($today, $timeNow) {
-                    $dateFilter->whereDate('trip_date', '>', $today)
-                        ->orWhere(function ($sameDay) use ($today, $timeNow) {
-                            $sameDay->whereDate('trip_date', '=', $today)
-                                ->whereRaw("COALESCE(departure_time, '23:59:59') >= ?", [$timeNow]);
-                        });
-                });
-        });
+        return null;
+    }
+
+    private function normalizeStatusFilter(string $statusFilter): string
+    {
+        return match (strtolower(trim($statusFilter))) {
+            'upcoming' => 'upcoming',
+            'scheduled', 'active', 'scheduled-active' => 'scheduled',
+            'completed' => 'completed',
+            'all' => 'all',
+            default => 'all',
+        };
+    }
+
+    private function serviceToday(): Carbon
+    {
+        return Carbon::today(config('app.timezone', 'Asia/Manila'));
     }
 
     public function markOverdueScheduledAsDelayed(?int $operatorCompanyUserId = null): int
     {
         $query = Trip::with('fleetRoute')
-            ->whereDate('trip_date', today())
+            ->whereDate('trip_date', $this->serviceToday())
             ->where('status', 'scheduled');
 
         if ($operatorCompanyUserId !== null) {
             $query->where('company_user_id', $operatorCompanyUserId);
         }
 
-        $timezone = config('app.timezone', 'UTC');
+        $timezone = config('app.timezone', 'Asia/Manila');
         $now = Carbon::now($timezone);
         $updated = 0;
 
         $query->chunkById(100, function ($trips) use ($now, $timezone, &$updated) {
             foreach ($trips as $trip) {
-                $departureTime = $trip->departure_time ?: $trip->fleetRoute?->start_time;
-                if (!$departureTime) {
+                $scheduledAt = $this->resolveScheduledAt($trip, $timezone);
+                if ($scheduledAt === null) {
                     continue;
                 }
 
-                $scheduledAt = Carbon::parse($trip->trip_date->toDateString() . ' ' . $departureTime, $timezone);
                 if ($scheduledAt->lte($now)) {
                     $updated += Trip::where('trip_id', $trip->trip_id)
                         ->where('status', 'scheduled')

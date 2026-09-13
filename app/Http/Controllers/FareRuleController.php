@@ -1,27 +1,48 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\FareRuleService;
-use App\Services\AuditLogger;
-use App\Http\Requests\StoreFareRuleRequest;
-use App\Http\Requests\FareQuoteRequest;
-use App\Http\Requests\FareQuoteFromCoordinatesRequest;
+
 use App\Http\Requests\FareFleetQuoteRequest;
 use App\Http\Requests\FareListRequest;
+use App\Http\Requests\FareQuoteFromCoordinatesRequest;
+use App\Http\Requests\FareQuoteRequest;
+use App\Http\Requests\StoreFareRuleRequest;
+use App\Models\Fleet;
+use App\Services\AuditLogger;
+use App\Services\FareRuleService;
 use App\Traits\ApiResponse;
 
 class FareRuleController extends Controller
 {
     use ApiResponse;
+
     public function __construct(
         private FareRuleService $fareRuleService,
-    ) {
-    }
+    ) {}
 
     // Admin — create a fare rule for a fleet + seat type
     public function storeRule(StoreFareRuleRequest $request)
     {
+        $user = $request->user();
+        if ($user?->role === 'operator') {
+            $companyUserId = $user->companyProfile?->company_user_id;
+            if (! $companyUserId) {
+                return $this->error('Staff profile not found.', 404);
+            }
+
+            $fleetId = (int) $request->validated('fleet_id');
+            $owned = Fleet::where('fleet_id', $fleetId)
+                ->where('company_user_id', $companyUserId)
+                ->exists();
+
+            if (! $owned) {
+                return $this->error('You do not have permission to manage fare rules for this fleet.', 403);
+            }
+        }
+
         $rule = $this->fareRuleService->createFareRule($request->validated());
         AuditLogger::log('fare_rule.create', 'FareRule', $rule->fare_rule_id ?? null, $request->validated());
+
         return $this->success($rule, 'Fare rule created successfully');
     }
 
@@ -30,6 +51,7 @@ class FareRuleController extends Controller
     {
         try {
             $amount = $this->fareRuleService->getQuote($request->validated());
+
             return $this->success(['amount' => $amount], 'Fare retrieved successfully');
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage(), 422);
@@ -41,6 +63,7 @@ class FareRuleController extends Controller
     {
         try {
             $amount = $this->fareRuleService->getQuoteFromCoordinates($request->validated());
+
             return $this->success(['amount' => $amount], 'Fare retrieved successfully');
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage(), 422);
@@ -53,6 +76,7 @@ class FareRuleController extends Controller
     {
         try {
             $result = $this->fareRuleService->getFleetQuotesFromCoordinates($request->validated());
+
             return $this->success($result, 'Fleet fares retrieved successfully');
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage(), 422);
@@ -70,6 +94,7 @@ class FareRuleController extends Controller
                 $request->validated('fleet_id'),
                 $request->validated('seat_type'),
             );
+
             return $this->success($result, 'Computed fares retrieved successfully');
         } catch (\RuntimeException $e) {
             return $this->error($e->getMessage(), 422);

@@ -1,13 +1,16 @@
 <?php
+
 namespace App\Services;
+
 use App\Models\Ticket;
+use App\Repositories\FareRuleRepository;
+use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
-use App\Repositories\RouteStopRepository;
-use App\Repositories\FareRuleRepository;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class TicketService
 {
@@ -21,8 +24,7 @@ class TicketService
         private TripService $tripService,
         private RewardService $rewardService,
         private ReverseGeocodingService $reverseGeocodingService,
-    ) {
-    }
+    ) {}
 
     /**
      * $item is one of two shapes:
@@ -33,7 +35,7 @@ class TicketService
     {
         $trip = $this->tripRepository->findById($item['trip_id']);
 
-        if (!$trip || !in_array($trip->status, ['scheduled', 'boarding'])) {
+        if (! $trip || ! in_array($trip->status, ['scheduled', 'boarding'])) {
             throw ValidationException::withMessages([
                 'trip' => ['This trip is not accepting tickets.'],
             ]);
@@ -47,7 +49,7 @@ class TicketService
         $bookingDate = isset($item['booking_date']) ? (string) $item['booking_date'] : null;
         if ($bookingDate !== null && $tripDate !== null && $bookingDate !== $tripDate) {
             throw ValidationException::withMessages([
-                'trip' => ['This trip is scheduled for ' . Carbon::parse($tripDate)->format('m/d/Y') . '.'],
+                'trip' => ['This trip is scheduled for '.Carbon::parse($tripDate)->format('m/d/Y').'.'],
             ]);
         }
 
@@ -86,7 +88,7 @@ class TicketService
      */
     public function reserveFromTemplate(array $reservedTemplate, int $quantity = 1): array
     {
-        if (!isset($reservedTemplate['trip_id'], $reservedTemplate['seat_type'])) {
+        if (! isset($reservedTemplate['trip_id'], $reservedTemplate['seat_type'])) {
             throw new \RuntimeException('Invalid reservation template.');
         }
 
@@ -115,7 +117,7 @@ class TicketService
             $item['destination_stop_id'],
         );
 
-        if (!$originRouteStop || !$destinationRouteStop) {
+        if (! $originRouteStop || ! $destinationRouteStop) {
             throw ValidationException::withMessages([
                 'stop' => ['One or both stops are not on this trip\'s route.'],
             ]);
@@ -126,7 +128,7 @@ class TicketService
         $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $item['seat_type'])
             ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $item['seat_type']);
 
-        if (!$rule) {
+        if (! $rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
         }
 
@@ -163,22 +165,22 @@ class TicketService
 
         return [
             'fleet_route_id' => $trip->fleet_route_id,
-            'trip_id'        => $trip->trip_id,
-            'seat_type'      => $item['seat_type'],
-            'fare_rule_id'   => $quote['fare_rule_id'],
-            'distance_km'    => $quote['distance_km'],
-            'amount'         => $quote['amount'],
+            'trip_id' => $trip->trip_id,
+            'seat_type' => $item['seat_type'],
+            'fare_rule_id' => $quote['fare_rule_id'],
+            'distance_km' => $quote['distance_km'],
+            'amount' => $quote['amount'],
             // Preserve custom GPS drop-off so the ticket can display where the
             // passenger actually intends to alight (not just the route terminal).
-            'origin_lat'      => (float) $item['origin_lat'],
-            'origin_lng'      => (float) $item['origin_lng'],
+            'origin_lat' => (float) $item['origin_lat'],
+            'origin_lng' => (float) $item['origin_lng'],
             'destination_lat' => (float) $item['destination_lat'],
             'destination_lng' => (float) $item['destination_lng'],
-            'origin_label' => $this->reverseGeocodingService->resolvePlaceName(
+            'origin_label' => trim((string) ($item['origin_label'] ?? '')) ?: $this->reverseGeocodingService->resolvePlaceName(
                 (float) $item['origin_lat'],
                 (float) $item['origin_lng'],
             ) ?? 'Custom pickup point',
-            'destination_label' => $this->reverseGeocodingService->resolvePlaceName(
+            'destination_label' => trim((string) ($item['destination_label'] ?? '')) ?: $this->reverseGeocodingService->resolvePlaceName(
                 (float) $item['destination_lat'],
                 (float) $item['destination_lng'],
             ) ?? 'Custom drop-off point',
@@ -203,12 +205,12 @@ class TicketService
             'status' => 'valid',
             'amount' => $reserved['amount'],
             'seat_type' => $reserved['seat_type'],
-            'origin_stop_id'      => $reserved['origin_stop_id']      ?? null,
+            'origin_stop_id' => $reserved['origin_stop_id'] ?? null,
             'destination_stop_id' => $reserved['destination_stop_id'] ?? null,
-            'origin_lat'          => $reserved['origin_lat']          ?? null,
-            'origin_lng'          => $reserved['origin_lng']          ?? null,
-            'destination_lat'     => $reserved['destination_lat']     ?? null,
-            'destination_lng'     => $reserved['destination_lng']     ?? null,
+            'origin_lat' => $reserved['origin_lat'] ?? null,
+            'origin_lng' => $reserved['origin_lng'] ?? null,
+            'destination_lat' => $reserved['destination_lat'] ?? null,
+            'destination_lng' => $reserved['destination_lng'] ?? null,
         ]);
 
         if ($passengerId) {
@@ -239,6 +241,7 @@ class TicketService
     {
         return DB::transaction(function () use ($item, $passengerId, $paymentId) {
             $reserved = $this->reserveAndPrice($item);
+
             return $this->finalizeTicket($reserved, $passengerId, $paymentId);
         });
     }
@@ -251,7 +254,7 @@ class TicketService
     {
         $ticket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
 
-        if (!$ticket) {
+        if (! $ticket) {
             throw ValidationException::withMessages(['ticket' => ['Ticket not found.']]);
         }
 
@@ -261,7 +264,7 @@ class TicketService
             ]);
         }
 
-        if (!$ticket->payment || $ticket->payment->status !== 'paid' || !$ticket->payment->is_valid) {
+        if (! $ticket->payment || $ticket->payment->status !== 'paid' || ! $ticket->payment->is_valid) {
             throw ValidationException::withMessages([
                 'ticket' => ['Payment for this ticket has not been completed yet.'],
             ]);
@@ -275,7 +278,7 @@ class TicketService
         if ($conductorCompanyUserId !== null) {
             $activeTrip = $this->tripService->getCurrentTripForConductor($conductorCompanyUserId);
 
-            if (!$activeTrip) {
+            if (! $activeTrip) {
                 throw ValidationException::withMessages([
                     'ticket' => ['No active trip found. You must have an active trip to scan tickets.'],
                 ]);
@@ -292,7 +295,7 @@ class TicketService
         // Avoid Carbon method chaining which can silently fail when $trip is null.
         // String comparison works correctly for ISO date strings (YYYY-MM-DD).
         $tripDateStr = $ticket->trip?->trip_date?->toDateString();
-        $todayStr    = now()->toDateString();
+        $todayStr = now()->toDateString();
 
         if ($tripDateStr === null) {
             throw ValidationException::withMessages([
@@ -302,13 +305,13 @@ class TicketService
 
         if ($tripDateStr > $todayStr) {
             throw ValidationException::withMessages([
-                'ticket' => ['This ticket is not yet active. It can only be used on the scheduled trip date (' . $tripDateStr . ').'],
+                'ticket' => ['This ticket is not yet active. It can only be used on the scheduled trip date ('.$tripDateStr.').'],
             ]);
         }
 
         if ($tripDateStr < $todayStr) {
             throw ValidationException::withMessages([
-                'ticket' => ['This ticket has expired. Tickets are only valid on their scheduled trip date (' . $tripDateStr . ').'],
+                'ticket' => ['This ticket has expired. Tickets are only valid on their scheduled trip date ('.$tripDateStr.').'],
             ]);
         }
 
@@ -319,26 +322,26 @@ class TicketService
         // custom-pinpoint tickets so the conductor sees WHERE the passenger alights.
         $destinationLabel = $boardedTicket->destinationStop?->stop_name
             ?? ($boardedTicket->destination_lat !== null
-                ? 'GPS: ' . round((float) $boardedTicket->destination_lat, 5) . ', ' . round((float) $boardedTicket->destination_lng, 5)
+                ? 'GPS: '.round((float) $boardedTicket->destination_lat, 5).', '.round((float) $boardedTicket->destination_lng, 5)
                 : null);
 
         $originLabel = $boardedTicket->originStop?->stop_name
             ?? ($boardedTicket->origin_lat !== null
-                ? 'GPS: ' . round((float) $boardedTicket->origin_lat, 5) . ', ' . round((float) $boardedTicket->origin_lng, 5)
+                ? 'GPS: '.round((float) $boardedTicket->origin_lat, 5).', '.round((float) $boardedTicket->origin_lng, 5)
                 : null);
 
         return (object) [
-            'ticket_id'       => $boardedTicket->ticket_id,
-            'ticket_uuid'     => $boardedTicket->ticket_uuid,
-            'passenger_name'  => $boardedTicket->passenger?->user?->name ?? 'Guest',
-            'origin'          => $originLabel,
-            'destination'     => $destinationLabel,
+            'ticket_id' => $boardedTicket->ticket_id,
+            'ticket_uuid' => $boardedTicket->ticket_uuid,
+            'passenger_name' => $boardedTicket->passenger?->user?->name ?? 'Guest',
+            'origin' => $originLabel,
+            'destination' => $destinationLabel,
             'destination_lat' => $boardedTicket->destination_lat,
             'destination_lng' => $boardedTicket->destination_lng,
-            'seat_type'       => $boardedTicket->seat_type,
-            'amount'          => (float) $boardedTicket->amount,
-            'status'          => $boardedTicket->status,
-            'boarded_at'      => $boardedTicket->boarded_at,
+            'seat_type' => $boardedTicket->seat_type,
+            'amount' => (float) $boardedTicket->amount,
+            'status' => $boardedTicket->status,
+            'boarded_at' => $boardedTicket->boarded_at,
         ];
     }
 
@@ -357,8 +360,8 @@ class TicketService
     {
         $ticket = $this->ticketRepository->findByUuid($uuid);
 
-        if (!$ticket) {
-            throw (new \Illuminate\Database\Eloquent\ModelNotFoundException())->setModel(Ticket::class);
+        if (! $ticket) {
+            throw (new ModelNotFoundException)->setModel(Ticket::class);
         }
 
         return $ticket;
@@ -379,7 +382,7 @@ class TicketService
             })
             ->get();
 
-        $totalFare    = 0.0;
+        $totalFare = 0.0;
         $onsiteAmount = 0.0;
         $onlineAmount = 0.0;
         $passengerCount = $tickets->count();
@@ -396,15 +399,14 @@ class TicketService
         }
 
         return [
-            'trip_id'        => $tripId,
-            'total_fare'     => round($totalFare, 2),
-            'onsite_amount'  => round($onsiteAmount, 2),
-            'online_amount'  => round($onlineAmount, 2),
-            'passenger_count'=> $passengerCount,
-            'average_fare'   => $passengerCount > 0 ? round($totalFare / $passengerCount, 2) : 0.0,
+            'trip_id' => $tripId,
+            'total_fare' => round($totalFare, 2),
+            'onsite_amount' => round($onsiteAmount, 2),
+            'online_amount' => round($onlineAmount, 2),
+            'passenger_count' => $passengerCount,
+            'average_fare' => $passengerCount > 0 ? round($totalFare / $passengerCount, 2) : 0.0,
         ];
     }
-
 
     public function scanGroup(array $payload, ?int $conductorCompanyUserId = null): array
     {
@@ -419,42 +421,45 @@ class TicketService
         // Resolve conductor's active trip once for the whole group scan.
         $activeTripId = null;
         if ($conductorCompanyUserId !== null) {
-            $activeTrip   = $this->tripService->getCurrentTripForConductor($conductorCompanyUserId);
+            $activeTrip = $this->tripService->getCurrentTripForConductor($conductorCompanyUserId);
             $activeTripId = $activeTrip?->trip_id;
 
-            if (!$activeTripId) {
+            if (! $activeTripId) {
                 throw ValidationException::withMessages([
                     'transaction_reference' => ['No active trip found. You must have an active trip to scan group tickets.'],
                 ]);
             }
         }
 
-        $todayStr     = now()->toDateString();
+        $todayStr = now()->toDateString();
         $boardedCount = 0;
-        $results      = [];
+        $results = [];
 
         foreach ($tickets as $ticket) {
             $base = [
-                'ticket_uuid'    => $ticket->ticket_uuid,
+                'ticket_uuid' => $ticket->ticket_uuid,
                 'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
-                'destination'    => $ticket->destinationStop?->stop_name,
-                'seat_type'      => $ticket->seat_type,
-                'amount'         => (float) $ticket->amount,
+                'destination' => $ticket->destinationStop?->stop_name,
+                'seat_type' => $ticket->seat_type,
+                'amount' => (float) $ticket->amount,
             ];
 
             if ($ticket->status !== 'valid') {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid/used.']);
+
                 continue;
             }
 
-            if (!$ticket->payment || $ticket->payment->status !== 'paid' || !$ticket->payment->is_valid) {
+            if (! $ticket->payment || $ticket->payment->status !== 'paid' || ! $ticket->payment->is_valid) {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
+
                 continue;
             }
 
             // Trip ownership check — same logic as single-ticket scan.
             if ($activeTripId !== null && (int) $ticket->trip_id !== (int) $activeTripId) {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
+
                 continue;
             }
 
@@ -463,16 +468,19 @@ class TicketService
 
             if ($tripDateStr === null) {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
+
                 continue;
             }
 
             if ($tripDateStr > $todayStr) {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket not yet active (scheduled for ' . $tripDateStr . ')']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'Ticket not yet active (scheduled for '.$tripDateStr.')']);
+
                 continue;
             }
 
             if ($tripDateStr < $todayStr) {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
+
                 continue;
             }
 
@@ -483,9 +491,9 @@ class TicketService
 
         return [
             'transaction_reference' => $payload['transaction_reference'],
-            'total_tickets'         => count($results),
-            'boarded_count'         => $boardedCount,
-            'tickets'               => $results,
+            'total_tickets' => count($results),
+            'boarded_count' => $boardedCount,
+            'tickets' => $results,
         ];
     }
 
@@ -500,18 +508,18 @@ class TicketService
     {
         $tripDate = $ticket->trip?->trip_date;
         if ($tripDate) {
-            $tz          = config('app.timezone', 'UTC');
-            $dateStr     = $tripDate->toDateString(); // "YYYY-MM-DD"
+            $tz = config('app.timezone', 'UTC');
+            $dateStr = $tripDate->toDateString(); // "YYYY-MM-DD"
 
             // valid_from — use the fleet route's scheduled departure time so
             // passengers see the actual boarding time, not midnight UTC which
             // renders incorrectly when the browser converts to local time.
-            $startTime   = $ticket->trip?->fleetRoute?->start_time ?? '00:00:00';
-            $validFrom   = \Illuminate\Support\Carbon::parse($dateStr . ' ' . $startTime, $tz);
+            $startTime = $ticket->trip?->fleetRoute?->start_time ?? '00:00:00';
+            $validFrom = Carbon::parse($dateStr.' '.$startTime, $tz);
 
             // expires_at — end of the trip day in the app's local timezone.
             // A ticket is only usable on its scheduled trip date (23:59:59 local).
-            $expiresAt   = \Illuminate\Support\Carbon::parse($dateStr . ' 23:59:59', $tz);
+            $expiresAt = Carbon::parse($dateStr.' 23:59:59', $tz);
 
             // Mark expired and persist BEFORE setting virtual attributes,
             // so that valid_from / expires_at (which are not real DB columns)
@@ -528,14 +536,14 @@ class TicketService
             $ticket->setAttribute('expires_at', null);
         }
 
-        if (!$ticket->originStop?->stop_name || !$ticket->destinationStop?->stop_name) {
+        if (! $ticket->originStop?->stop_name || ! $ticket->destinationStop?->stop_name) {
             ['origin' => $originLabel, 'destination' => $destinationLabel] = $this->resolveCustomLocationLabelsFromPayload($ticket);
 
-            if (!$ticket->originStop?->stop_name && $originLabel) {
+            if (! $ticket->originStop?->stop_name && $originLabel) {
                 $ticket->setAttribute('origin', $originLabel);
             }
 
-            if (!$ticket->destinationStop?->stop_name && $destinationLabel) {
+            if (! $ticket->destinationStop?->stop_name && $destinationLabel) {
                 $ticket->setAttribute('destination', $destinationLabel);
             }
         }
@@ -555,12 +563,12 @@ class TicketService
         ];
 
         $itemsPayload = $ticket->payment?->items_payload;
-        if (!is_array($itemsPayload) || empty($itemsPayload)) {
+        if (! is_array($itemsPayload) || empty($itemsPayload)) {
             return $fallback;
         }
 
         $matchesCoordinates = static function ($itemValue, $ticketValue): bool {
-            if (!is_numeric($itemValue) || !is_numeric($ticketValue)) {
+            if (! is_numeric($itemValue) || ! is_numeric($ticketValue)) {
                 return false;
             }
 
@@ -568,7 +576,7 @@ class TicketService
         };
 
         foreach ($itemsPayload as $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 continue;
             }
 
@@ -580,10 +588,10 @@ class TicketService
                 continue;
             }
 
-            if (!$matchesCoordinates($item['origin_lat'] ?? null, $ticket->origin_lat)
-                || !$matchesCoordinates($item['origin_lng'] ?? null, $ticket->origin_lng)
-                || !$matchesCoordinates($item['destination_lat'] ?? null, $ticket->destination_lat)
-                || !$matchesCoordinates($item['destination_lng'] ?? null, $ticket->destination_lng)) {
+            if (! $matchesCoordinates($item['origin_lat'] ?? null, $ticket->origin_lat)
+                || ! $matchesCoordinates($item['origin_lng'] ?? null, $ticket->origin_lng)
+                || ! $matchesCoordinates($item['destination_lat'] ?? null, $ticket->destination_lat)
+                || ! $matchesCoordinates($item['destination_lng'] ?? null, $ticket->destination_lng)) {
                 continue;
             }
 
@@ -599,7 +607,7 @@ class TicketService
         }
 
         foreach ($itemsPayload as $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 continue;
             }
 

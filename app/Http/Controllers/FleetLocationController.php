@@ -1,13 +1,17 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\FleetLocationService;
-use App\Http\Requests\UpdateLocationRequest;
+
 use App\Http\Requests\NearestFleetRequest;
+use App\Http\Requests\UpdateLocationRequest;
+use App\Models\Trip;
+use App\Services\FleetLocationService;
 use App\Traits\ApiResponse;
 
 class FleetLocationController extends Controller
 {
     use ApiResponse;
+
     public function __construct(private FleetLocationService $fleetLocationService) {}
 
     // Driver: push GPS position every 5-10 seconds
@@ -15,12 +19,15 @@ class FleetLocationController extends Controller
     public function updateLocation(UpdateLocationRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
         $this->fleetLocationService->updateLocation(
             $companyUser->company_user_id,
             $request->validated()
         );
+
         return $this->success(null, 'Location updated');
     }
 
@@ -37,13 +44,31 @@ class FleetLocationController extends Controller
     public function nearest(NearestFleetRequest $request)
     {
         $nearest = $this->fleetLocationService->findNearestFleet($request->validated());
+
         return $this->success($nearest, 'Nearest fleet retrieved');
     }
 
     // Operator / Admin: GPS breadcrumb trail for a trip (for route adherence + replay)
     public function tripHistory(int $tripId)
     {
+        $user = request()->user();
+        if ($user?->role === 'operator') {
+            $companyUserId = $user->companyProfile?->company_user_id;
+            if (! $companyUserId) {
+                return $this->error('Staff profile not found.', 404);
+            }
+
+            $ownsTrip = Trip::where('trip_id', $tripId)
+                ->where('company_user_id', $companyUserId)
+                ->exists();
+
+            if (! $ownsTrip) {
+                return $this->error('You do not have permission to access GPS history for this trip.', 403);
+            }
+        }
+
         $limit = min((int) request()->query('limit', 500), 1000);
+
         return $this->success(
             $this->fleetLocationService->getTripHistory($tripId, $limit),
             'GPS history retrieved'

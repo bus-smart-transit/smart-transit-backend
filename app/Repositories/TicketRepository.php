@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\Ticket;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -9,6 +11,7 @@ class TicketRepository
     public function create(array $payload): Ticket
     {
         $payload['ticket_uuid'] = $payload['ticket_uuid'] ?? (string) Str::uuid();
+
         return Ticket::create($payload);
     }
 
@@ -21,7 +24,7 @@ class TicketRepository
 
     public function findByPassenger(int $passengerId): Collection
     {
-        return Ticket::with(['trip.fleetRoute.route', 'fareRule', 'originStop', 'destinationStop', 'payment'])
+        return Ticket::with(['trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'fareRule', 'originStop', 'destinationStop', 'payment'])
             ->where('passenger_id', $passengerId)
             ->latest()
             ->get();
@@ -132,6 +135,7 @@ class TicketRepository
                 // Passenger is on bus if they've boarded and haven't reached destination
                 $boardedAtOrBefore = ($ticket->originStop?->stop_id ?? 0) <= $stopId;
                 $destinationAfter = ($ticket->destinationStop?->stop_id ?? 999) > $stopId;
+
                 return $boardedAtOrBefore && $destinationAfter;
             })
             ->count();

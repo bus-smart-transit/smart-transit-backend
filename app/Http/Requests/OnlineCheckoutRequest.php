@@ -1,9 +1,10 @@
 <?php
+
 namespace App\Http\Requests;
 
 use App\Models\Trip;
-use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Validator;
 
 class OnlineCheckoutRequest extends FormRequest
@@ -32,6 +33,8 @@ class OnlineCheckoutRequest extends FormRequest
             'items.*.origin_lng' => 'required_without:items.*.origin_stop_id|nullable|numeric|between:-180,180',
             'items.*.destination_lat' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-90,90',
             'items.*.destination_lng' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-180,180',
+            'items.*.origin_label' => ['nullable', 'string', 'max:255'],
+            'items.*.destination_label' => ['nullable', 'string', 'max:255'],
 
             'payment_channel' => 'required|string|in:gcash,maya,card',
             'guest_email' => ['nullable', 'email'],
@@ -56,7 +59,7 @@ class OnlineCheckoutRequest extends FormRequest
             }
 
             $items = $this->input('items', []);
-            if (!is_array($items) || $items === []) {
+            if (! is_array($items) || $items === []) {
                 return;
             }
 
@@ -82,7 +85,7 @@ class OnlineCheckoutRequest extends FormRequest
                 $tripId = (int) ($item['trip_id'] ?? 0);
                 $tripDate = $tripDateById->get($tripId);
 
-                if (!$tripDate || $tripDate === $bookingDate) {
+                if (! $tripDate || $tripDate === $bookingDate) {
                     continue;
                 }
 

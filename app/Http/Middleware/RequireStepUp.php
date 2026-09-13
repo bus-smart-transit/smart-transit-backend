@@ -18,24 +18,48 @@ class RequireStepUp
 {
     public function handle(Request $request, Closure $next): Response
     {
+        // TEMPORARY dev-phase bypass — see config('app.disable_step_up').
+        // Double-gated: the flag alone is not enough, APP_ENV must also be
+        // "local", so this can never silently activate in staging/production.
+        // TODO(security): remove before any production/client-facing demo
+        // deployment. Tracked in SECURITY_AUDIT.md (STEPUP-01 / AUTH-02).
+        if (config('app.disable_step_up') && app()->environment('local')) {
+            return $next($request);
+        }
+
+        $user = $request->user();
+        if (! $user) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+                'step_up' => true,
+            ], 401);
+        }
+
         $rawToken = $request->header('X-Step-Up-Token');
 
-        if (!$rawToken) {
+        if (! $rawToken) {
             return response()->json([
                 'message' => 'Step-up authentication required.',
                 'step_up' => true,
             ], 403);
         }
 
-        $hash   = hash('sha256', $rawToken);
+        $hash = hash('sha256', $rawToken);
         $record = DB::table('step_up_tokens')
             ->where('token_hash', $hash)
             ->where('expires_at', '>', now())
             ->first();
 
-        if (!$record) {
+        if (! $record) {
             return response()->json([
                 'message' => 'Step-up token is invalid or has expired. Please re-authenticate.',
+                'step_up' => true,
+            ], 403);
+        }
+
+        if ((int) $record->user_id !== (int) $user->user_id) {
+            return response()->json([
+                'message' => 'Step-up token does not match the authenticated user.',
                 'step_up' => true,
             ], 403);
         }
@@ -45,4 +69,3 @@ class RequireStepUp
         return $next($request);
     }
 }
-

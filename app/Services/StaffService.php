@@ -83,6 +83,7 @@ class StaffService
             'name' => $payload['name'],
             'phone_num' => $payload['phone_num'],
             'address' => $payload['address'] ?? '',
+            'birth_date' => $payload['birth_date'] ?? null,
         ]);
 
         return ['user' => $user, 'profile' => $companyUser];

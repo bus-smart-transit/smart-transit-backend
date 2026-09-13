@@ -4,7 +4,6 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * Lets a route accept BOTH guests and authenticated passengers.
@@ -21,11 +20,16 @@ class OptionalSanctumAuth
         $token = $request->bearerToken();
 
         if ($token) {
-            $accessToken = PersonalAccessToken::findToken($token);
+            $user = $request->user('sanctum');
 
-            if ($accessToken && $accessToken->tokenable) {
-                auth()->setUser($accessToken->tokenable);
+            if (! $user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid or expired authentication token.',
+                ], 401);
             }
+
+            auth()->setUser($user);
         }
 
         return $next($request);

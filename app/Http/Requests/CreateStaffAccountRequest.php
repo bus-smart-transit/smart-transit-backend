@@ -7,13 +7,14 @@ class CreateStaffAccountRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name'      => 'required|string|max:255',
-            'email'     => 'required|email|unique:users,email',
-            'password'  => 'required|string|min:8',
-            'phone_num' => 'required|string',
-            'address'   => 'nullable|string',
-            'username'  => 'nullable|string|unique:users,username',
-            'role'      => 'required|string|in:operator,driver,conductor',
+            'name'       => 'required|string|max:255',
+            'email'      => 'required|email|unique:users,email',
+            'password'   => 'required|string|min:8',
+            'phone_num'  => 'required|string',
+            'address'    => 'required|string',
+            'birth_date' => 'nullable|date',
+            'username'   => 'nullable|string|unique:users,username',
+            'role'       => 'required|string|in:operator,driver,conductor',
         ];
     }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\PaymentService;
 use App\Services\PayMongoService;
+use App\Support\Database\RlsContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -12,8 +13,7 @@ class PayMongoController extends Controller
     public function __construct(
         private PayMongoService $payMongoService,
         private PaymentService $paymentService,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request)
     {
@@ -22,18 +22,20 @@ class PayMongoController extends Controller
 
         $event = $this->payMongoService->verifyAndConstructEvent($payload, $signature);
 
-        if (!$event) {
+        if (! $event) {
             return response()->json(['message' => 'Invalid signature'], 401);
         }
 
-        Log::info('PayMongo webhook received', ['type' => $event->type]);
+        RlsContext::withBypass(function () use ($event) {
+            Log::info('PayMongo webhook received', ['type' => $event->type]);
 
-        match ($event->type) {
-            'checkout_session.payment.paid' => $this->handleCheckoutPaid($event),
-            'payment.paid' => $this->handlePaymentPaid($event),
-            'payment.failed' => $this->handlePaymentFailed($event),
-            default => Log::info('Unhandled PayMongo event type', ['type' => $event->type]),
-        };
+            match ($event->type) {
+                'checkout_session.payment.paid' => $this->handleCheckoutPaid($event),
+                'payment.paid' => $this->handlePaymentPaid($event),
+                'payment.failed' => $this->handlePaymentFailed($event),
+                default => Log::info('Unhandled PayMongo event type', ['type' => $event->type]),
+            };
+        });
 
         return response()->json(['message' => 'Webhook processed'], 200);
     }
@@ -89,8 +91,9 @@ class PayMongoController extends Controller
 
         $payment = $sessionId ? $this->paymentService->findByGatewayReference($sessionId) : null;
 
-        if (!$payment) {
+        if (! $payment) {
             Log::warning('PayMongo webhook: no matching payment for checkout session.', ['session_id' => $sessionId]);
+
             return;
         }
 
@@ -114,8 +117,9 @@ class PayMongoController extends Controller
 
         $payment = $this->resolvePaymentFromMetadata($resource);
 
-        if (!$payment) {
+        if (! $payment) {
             Log::warning('PayMongo webhook: no matching payment for failed payment.', ['paymongo_payment_id' => $resource['id'] ?? null]);
+
             return;
         }
 
