@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\AssignConductorRequest;
 use App\Http\Requests\AssignDriverRequest;
 use App\Http\Requests\StoreTripRequest;
+use App\Http\Requests\UpdateTripStatusRequest;
 use App\Models\Trip;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
@@ -140,6 +141,34 @@ class TripController extends Controller
 
         return $this->success($result, 'Trip completed');
     }
+
+    // Operator / Admin: manually override a trip's status (e.g. driver
+    // forgot to mark it completed, or an admin resolving a no-show trip
+    // that never departed). Operators are restricted to completing an
+    // already-departed trip; admins can force any status.
+    public function overrideStatus(UpdateTripStatusRequest $request, int $tripId)
+    {
+        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+            return $denied;
+        }
+
+        $role = (string) ($request->user()->role ?? '');
+
+        [$trip, $previousStatus] = $this->tripService->overrideStatus(
+            $tripId,
+            $request->validated('status'),
+            $role,
+        );
+
+        AuditLogger::log('trip.status_override', 'Trip', $tripId, [
+            'from' => $previousStatus,
+            'to' => $trip->status,
+            'role' => $role,
+        ]);
+
+        return $this->success($trip, 'Trip status updated');
+    }
+
 
     // Driver: see today's assigned trips
     public function myTrips(Request $request)

@@ -127,6 +127,7 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
+        Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
 
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);
@@ -258,6 +259,7 @@ Route::prefix('admin')
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
+        Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
 
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);

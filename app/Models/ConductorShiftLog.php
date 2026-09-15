@@ -24,7 +24,7 @@ class ConductorShiftLog extends Model
     protected function casts(): array
     {
         return [
-            'shift_date' => 'date',
+            'shift_date' => 'date:Y-m-d',
             'started_at' => 'datetime',
             'ended_at' => 'datetime',
         ];

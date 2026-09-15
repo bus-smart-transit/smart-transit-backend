@@ -22,6 +22,29 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
+        // StoreTripRequest only checks driver_id/conductor_id exist as SOME
+        // company_users record (not their role) — validate the role here,
+        // the same way assignDriver()/assignConductor() already do, so a
+        // trip can never be created (and a PIN never generated for it) with
+        // a driver_id/conductor_id that isn't actually a driver/conductor.
+        if (! empty($payload['driver_id'])) {
+            $driver = $this->StaffRepository->findById($payload['driver_id']);
+            if (! $driver || $driver->user?->role !== 'driver') {
+                throw ValidationException::withMessages([
+                    'driver_id' => ['The selected user is not a driver.'],
+                ]);
+            }
+        }
+
+        if (! empty($payload['conductor_id'])) {
+            $conductor = $this->StaffRepository->findById($payload['conductor_id']);
+            if (! $conductor || $conductor->user?->role !== 'conductor') {
+                throw ValidationException::withMessages([
+                    'conductor_id' => ['The selected user is not a conductor.'],
+                ]);
+            }
+        }
+
         // current_* fields represent occupied slots; new trips must start at 0.
         $trip = $this->tripRepository->create(array_merge($payload, [
             'trip_type' => $payload['trip_type'] ?? 'one_way',
@@ -76,6 +99,46 @@ class TripService
         $this->tripRepository->updateStatus($tripId, 'completed');
 
         return $this->tripRepository->findById($tripId);
+    }
+
+    /**
+     * Operator/Admin manual status override (e.g. driver forgot to mark a
+     * trip completed, or a trip's scheduled time passed without ever
+     * departing and needs to be resolved).
+     *
+     * - Operator: may only force a trip to 'completed', and only if it has
+     *   already reached 'departed'/'in-progress' — covers "driver forgot to
+     *   complete it on their end", not trips that never actually ran.
+     * - Admin: full override — any status, from any current status —
+     *   covers trips that passed their scheduled time without ever
+     *   departing (no-shows) needing manual resolution.
+     *
+     * Returns [Trip $updatedTrip, string $previousStatus] so the caller can
+     * audit-log the transition.
+     */
+    public function overrideStatus(int $tripId, string $newStatus, string $requestingRole): array
+    {
+        $trip = $this->tripRepository->findById($tripId);
+
+        if (! $trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        $previousStatus = $trip->status;
+
+        if ($requestingRole === 'operator') {
+            $alreadyRan = in_array($previousStatus, ['departed', 'in-progress'], true);
+
+            if ($newStatus !== 'completed' || ! $alreadyRan) {
+                throw ValidationException::withMessages([
+                    'status' => ['Operators can only mark an already-departed trip as completed. Contact an admin for other status overrides.'],
+                ]);
+            }
+        }
+
+        $this->tripRepository->updateStatus($tripId, $newStatus);
+
+        return [$this->tripRepository->findById($tripId), $previousStatus];
     }
 
     public function assignDriver(int $tripId, array $payload): void

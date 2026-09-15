@@ -112,6 +112,145 @@ test('store validates required fields', function () {
         ->assertJsonValidationErrors(['fleet_route_id', 'trip_date']);
 });
 
+test('scheduling a trip rejects a non-driver as driver_id and does not create a PIN', function () {
+    $operator = makeStaffUser('operator');
+    $notADriver = makeStaffUser('conductor');
+    $conductor = makeStaffUser('conductor');
+    $fleetRoute = makeFleetRoute();
+
+    $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '08:30',
+        'trip_type' => 'one_way',
+        'driver_id' => $notADriver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+    ]);
+
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['driver_id']);
+
+    $this->assertDatabaseMissing('trips', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+    ]);
+    $this->assertDatabaseCount('fleet_daily_pins', 0);
+});
+
+test('scheduling a trip rejects a non-conductor as conductor_id and does not create a PIN', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $notAConductor = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+
+    $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '08:30',
+        'trip_type' => 'one_way',
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $notAConductor->companyProfile->company_user_id,
+    ]);
+
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['conductor_id']);
+
+    $this->assertDatabaseMissing('trips', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+    ]);
+    $this->assertDatabaseCount('fleet_daily_pins', 0);
+});
+
+test('scheduling a valid trip for today still auto-generates a PIN', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $conductor = makeStaffUser('conductor');
+    $fleetRoute = makeFleetRoute();
+
+    $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '08:30',
+        'trip_type' => 'one_way',
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+    ]);
+
+    $response->assertSuccessful();
+
+    $this->assertDatabaseHas('fleet_daily_pins', [
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+    ]);
+});
+
+test('FleetDailyPinService refuses to generate a PIN for IDs with the wrong roles even when called directly', function () {
+    $driver = makeStaffUser('driver');
+    $notAConductor = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+    $operator = makeStaffUser('operator');
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $pinService = app(\App\Services\FleetDailyPinService::class);
+
+    expect(fn () => $pinService->generateOrGet(
+        $trip->trip_id,
+        $driver->companyProfile->company_user_id,
+        $notAConductor->companyProfile->company_user_id,
+    ))->toThrow(\Illuminate\Validation\ValidationException::class);
+
+    $this->assertDatabaseCount('fleet_daily_pins', 0);
+});
+
+test('FleetDailyPinService::generateOrGet is idempotent for the same trip/day', function () {
+    // Regression test for FleetDailyPinRepository::findTodayByTrip() using
+    // ->whereDate('pin_date', ...) instead of an exact ->where(...) match —
+    // the exact-match version could fail to find an already-created PIN if
+    // pin_date ever carried a time component, causing a second call to
+    // attempt a duplicate insert and violate the (trip_id, pin_date) unique
+    // constraint instead of returning the existing row.
+    $driver = makeStaffUser('driver');
+    $conductor = makeStaffUser('conductor');
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $pinService = app(\App\Services\FleetDailyPinService::class);
+
+    $first = $pinService->generateOrGet(
+        $trip->trip_id,
+        $driver->companyProfile->company_user_id,
+        $conductor->companyProfile->company_user_id,
+    );
+
+    $second = $pinService->generateOrGet(
+        $trip->trip_id,
+        $driver->companyProfile->company_user_id,
+        $conductor->companyProfile->company_user_id,
+    );
+
+    expect($second->id)->toBe($first->id);
+    expect($second->pin_code)->toBe($first->pin_code);
+    $this->assertDatabaseCount('fleet_daily_pins', 1);
+});
+
 test('operator can schedule a round trip with required departure time', function () {
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
@@ -406,6 +545,138 @@ test('driver can complete a trip', function () {
     $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'completed']);
 });
 
+// ─── Manual status override (S1) ─────────────────────────────────────────────
+
+test('operator can mark an already-departed trip as completed via status override', function () {
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'departed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/status", [
+        'status' => 'completed',
+    ])->assertSuccessful()
+        ->assertJsonPath('message', 'Trip status updated');
+
+    $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'completed']);
+    $this->assertDatabaseHas('audit_logs', ['action' => 'trip.status_override']);
+});
+
+test('operator cannot override status of a trip that never departed', function () {
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->subDay()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/status", [
+        'status' => 'completed',
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['status']);
+
+    $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'scheduled']);
+});
+
+test('operator cannot override a trip to cancelled', function () {
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'departed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/status", [
+        'status' => 'cancelled',
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['status']);
+});
+
+test('operator cannot override status of a trip belonging to another operator', function () {
+    $operator = makeStaffUser('operator');
+    $otherOperator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $otherOperator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'departed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/status", [
+        'status' => 'completed',
+    ])->assertStatus(403);
+});
+
+test('admin can force any status override on a trip that never departed', function () {
+    $admin = makeStaffUser('admin');
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->subDay()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($admin)->patchJson("/api/admin/trips/{$trip->trip_id}/status", [
+        'status' => 'cancelled',
+    ])->assertSuccessful();
+
+    $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'cancelled']);
+    $this->assertDatabaseHas('audit_logs', [
+        'action' => 'trip.status_override',
+    ]);
+});
+
+test('status override rejects an invalid status value', function () {
+    $operator = makeStaffUser('operator');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'departed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/status", [
+        'status' => 'not-a-real-status',
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['status']);
+});
+
 test('operator trips endpoint supports completed and scheduled-active filters', function () {
     $operator = makeStaffUser('operator');
     $fleetRoute = makeFleetRoute();
@@ -507,6 +778,34 @@ test('public available trips can include same-day scheduled trip by requested da
     $this->getJson('/api/trips?trip_date='.now()->toDateString())
         ->assertSuccessful()
         ->assertJsonFragment(['trip_id' => $trip->trip_id]);
+});
+
+test('trip_date serializes as a plain calendar date, not shifted by UTC conversion', function () {
+    // Regression test: Trip::trip_date is cast as a pure date (no time-of-day
+    // meaning). The old bare 'date' cast serialized it via Carbon's UTC-based
+    // toJSON(), which shifted an Asia/Manila midnight backward by 8 hours —
+    // rendering as the PREVIOUS calendar day once the date-only prefix was
+    // read on the frontend. 'date:Y-m-d' must serialize as a plain,
+    // timezone-agnostic "YYYY-MM-DD" string that exactly matches storage.
+    $fleetRoute = makeFleetRoute();
+    $operator = makeStaffUser('operator');
+    $futureDate = now()->addDays(5)->toDateString();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => $futureDate,
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->getJson('/api/trips?trip_date='.$futureDate)
+        ->assertSuccessful()
+        ->assertJsonPath('data.0.trip_date', $futureDate);
+
+    expect($trip->fresh()->getRawOriginal('trip_date'))->toBe($futureDate);
 });
 
 test('operator upcoming trips excludes trips whose scheduled datetime has already passed', function () {

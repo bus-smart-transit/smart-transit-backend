@@ -81,7 +81,7 @@ class Trip extends Model
     protected function casts(): array
     {
         return [
-            'trip_date' => 'date',
+            'trip_date' => 'date:Y-m-d',
         ];
     }
 
