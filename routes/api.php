@@ -18,6 +18,7 @@ use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TripController;
+use App\Http\Controllers\TripNotificationController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -139,6 +140,11 @@ Route::prefix('operator')
 
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);
+
+        // S2 (Batch 12): Operator-facing notification feed (currently: trip declines)
+        Route::get('notifications', [TripNotificationController::class, 'index']);
+        Route::patch('notifications/{id}/read', [TripNotificationController::class, 'markRead']);
+        Route::patch('notifications/read-all', [TripNotificationController::class, 'markAllRead']);
     });
 
 // DRIVER
@@ -160,6 +166,7 @@ Route::prefix('driver')
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
+        Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsDriver']);
 
         Route::middleware('paired:driver')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripDriver']);
@@ -195,6 +202,7 @@ Route::prefix('conductor')
         Route::get('shift/status', [ConductorShiftController::class, 'status']);
         Route::post('shift/start', [ConductorShiftController::class, 'start']);
         Route::post('shift/end', [ConductorShiftController::class, 'end']);
+        Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsConductor']);
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);

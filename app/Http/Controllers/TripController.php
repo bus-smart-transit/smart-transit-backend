@@ -169,6 +169,59 @@ class TripController extends Controller
         return $this->success($trip, 'Trip status updated');
     }
 
+    // Driver: decline their assigned trip — returns to the unassigned pool
+    // for the Operator to manually reassign. Reason is optional.
+    public function declineAsDriver(Request $request, int $tripId)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $validated = $request->validate([
+            'reason_code' => ['nullable', 'string', 'in:sick,vehicle_issue,schedule_conflict,other'],
+            'reason_text' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $trip = $this->tripService->declineTrip(
+            $tripId,
+            'driver',
+            $companyUser->company_user_id,
+            $validated['reason_code'] ?? null,
+            $validated['reason_text'] ?? null,
+        );
+
+        AuditLogger::log('trip.decline', 'Trip', $tripId, array_merge(['role' => 'driver'], $validated));
+
+        return $this->success($trip, 'Trip declined. It has been returned to the unassigned pool.');
+    }
+
+    // Conductor: decline their assigned trip — same rules as the driver path.
+    public function declineAsConductor(Request $request, int $tripId)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $validated = $request->validate([
+            'reason_code' => ['nullable', 'string', 'in:sick,vehicle_issue,schedule_conflict,other'],
+            'reason_text' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $trip = $this->tripService->declineTrip(
+            $tripId,
+            'conductor',
+            $companyUser->company_user_id,
+            $validated['reason_code'] ?? null,
+            $validated['reason_text'] ?? null,
+        );
+
+        AuditLogger::log('trip.decline', 'Trip', $tripId, array_merge(['role' => 'conductor'], $validated));
+
+        return $this->success($trip, 'Trip declined. It has been returned to the unassigned pool.');
+    }
+
 
     // Driver: see today's assigned trips
     public function myTrips(Request $request)

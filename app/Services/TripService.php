@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Repositories\ConductorShiftLogRepository;
 use App\Repositories\DriverShiftLogRepository;
+use App\Repositories\FleetDailyPinRepository;
 use App\Repositories\StaffRepository;
+use App\Repositories\TripNotificationRepository;
 use App\Repositories\TripRepository;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +18,8 @@ class TripService
         private TripRepository $tripRepository,
         private StaffRepository $StaffRepository,
         private FleetDailyPinService $pinService,
+        private FleetDailyPinRepository $pinRepository,
+        private TripNotificationRepository $notificationRepository,
         private DriverShiftLogRepository $driverShiftLogRepository,
         private ConductorShiftLogRepository $conductorShiftLogRepository,
     ) {}
@@ -139,6 +143,68 @@ class TripService
         $this->tripRepository->updateStatus($tripId, $newStatus);
 
         return [$this->tripRepository->findById($tripId), $previousStatus];
+    }
+
+    /**
+     * S2 (Batch 12): a Driver or Chauffeur (conductor) declines their
+     * assignment on a trip that hasn't departed yet. The trip returns to
+     * the unassigned pool (only the declining role's assignment is
+     * cleared — no automatic reassignment) for the Operator to manually
+     * reassign. Reason is optional (plain decline is enough; a reason
+     * code/text may be supplied for the Operator's context).
+     *
+     * Returns the refreshed Trip. Caller (controller) is responsible for
+     * audit-logging the action — this method only owns the state change +
+     * the Operator-facing notification.
+     */
+    public function declineTrip(int $tripId, string $role, int $staffCompanyUserId, ?string $reasonCode = null, ?string $reasonText = null): object
+    {
+        if (! in_array($role, ['driver', 'conductor'], true)) {
+            throw ValidationException::withMessages(['role' => ['Only a driver or conductor can decline a trip.']]);
+        }
+
+        $trip = $this->tripRepository->findById($tripId);
+        if (! $trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        if (! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
+            throw ValidationException::withMessages([
+                'status' => ['This trip has already departed and can no longer be declined.'],
+            ]);
+        }
+
+        $assignedId = $role === 'driver' ? $trip->driver_id : $trip->conductor_id;
+        if ((int) $assignedId !== $staffCompanyUserId) {
+            throw ValidationException::withMessages([
+                'trip' => ['You are not the assigned '.$role.' for this trip.'],
+            ]);
+        }
+
+        if ($role === 'driver') {
+            $this->tripRepository->clearDriver($tripId);
+        } else {
+            $this->tripRepository->clearConductor($tripId);
+        }
+
+        // Stale — it was generated for a driver+conductor pair that no
+        // longer both hold their assignment.
+        $this->pinRepository->deleteTodayByTrip($tripId);
+
+        $staff = $this->StaffRepository->findById($staffCompanyUserId);
+        $staffName = $staff?->name ?: ucfirst($role);
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Unassigned route';
+        $reasonSuffix = $reasonText ? " Reason: {$reasonText}" : ($reasonCode ? ' Reason: '.str_replace('_', ' ', $reasonCode) : '');
+
+        $this->notificationRepository->create([
+            'trip_id' => $tripId,
+            'type' => 'trip_declined',
+            'title' => "Trip #{$tripId} declined by ".ucfirst($role),
+            'message' => "{$staffName} declined the {$role} assignment for {$routeName} on {$trip->trip_date}.{$reasonSuffix} The trip is now unassigned and needs a replacement.",
+            'actor_company_user_id' => $staffCompanyUserId,
+        ]);
+
+        return $this->tripRepository->findById($tripId);
     }
 
     public function assignDriver(int $tripId, array $payload): void

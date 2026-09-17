@@ -40,4 +40,17 @@ class FleetDailyPinRepository
         $pin->save();
         return $pin->fresh();
     }
+
+    /**
+     * S2 (Batch 12): a decline invalidates today's PIN — it was generated
+     * for a driver+conductor pair that no longer both hold their
+     * assignment, so it must not remain usable by the staff member who
+     * stayed on the trip.
+     */
+    public function deleteTodayByTrip(int $tripId): bool
+    {
+        return FleetDailyPin::where('trip_id', $tripId)
+            ->whereDate('pin_date', Carbon::today())
+            ->delete() > 0;
+    }
 }

@@ -873,3 +873,159 @@ test('conductor_id is mass-assignable on Trip', function () {
         'conductor_id' => $conductor->companyProfile->company_user_id,
     ]);
 });
+
+// ─── S2 (Batch 12): decline assigned trip ────────────────────────────────────
+
+test('driver can decline their assigned trip, returning it to the unassigned pool', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $conductor = makeStaffUser('conductor');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    \App\Models\FleetDailyPin::create([
+        'trip_id' => $trip->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'pin_code' => '123456',
+        'pin_date' => now()->toDateString(),
+    ]);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", [
+        'reason_code' => 'sick',
+    ])->assertSuccessful()
+        ->assertJsonPath('message', 'Trip declined. It has been returned to the unassigned pool.');
+
+    $this->assertDatabaseHas('trips', [
+        'trip_id' => $trip->trip_id,
+        'driver_id' => null,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'status' => 'scheduled',
+    ]);
+    $this->assertDatabaseMissing('fleet_daily_pins', ['trip_id' => $trip->trip_id]);
+    $this->assertDatabaseHas('audit_logs', ['action' => 'trip.decline']);
+    $this->assertDatabaseHas('trip_notifications', [
+        'trip_id' => $trip->trip_id,
+        'type' => 'trip_declined',
+    ]);
+});
+
+test('conductor can decline their assigned trip', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $conductor = makeStaffUser('conductor');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'delayed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($conductor)->patchJson("/api/conductor/trips/{$trip->trip_id}/decline")
+        ->assertSuccessful();
+
+    $this->assertDatabaseHas('trips', [
+        'trip_id' => $trip->trip_id,
+        'conductor_id' => null,
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ]);
+});
+
+test('a staff member who is not the assigned driver cannot decline the trip', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $otherDriver = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($otherDriver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline")
+        ->assertStatus(422);
+
+    $this->assertDatabaseHas('trips', [
+        'trip_id' => $trip->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ]);
+});
+
+test('a trip that has already departed can no longer be declined', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'departed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline")
+        ->assertStatus(422);
+
+    $this->assertDatabaseHas('trips', ['trip_id' => $trip->trip_id, 'status' => 'departed']);
+});
+
+test('operator can list and mark trip decline notifications as read', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+
+    $trip = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline")
+        ->assertSuccessful();
+
+    $response = $this->actingAs($operator)->getJson('/api/operator/notifications')
+        ->assertSuccessful()
+        ->assertJsonPath('data.unread_count', 1);
+
+    $notificationId = $response->json('data.notifications.0.id');
+
+    $this->actingAs($operator)->patchJson("/api/operator/notifications/{$notificationId}/read")
+        ->assertSuccessful();
+
+    $this->actingAs($operator)->getJson('/api/operator/notifications')
+        ->assertSuccessful()
+        ->assertJsonPath('data.unread_count', 0);
+});

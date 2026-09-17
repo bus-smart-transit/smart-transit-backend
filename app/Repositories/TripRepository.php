@@ -149,6 +149,24 @@ class TripRepository
             ->update(['conductor_id' => $conductorCompanyUserId]) > 0;
     }
 
+    /**
+     * S2 (Batch 12): a driver/conductor declining their assignment returns
+     * the trip to the unassigned pool for the Operator to manually
+     * reassign — the trip itself keeps its current status, only the
+     * declined role's assignment is cleared.
+     */
+    public function clearDriver(int $tripId): bool
+    {
+        return Trip::where('trip_id', $tripId)
+            ->update(['driver_id' => null]) > 0;
+    }
+
+    public function clearConductor(int $tripId): bool
+    {
+        return Trip::where('trip_id', $tripId)
+            ->update(['conductor_id' => null]) > 0;
+    }
+
     public function updateDispatchDecision(int $tripId, string $decision, ?string $route = null, ?string $reason = null): bool
     {
         return Trip::where('trip_id', $tripId)->update([
