@@ -24,4 +24,16 @@ class FleetRepository
     {
         return Fleet::where('fleet_id', $fleetId)->update($payload) > 0;
     }
+
+    /**
+     * IDOR guard: does this fleet belong to the given operator?
+     * Moved here from inline Model::where()->exists() checks duplicated
+     * across several controllers (FareRuleController, ReportingController).
+     */
+    public function isOwnedByOperator(int $fleetId, int $companyUserId): bool
+    {
+        return Fleet::where('fleet_id', $fleetId)
+            ->where('company_user_id', $companyUserId)
+            ->exists();
+    }
 }

@@ -49,11 +49,13 @@ class User extends Authenticatable
         'password',
         'role',
         'two_factor_enabled',
+        'fcm_token',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'fcm_token',
     ];
 
     protected function casts(): array

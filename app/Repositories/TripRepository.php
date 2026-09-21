@@ -137,16 +137,32 @@ class TripRepository
         return Trip::where('trip_id', $tripId)->update(['status' => $status]) > 0;
     }
 
-    public function assignDriver(int $tripId, int $driverCompanyUserId): bool
+    /**
+     * IDOR guard: does this trip belong to the given operator?
+     * Moved here from inline Trip::where()->exists() checks duplicated
+     * across several controllers (TripController, FleetLocationController).
+     */
+    public function isOwnedByOperator(int $tripId, int $companyUserId): bool
     {
         return Trip::where('trip_id', $tripId)
-            ->update(['driver_id' => $driverCompanyUserId]) > 0;
+            ->where('company_user_id', $companyUserId)
+            ->exists();
+    }
+
+    public function assignDriver(int $tripId, int $driverCompanyUserId): bool
+    {
+        // Batch 15, Item 1: reassigning the driver (including re-assigning
+        // the SAME driver after a decline/clear) always resets acceptance —
+        // a driver must explicitly accept every assignment, not just the
+        // first one they were ever given for this trip.
+        return Trip::where('trip_id', $tripId)
+            ->update(['driver_id' => $driverCompanyUserId, 'driver_accepted_at' => null]) > 0;
     }
 
     public function assignConductor(int $tripId, int $conductorCompanyUserId): bool
     {
         return Trip::where('trip_id', $tripId)
-            ->update(['conductor_id' => $conductorCompanyUserId]) > 0;
+            ->update(['conductor_id' => $conductorCompanyUserId, 'conductor_accepted_at' => null]) > 0;
     }
 
     /**
@@ -158,13 +174,28 @@ class TripRepository
     public function clearDriver(int $tripId): bool
     {
         return Trip::where('trip_id', $tripId)
-            ->update(['driver_id' => null]) > 0;
+            ->update(['driver_id' => null, 'driver_accepted_at' => null]) > 0;
     }
 
     public function clearConductor(int $tripId): bool
     {
         return Trip::where('trip_id', $tripId)
-            ->update(['conductor_id' => null]) > 0;
+            ->update(['conductor_id' => null, 'conductor_accepted_at' => null]) > 0;
+    }
+
+    /**
+     * Batch 15, Item 1: explicit Accept counterpart to decline/clear above.
+     * Does not touch driver_id/conductor_id — the assignment already exists;
+     * this only records the staff member's acknowledgement of it.
+     */
+    public function markDriverAccepted(int $tripId): bool
+    {
+        return Trip::where('trip_id', $tripId)->update(['driver_accepted_at' => now()]) > 0;
+    }
+
+    public function markConductorAccepted(int $tripId): bool
+    {
+        return Trip::where('trip_id', $tripId)->update(['conductor_accepted_at' => now()]) > 0;
     }
 
     public function updateDispatchDecision(int $tripId, string $decision, ?string $route = null, ?string $reason = null): bool
@@ -366,6 +397,33 @@ class TripRepository
     private function serviceToday(): Carbon
     {
         return Carbon::today(config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * Trips already flipped to 'delayed' (by any of the read-time call
+     * sites above) that have not yet had a passenger notification sent.
+     * Scoped to today only — a trip's delayed notification is only ever
+     * relevant same-day.
+     */
+    public function findDelayedTripsPendingNotification(): Collection
+    {
+        return Trip::with('fleetRoute.route')
+            ->where('status', 'delayed')
+            ->whereNull('delay_notified_at')
+            ->whereDate('trip_date', $this->serviceToday())
+            ->get();
+    }
+
+    /**
+     * Atomically claims a trip's delayed-notification slot. The `whereNull`
+     * guard means only one caller can ever succeed for a given trip, making
+     * this safe to call from an overlapping scheduled command run.
+     */
+    public function markDelayNotified(int $tripId): bool
+    {
+        return Trip::where('trip_id', $tripId)
+            ->whereNull('delay_notified_at')
+            ->update(['delay_notified_at' => now()]) > 0;
     }
 
     public function markOverdueScheduledAsDelayed(?int $operatorCompanyUserId = null): int

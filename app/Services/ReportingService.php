@@ -6,6 +6,7 @@ use App\Repositories\FleetRepository;
 use App\Repositories\ReportingRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 class ReportingService
@@ -140,5 +141,23 @@ class ReportingService
     private function isValidDate(string $date): bool
     {
         return preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) && strtotime($date) !== false;
+    }
+
+    /**
+     * List audit log entries. Moved here from a route closure in
+     * routes/api.php so the routing layer stays free of data access.
+     */
+    public function listAuditLogs(array $filters, int $limit = 100): Collection
+    {
+        return $this->reportingRepository->getAuditLogs($filters, min($limit, 500));
+    }
+
+    /**
+     * List stored (nightly generated) reports. Moved here from a route
+     * closure in routes/api.php so the routing layer stays free of data access.
+     */
+    public function listStoredReports(array $filters, int $limit = 100): Collection
+    {
+        return $this->reportingRepository->getStoredReports($filters, min($limit, 500));
     }
 }

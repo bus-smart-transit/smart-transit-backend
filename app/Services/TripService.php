@@ -6,6 +6,7 @@ use App\Repositories\ConductorShiftLogRepository;
 use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\FleetDailyPinRepository;
 use App\Repositories\StaffRepository;
+use App\Repositories\TicketRepository;
 use App\Repositories\TripNotificationRepository;
 use App\Repositories\TripRepository;
 use Illuminate\Support\Carbon;
@@ -22,7 +23,18 @@ class TripService
         private TripNotificationRepository $notificationRepository,
         private DriverShiftLogRepository $driverShiftLogRepository,
         private ConductorShiftLogRepository $conductorShiftLogRepository,
+        private TicketRepository $ticketRepository,
+        private FcmService $fcmService,
     ) {}
+
+    /**
+     * IDOR guard used by controllers before allowing an operator to act on
+     * or view data scoped to a trip.
+     */
+    public function isOwnedByOperator(int $tripId, int $companyUserId): bool
+    {
+        return $this->tripRepository->isOwnedByOperator($tripId, $companyUserId);
+    }
 
     public function scheduleTrip(array $payload): object
     {
@@ -66,6 +78,31 @@ class TripService
                 $trip->trip_id,
                 $trip->driver_id,
                 $trip->conductor_id,
+            );
+        }
+
+        // Follow-up fix (caught by the user asking "does trip creation also
+        // notify the assigned driver/conductor?"): assignDriver()/
+        // assignConductor() push a notification, but scheduleTrip() creates
+        // the trip with driver_id/conductor_id already set directly in the
+        // payload — the normal way an Operator schedules a trip — and never
+        // routed through those methods. Without this, a newly-created trip
+        // with both roles assigned up front sent no notification at all.
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'a trip';
+        if (! empty($trip->driver_id) && isset($driver)) {
+            $this->fcmService->sendToUser(
+                $driver->user,
+                'New Trip Assignment',
+                "You've been assigned to {$routeName} on {$trip->trip_date}.",
+                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+            );
+        }
+        if (! empty($trip->conductor_id) && isset($conductor)) {
+            $this->fcmService->sendToUser(
+                $conductor->user,
+                'New Trip Assignment',
+                "You've been assigned to {$routeName} on {$trip->trip_date}.",
+                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
             );
         }
 
@@ -142,7 +179,84 @@ class TripService
 
         $this->tripRepository->updateStatus($tripId, $newStatus);
 
+        // Notifications audit follow-up: passengers who already paid for a
+        // now-cancelled trip previously got no notification at all.
+        if ($newStatus === 'cancelled') {
+            $this->notifyPassengersOfCancellation($trip);
+        }
+
         return [$this->tripRepository->findById($tripId), $previousStatus];
+    }
+
+    private function notifyPassengersOfCancellation(object $trip): void
+    {
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
+        $passengers = $this->ticketRepository->findActivePassengersForTrip($trip->trip_id);
+
+        foreach ($passengers as $passenger) {
+            if (! $passenger->user) {
+                continue;
+            }
+
+            $this->fcmService->sendToUser(
+                $passenger->user,
+                'Trip Cancelled',
+                "{$routeName} on {$trip->trip_date} has been cancelled. Please contact support for a refund or rebooking.",
+                ['type' => 'trip_cancelled', 'trip_id' => $trip->trip_id],
+            );
+        }
+    }
+
+    /**
+     * Notifications audit follow-up (auto-delay item): notifies passengers
+     * of trips that have been auto-marked 'delayed'.
+     *
+     * Deliberately NOT called from markOverdueScheduledAsDelayed() or any
+     * of its 10+ read-time call sites — that method's status flip has no
+     * single authoritative caller, so notifying there would risk duplicate
+     * sends across overlapping requests. Instead, this is driven by a
+     * dedicated scheduled command (trips:notify-delayed) that polls for
+     * trips already in 'delayed' status with a null delay_notified_at, and
+     * atomically claims each one via TripRepository::markDelayNotified()
+     * before sending — safe even if the command run overlaps itself.
+     *
+     * Returns the number of trips actually notified.
+     */
+    public function notifyDelayedTrips(): int
+    {
+        $trips = $this->tripRepository->findDelayedTripsPendingNotification();
+        $notified = 0;
+
+        foreach ($trips as $trip) {
+            if (! $this->tripRepository->markDelayNotified($trip->trip_id)) {
+                // Another run already claimed this trip — skip.
+                continue;
+            }
+
+            $this->notifyPassengersOfDelay($trip);
+            $notified++;
+        }
+
+        return $notified;
+    }
+
+    private function notifyPassengersOfDelay(object $trip): void
+    {
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
+        $passengers = $this->ticketRepository->findActivePassengersForTrip($trip->trip_id);
+
+        foreach ($passengers as $passenger) {
+            if (! $passenger->user) {
+                continue;
+            }
+
+            $this->fcmService->sendToUser(
+                $passenger->user,
+                'Trip Delayed',
+                "{$routeName} on {$trip->trip_date} is running late. We'll update you as soon as it departs.",
+                ['type' => 'trip_delayed', 'trip_id' => $trip->trip_id],
+            );
+        }
     }
 
     /**
@@ -204,6 +318,76 @@ class TripService
             'actor_company_user_id' => $staffCompanyUserId,
         ]);
 
+        // Follow-up (caught during the notifications audit): a decline is
+        // arguably MORE urgent than a new assignment — the Operator needs
+        // to find a replacement before departure — yet it previously only
+        // reached the Operator via the 45-second-poll in-app feed above.
+        // Push it immediately too, same as assignment/acceptance.
+        $operatorUser = $trip->companyUser?->user;
+        if ($operatorUser) {
+            $this->fcmService->sendToUser(
+                $operatorUser,
+                'Trip Declined — Needs Replacement',
+                "{$staffName} declined the {$role} assignment for {$routeName} on {$trip->trip_date}.{$reasonSuffix}",
+                ['type' => 'trip_declined', 'trip_id' => $tripId],
+            );
+        }
+
+        return $this->tripRepository->findById($tripId);
+    }
+
+    /**
+     * Batch 15, Item 1: explicit Accept counterpart to declineTrip() above.
+     * Records the assigned driver/conductor's acknowledgement of the trip
+     * without altering the assignment itself. Same eligibility rules as
+     * decline (must be the assigned staff member, trip not yet departed).
+     */
+    public function acceptTrip(int $tripId, string $role, int $staffCompanyUserId): object
+    {
+        if (! in_array($role, ['driver', 'conductor'], true)) {
+            throw ValidationException::withMessages(['role' => ['Only a driver or conductor can accept a trip.']]);
+        }
+
+        $trip = $this->tripRepository->findById($tripId);
+        if (! $trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        if (! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
+            throw ValidationException::withMessages([
+                'status' => ['This trip has already departed and can no longer be accepted.'],
+            ]);
+        }
+
+        $assignedId = $role === 'driver' ? $trip->driver_id : $trip->conductor_id;
+        if ((int) $assignedId !== $staffCompanyUserId) {
+            throw ValidationException::withMessages([
+                'trip' => ['You are not the assigned '.$role.' for this trip.'],
+            ]);
+        }
+
+        if ($role === 'driver') {
+            $this->tripRepository->markDriverAccepted($tripId);
+        } else {
+            $this->tripRepository->markConductorAccepted($tripId);
+        }
+
+        // Follow-up (caught during the notifications audit): previously
+        // acceptance notified no one at all — the Operator had zero
+        // visibility into whether an assignment was acknowledged.
+        $staff = $this->StaffRepository->findById($staffCompanyUserId);
+        $staffName = $staff?->name ?: ucfirst($role);
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Unassigned route';
+        $operatorUser = $trip->companyUser?->user;
+        if ($operatorUser) {
+            $this->fcmService->sendToUser(
+                $operatorUser,
+                'Trip Assignment Accepted',
+                "{$staffName} accepted the {$role} assignment for {$routeName} on {$trip->trip_date}.",
+                ['type' => 'trip_accepted', 'trip_id' => $tripId],
+            );
+        }
+
         return $this->tripRepository->findById($tripId);
     }
 
@@ -228,6 +412,19 @@ class TripService
                 $trip->conductor_id,
             );
         }
+
+        // Batch 15, Item 2: push notification on new trip assignment.
+        // Fire-and-forget — a failed/unconfigured push must never break
+        // trip assignment itself (see FcmService's fail-soft design).
+        if ($trip && $driver->user) {
+            $routeName = $trip->fleetRoute?->route?->route_name ?? 'a trip';
+            $this->fcmService->sendToUser(
+                $driver->user,
+                'New Trip Assignment',
+                "You've been assigned to {$routeName} on {$trip->trip_date}.",
+                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+            );
+        }
     }
 
     public function assignConductor(int $tripId, array $payload): void
@@ -249,6 +446,21 @@ class TripService
                 $trip->trip_id,
                 $trip->driver_id,
                 $payload['conductor_id'],
+            );
+        }
+
+        // Batch 15, Item 2 (extended to Conductor for symmetry with
+        // assignDriver() above — the original spec only mentioned "driver",
+        // but leaving the Conductor unnotified while Driver, Accept/Reject,
+        // and Available-toggle are all symmetric across both roles would be
+        // an inconsistent, easily-missed gap).
+        if ($trip && $conductor->user) {
+            $routeName = $trip->fleetRoute?->route?->route_name ?? 'a trip';
+            $this->fcmService->sendToUser(
+                $conductor->user,
+                'New Trip Assignment',
+                "You've been assigned to {$routeName} on {$trip->trip_date}.",
+                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
             );
         }
     }

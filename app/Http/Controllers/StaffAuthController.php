@@ -1,6 +1,8 @@
 <?php
 namespace App\Http\Controllers;
 use App\Services\StaffService;
+use App\Services\FcmService;
+use App\Services\StepUpService;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\CreateStaffAccountRequest;
 use App\Traits\ApiResponse;
@@ -8,7 +10,6 @@ use App\Mail\PassengerOtpMail;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
@@ -18,8 +19,10 @@ use Illuminate\Validation\ValidationException;
 class StaffAuthController extends Controller
 {
     use ApiResponse;
-    public function __construct(private StaffService $staffService)
-    {
+    public function __construct(
+        private StaffService $staffService,
+        private StepUpService $stepUpService,
+    ) {
     }
 
     public function login(LoginRequest $request)
@@ -116,6 +119,50 @@ class StaffAuthController extends Controller
         ], '2FA preference updated successfully.');
     }
 
+    // Batch 15, Items 4/9: "Available" toggle — distinct from shift/pairing
+    // state. A Driver or Conductor can mark themselves available for
+    // extra/ad-hoc assignment independent of whether they're currently
+    // on-shift or paired. Visible to Operators via listDrivers()/
+    // listConductors() (StaffUser attributes are returned as-is, so no
+    // extra wiring is needed there once the columns exist).
+    public function updateAvailability(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        if (! in_array($request->user()->role, ['driver', 'conductor'], true)) {
+            return $this->error('Availability status only applies to drivers and conductors.', 403);
+        }
+
+        $validated = $request->validate([
+            'available' => 'required|boolean',
+        ]);
+
+        $companyUser->forceFill([
+            'is_available' => $validated['available'],
+            'available_since' => $validated['available'] ? now() : null,
+        ])->save();
+
+        return $this->success([
+            'is_available' => (bool) $companyUser->is_available,
+            'available_since' => $companyUser->available_since,
+        ], 'Availability status updated successfully.');
+    }
+
+    // Batch 15, Items 2/3: register/overwrite this user's FCM device token.
+    public function registerFcmToken(Request $request, FcmService $fcmService)
+    {
+        $validated = $request->validate([
+            'token' => 'required|string|max:4096',
+        ]);
+
+        $fcmService->registerToken($request->user(), $validated['token']);
+
+        return $this->success(null, 'Push notification token registered.');
+    }
+
     // ── Step-up re-authentication ─────────────────────────────────────────
 
     /**
@@ -176,22 +223,11 @@ class StaffAuthController extends Controller
         Cache::forget($cacheKey);
         RateLimiter::clear($rateLimitKey);
 
-        // Purge any existing step-up tokens for this user before issuing a new one
-        DB::table('step_up_tokens')
-            ->where('user_id', $user->user_id)
-            ->delete();
-
-        $rawToken = bin2hex(random_bytes(32));
-        DB::table('step_up_tokens')->insert([
-            'user_id'    => $user->user_id,
-            'token_hash' => hash('sha256', $rawToken),
-            'expires_at' => now()->addMinutes(15),
-            'created_at' => now(),
-        ]);
+        $rawToken = $this->stepUpService->issueToken($user->user_id);
 
         return $this->success([
             'step_up_token' => $rawToken,
-            'expires_in'    => 900, // seconds
+            'expires_in'    => $this->stepUpService->ttlSeconds(),
         ], 'Step-up verified. Token valid for 15 minutes.');
     }
 

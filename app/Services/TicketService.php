@@ -35,7 +35,7 @@ class TicketService
     {
         $trip = $this->tripRepository->findById($item['trip_id']);
 
-        if (! $trip || ! in_array($trip->status, ['scheduled', 'boarding'])) {
+        if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
             throw ValidationException::withMessages([
                 'trip' => ['This trip is not accepting tickets.'],
             ]);
@@ -373,14 +373,7 @@ class TicketService
      */
     public function getTripEarnings(int $tripId): array
     {
-        $tickets = Ticket::with('payment')
-            ->where('trip_id', $tripId)
-            ->whereIn('status', ['valid', 'boarded', 'alighted'])
-            ->whereHas('payment', function ($query) {
-                $query->where('status', 'paid')
-                    ->where('is_valid', true);
-            })
-            ->get();
+        $tickets = $this->ticketRepository->findPaidTicketsWithPaymentForTrip($tripId);
 
         $totalFare = 0.0;
         $onsiteAmount = 0.0;

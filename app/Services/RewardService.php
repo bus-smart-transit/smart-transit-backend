@@ -7,7 +7,9 @@ use Illuminate\Support\Facades\DB;
 
 class RewardService
 {
-    private const PESOS_PER_POINT = 20; // 1 point per ₱20 spent
+    // Public: ReportingRepository needs this to convert redeemed points back
+    // into a peso value for financial reporting (see getPaymentChannelBreakdown()).
+    public const PESOS_PER_POINT = 20; // 1 point per ₱20 spent
 
     public function __construct(private RewardRepository $rewardRepository)
     {

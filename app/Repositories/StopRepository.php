@@ -32,6 +32,16 @@ class StopRepository
         return Stop::where('stop_id', $stopId)->delete() > 0;
     }
 
+    /**
+     * Returns a [stop_id => stop_name] map for the given IDs.
+     */
+    public function getNamesByIds(array $stopIds): Collection
+    {
+        return Stop::query()
+            ->whereIn('stop_id', array_values(array_unique($stopIds)))
+            ->pluck('stop_name', 'stop_id');
+    }
+
     public function findNearestStop(
         float $lat,
         float $lng,

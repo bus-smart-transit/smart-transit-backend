@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\LoginRequest;
 use App\Http\Resources\PassengerResource;
+use App\Services\FcmService;
 use App\Services\UserService;
 use App\Traits\ApiResponse;
 use Illuminate\Auth\Events\PasswordReset;
@@ -133,6 +134,19 @@ class AuthController extends Controller
             ['two_factor_enabled' => (bool) $request->user()->two_factor_enabled],
             '2FA preference updated successfully.'
         );
+    }
+
+    // Passenger: register/overwrite this user's FCM device token, so trip
+    // cancellation / payment failure / auto-delay pushes can reach them.
+    public function registerFcmToken(Request $request, FcmService $fcmService)
+    {
+        $validated = $request->validate([
+            'token' => 'required|string|max:4096',
+        ]);
+
+        $fcmService->registerToken($request->user(), $validated['token']);
+
+        return $this->success(null, 'Push notification token registered.');
     }
 
     public function forgotPassword(Request $request)

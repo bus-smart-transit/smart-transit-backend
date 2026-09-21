@@ -46,7 +46,18 @@ class StaffUser extends Model
         'name',
         'address',
         'birth_date',
+        'is_available',
+        'available_since',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_available' => 'boolean',
+            'available_since' => 'datetime',
+        ];
+    }
+
     public function uniqueIds(): array
     {
         return ['company_user_uuid'];

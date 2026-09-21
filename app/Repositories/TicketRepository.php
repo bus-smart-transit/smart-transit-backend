@@ -35,6 +35,58 @@ class TicketRepository
         return Ticket::where('payment_id', $paymentId)->get();
     }
 
+    public function findById(int $ticketId): ?Ticket
+    {
+        return Ticket::find($ticketId);
+    }
+
+    /**
+     * Tickets on a trip that are still "in play" (not cancelled/expired)
+     * and are backed by a verified paid payment — used for trip earnings
+     * summaries. Moved here from a query built directly in TicketService.
+     */
+    public function findPaidTicketsWithPaymentForTrip(int $tripId): Collection
+    {
+        return Ticket::with('payment')
+            ->where('trip_id', $tripId)
+            ->whereIn('status', ['valid', 'boarded', 'alighted'])
+            ->whereHas('payment', function ($query) {
+                $query->where('status', 'paid')
+                    ->where('is_valid', true);
+            })
+            ->get();
+    }
+
+    /**
+     * Guarded by `where('status', 'boarded')` so a duplicate/racing call
+     * can't re-stamp `alighted_at` on an already-alighted ticket.
+     */
+    public function markAlighted(int $ticketId): bool
+    {
+        return Ticket::where('ticket_id', $ticketId)
+            ->where('status', 'boarded')
+            ->update(['status' => 'alighted', 'alighted_at' => now()]) > 0;
+    }
+
+    /**
+     * Registered (non-guest) passengers holding a still-active ticket for
+     * a trip — used to notify affected passengers on trip cancellation/
+     * auto-delay. Guest-checkout tickets (passenger_id null) are excluded
+     * since there's no account to push a notification to.
+     */
+    public function findActivePassengersForTrip(int $tripId): Collection
+    {
+        return Ticket::with('passenger.user')
+            ->where('trip_id', $tripId)
+            ->whereNotNull('passenger_id')
+            ->whereIn('status', ['valid', 'boarded'])
+            ->get()
+            ->pluck('passenger')
+            ->filter()
+            ->unique('passenger_id')
+            ->values();
+    }
+
     public function markBoarded(int $ticketId): bool
     {
         return Ticket::where('ticket_id', $ticketId)->update([
@@ -121,6 +173,33 @@ class TicketRepository
             ->where('destination_stop_id', $stopId)
             ->whereIn('status', ['boarded', 'alighted'])
             ->count();
+    }
+
+    /**
+     * Aggregate boarding/alighting counts per stop for a trip in 2 queries
+     * instead of 2×N per-stop queries. Moved here from raw DB::table()
+     * calls in OccupancyService::getOccupancyByStop().
+     * Returns ['boarding' => [stop_id => count], 'alighting' => [stop_id => count]].
+     */
+    public function getBoardingAndAlightingCountsByStop(int $tripId): array
+    {
+        $boarding = Ticket::where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereNotNull('origin_stop_id')
+            ->selectRaw('origin_stop_id AS stop_id, COUNT(*) AS cnt')
+            ->groupBy('origin_stop_id')
+            ->pluck('cnt', 'stop_id')
+            ->map(fn ($v) => (int) $v);
+
+        $alighting = Ticket::where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereNotNull('destination_stop_id')
+            ->selectRaw('destination_stop_id AS stop_id, COUNT(*) AS cnt')
+            ->groupBy('destination_stop_id')
+            ->pluck('cnt', 'stop_id')
+            ->map(fn ($v) => (int) $v);
+
+        return ['boarding' => $boarding, 'alighting' => $alighting];
     }
 
     /**

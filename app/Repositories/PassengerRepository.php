@@ -25,6 +25,11 @@ class PassengerRepository
             ->first();
     }
 
+    public function findById(int $passengerId): ?PassengerUser
+    {
+        return PassengerUser::with('user')->find($passengerId);
+    }
+
     public function findByField(string $field, mixed $value): ?PassengerUser
     {
         return PassengerUser::where($field, $value)->first();

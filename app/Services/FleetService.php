@@ -30,6 +30,15 @@ class FleetService
         return $this->fleetRepository->all();
     }
 
+    /**
+     * IDOR guard used by controllers before allowing an operator to act on
+     * or view data scoped to a fleet.
+     */
+    public function isOwnedByOperator(int $fleetId, int $companyUserId): bool
+    {
+        return $this->fleetRepository->isOwnedByOperator($fleetId, $companyUserId);
+    }
+
     public function listFleetRoutesByOperator(int $companyUserId): object
     {
         return $this->fleetRouteRepository->listActiveByOperator($companyUserId);

@@ -2,11 +2,11 @@
 
 namespace App\Services;
 
-use App\Models\Stop;
 use App\Models\Ticket;
-use App\Models\Trip;
+use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 
 class OccupancyService
@@ -14,6 +14,7 @@ class OccupancyService
     public function __construct(
         private TicketRepository $ticketRepository,
         private TripRepository $tripRepository,
+        private StopRepository $stopRepository,
     ) {}
 
     /**
@@ -103,25 +104,11 @@ class OccupancyService
         $route = $trip->fleetRoute->route;
         $routeStops = $route->routeStops()->with('stop')->orderBy('stop_order')->get();
 
-        // Aggregate 1: boarding count per origin stop
-        $boardingByStop = \Illuminate\Support\Facades\DB::table('tickets')
-            ->where('trip_id', $tripId)
-            ->whereIn('status', ['boarded', 'alighted'])
-            ->whereNotNull('origin_stop_id')
-            ->selectRaw('origin_stop_id AS stop_id, COUNT(*) AS cnt')
-            ->groupBy('origin_stop_id')
-            ->pluck('cnt', 'stop_id')
-            ->map(fn ($v) => (int) $v);
-
-        // Aggregate 2: alighting count per destination stop
-        $alightingByStop = \Illuminate\Support\Facades\DB::table('tickets')
-            ->where('trip_id', $tripId)
-            ->whereIn('status', ['boarded', 'alighted'])
-            ->whereNotNull('destination_stop_id')
-            ->selectRaw('destination_stop_id AS stop_id, COUNT(*) AS cnt')
-            ->groupBy('destination_stop_id')
-            ->pluck('cnt', 'stop_id')
-            ->map(fn ($v) => (int) $v);
+        // Aggregate boarding/alighting counts per stop in 2 queries instead
+        // of 2×N per-stop queries.
+        $counts = $this->ticketRepository->getBoardingAndAlightingCountsByStop($tripId);
+        $boardingByStop = $counts['boarding'];
+        $alightingByStop = $counts['alighting'];
 
         // Compute cumulative on-bus count in PHP — no additional DB calls
         $cumulativeOnBus = 0;
@@ -180,9 +167,7 @@ class OccupancyService
             }
         }
 
-        $payloadStopNames = Stop::query()
-            ->whereIn('stop_id', array_values(array_unique($payloadStopIds)))
-            ->pluck('stop_name', 'stop_id');
+        $payloadStopNames = $this->stopRepository->getNamesByIds($payloadStopIds);
 
         return [
             'trip_id' => $tripId,
@@ -254,7 +239,11 @@ class OccupancyService
      */
     public function recordAlighting(int $ticketId): void
     {
-        $ticket = Ticket::findOrFail($ticketId);
+        $ticket = $this->ticketRepository->findById($ticketId);
+
+        if (! $ticket) {
+            throw (new ModelNotFoundException())->setModel(Ticket::class, $ticketId);
+        }
 
         if ($ticket->status !== 'boarded') {
             throw ValidationException::withMessages([
@@ -262,10 +251,7 @@ class OccupancyService
             ]);
         }
 
-        $ticket->update([
-            'status' => 'alighted',
-            'alighted_at' => now(),
-        ]);
+        $this->ticketRepository->markAlighted($ticketId);
     }
 
     /**

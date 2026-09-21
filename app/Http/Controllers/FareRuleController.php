@@ -7,9 +7,9 @@ use App\Http\Requests\FareListRequest;
 use App\Http\Requests\FareQuoteFromCoordinatesRequest;
 use App\Http\Requests\FareQuoteRequest;
 use App\Http\Requests\StoreFareRuleRequest;
-use App\Models\Fleet;
 use App\Services\AuditLogger;
 use App\Services\FareRuleService;
+use App\Services\FleetService;
 use App\Traits\ApiResponse;
 
 class FareRuleController extends Controller
@@ -18,6 +18,7 @@ class FareRuleController extends Controller
 
     public function __construct(
         private FareRuleService $fareRuleService,
+        private FleetService $fleetService,
     ) {}
 
     // Admin — create a fare rule for a fleet + seat type
@@ -31,9 +32,7 @@ class FareRuleController extends Controller
             }
 
             $fleetId = (int) $request->validated('fleet_id');
-            $owned = Fleet::where('fleet_id', $fleetId)
-                ->where('company_user_id', $companyUserId)
-                ->exists();
+            $owned = $this->fleetService->isOwnedByOperator($fleetId, $companyUserId);
 
             if (! $owned) {
                 return $this->error('You do not have permission to manage fare rules for this fleet.', 403);

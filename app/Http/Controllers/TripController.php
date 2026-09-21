@@ -6,7 +6,6 @@ use App\Http\Requests\AssignConductorRequest;
 use App\Http\Requests\AssignDriverRequest;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
-use App\Models\Trip;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
 use App\Services\DriverShiftService;
@@ -222,6 +221,36 @@ class TripController extends Controller
         return $this->success($trip, 'Trip declined. It has been returned to the unassigned pool.');
     }
 
+    // Batch 15, Item 1: Driver accepts their assigned trip.
+    public function acceptAsDriver(Request $request, int $tripId)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $trip = $this->tripService->acceptTrip($tripId, 'driver', $companyUser->company_user_id);
+
+        AuditLogger::log('trip.accept', 'Trip', $tripId, ['role' => 'driver']);
+
+        return $this->success($trip, 'Trip accepted.');
+    }
+
+    // Batch 15, Item 1 (extended per Item 7 to the conductor role too): Conductor accepts their assigned trip.
+    public function acceptAsConductor(Request $request, int $tripId)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $trip = $this->tripService->acceptTrip($tripId, 'conductor', $companyUser->company_user_id);
+
+        AuditLogger::log('trip.accept', 'Trip', $tripId, ['role' => 'conductor']);
+
+        return $this->success($trip, 'Trip accepted.');
+    }
+
 
     // Driver: see today's assigned trips
     public function myTrips(Request $request)
@@ -397,9 +426,7 @@ class TripController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        $ownsTrip = Trip::where('trip_id', $tripId)
-            ->where('company_user_id', $companyUserId)
-            ->exists();
+        $ownsTrip = $this->tripService->isOwnedByOperator($tripId, $companyUserId);
 
         if (! $ownsTrip) {
             return $this->error('You do not have permission to modify this trip.', 403);

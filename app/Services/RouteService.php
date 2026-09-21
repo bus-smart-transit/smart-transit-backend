@@ -31,6 +31,27 @@ class RouteService
         return $this->routeRepository->findWithStops($routeId);
     }
 
+    /**
+     * Public endpoint payload: ordered stops with coordinates for a route.
+     * Used by the passenger map (route polyline) and driver navigation map.
+     * Moved here from RouteController (was direct RouteStop::with()->where()
+     * query building in the controller — a Controller -> Service ->
+     * Repository layering violation).
+     */
+    public function getPublicStopsForRoute(int $routeId): Collection
+    {
+        return $this->routeStopRepository->getOrderedStops($routeId)
+            ->map(fn ($rs) => [
+                'stop_id' => $rs->stop_id,
+                'stop_name' => $rs->stop?->stop_name,
+                'latitude' => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
+                'longitude' => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
+                'stop_order' => $rs->stop_order,
+                'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
+            ])
+            ->values();
+    }
+
     // $payload = ['stop_id','stop_order','distance_from_origin_km']
     // route_stop_table is folded into RouteService — no separate service/controller
     public function addStopToRoute(int $routeId, array $payload): object

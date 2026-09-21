@@ -40,6 +40,20 @@ return [
         'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
         'ca_bundle' => env('PAYMONGO_CA_BUNDLE'),
         'verify_ssl' => env('PAYMONGO_VERIFY_SSL', true),
-    ]
+    ],
+
+    // Batch 15, Items 2/3: Firebase Cloud Messaging (push notifications).
+    // Two supported sources, checked in this order by FcmService:
+    //   1. FIREBASE_CREDENTIALS_JSON — the full service-account JSON as a
+    //      single-line env var string. Preferred for Docker/production —
+    //      passed through docker-compose.yml's environment whitelist like
+    //      PAYMONGO_SECRET_KEY, never baked into the image.
+    //   2. 'credentials' file path — for local host development, where
+    //      dropping the downloaded JSON file into storage/app/private/
+    //      (gitignored) is more convenient than a giant one-line env var.
+    'firebase' => [
+        'credentials_json' => env('FIREBASE_CREDENTIALS_JSON'),
+        'credentials' => env('FIREBASE_CREDENTIALS', storage_path('app/private/firebase-service-account.json')),
+    ],
 
 ];

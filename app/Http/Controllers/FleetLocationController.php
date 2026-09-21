@@ -4,15 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\NearestFleetRequest;
 use App\Http\Requests\UpdateLocationRequest;
-use App\Models\Trip;
 use App\Services\FleetLocationService;
+use App\Services\TripService;
 use App\Traits\ApiResponse;
 
 class FleetLocationController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private FleetLocationService $fleetLocationService) {}
+    public function __construct(
+        private FleetLocationService $fleetLocationService,
+        private TripService $tripService,
+    ) {}
 
     // Driver: push GPS position every 5-10 seconds
     // fleet_id is derived server-side from the driver's active trip — not trusted from client
@@ -58,9 +61,7 @@ class FleetLocationController extends Controller
                 return $this->error('Staff profile not found.', 404);
             }
 
-            $ownsTrip = Trip::where('trip_id', $tripId)
-                ->where('company_user_id', $companyUserId)
-                ->exists();
+            $ownsTrip = $this->tripService->isOwnedByOperator($tripId, $companyUserId);
 
             if (! $ownsTrip) {
                 return $this->error('You do not have permission to access GPS history for this trip.', 403);

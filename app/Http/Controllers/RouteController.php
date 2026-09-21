@@ -1,6 +1,5 @@
 <?php
 namespace App\Http\Controllers;
-use App\Models\RouteStop;
 use App\Services\RouteService;
 use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\AddRouteStopRequest;
@@ -35,20 +34,10 @@ class RouteController extends Controller
      */
     public function publicStops(int $routeId)
     {
-        $stops = RouteStop::with('stop')
-            ->where('route_id', $routeId)
-            ->orderBy('stop_order')
-            ->get()
-            ->map(fn ($rs) => [
-                'stop_id'                 => $rs->stop_id,
-                'stop_name'               => $rs->stop?->stop_name,
-                'latitude'                => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
-                'longitude'               => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
-                'stop_order'              => $rs->stop_order,
-                'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
-            ]);
-
-        return $this->success($stops, 'Route stops retrieved successfully');
+        return $this->success(
+            $this->routeService->getPublicStopsForRoute($routeId),
+            'Route stops retrieved successfully'
+        );
     }
 
     // route_stop_table management — folded into RouteController, no separate controller

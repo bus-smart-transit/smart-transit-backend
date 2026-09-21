@@ -19,8 +19,6 @@ use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripNotificationController;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -37,6 +35,13 @@ Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+
+// Batch 15, Items 2/3: FCM device-token registration — shared across all
+// staff roles (Driver receives trip-assignment pushes, Operator receives
+// payment-confirmation pushes; Conductor/Admin registration is harmless
+// and future-proofs other notification types).
+Route::post('staff/fcm-token', [StaffAuthController::class, 'registerFcmToken'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
@@ -72,6 +77,7 @@ Route::prefix('passengers')
         Route::get('profile', [AuthController::class, 'profile']);
         Route::put('profile', [PassengerController::class, 'update']);
         Route::patch('two-factor', [AuthController::class, 'updateTwoFactor']);
+        Route::post('fcm-token', [AuthController::class, 'registerFcmToken']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
         Route::get('dashboard-summary', [PassengerController::class, 'summary']);
@@ -167,6 +173,8 @@ Route::prefix('driver')
         Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsDriver']);
+        Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsDriver']);
+        Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
 
         Route::middleware('paired:driver')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripDriver']);
@@ -203,6 +211,8 @@ Route::prefix('conductor')
         Route::post('shift/start', [ConductorShiftController::class, 'start']);
         Route::post('shift/end', [ConductorShiftController::class, 'end']);
         Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsConductor']);
+        Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsConductor']);
+        Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);
@@ -278,56 +288,8 @@ Route::prefix('admin')
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
 
         // Audit log viewer — admin only
-        Route::get('audit-logs', function (Request $request) {
-            $query = DB::table('audit_logs')
-                ->orderByDesc('created_at')
-                ->limit(min((int) $request->query('limit', 100), 500));
-
-            if ($request->filled('action')) {
-                $query->where('action', $request->query('action'));
-            }
-            if ($request->filled('actor_type')) {
-                $query->where('actor_type', $request->query('actor_type'));
-            }
-            if ($request->filled('actor_id')) {
-                $query->where('actor_id', (int) $request->query('actor_id'));
-            }
-            if ($request->filled('subject_type')) {
-                $query->where('subject_type', $request->query('subject_type'));
-            }
-            if ($request->filled('subject_id')) {
-                $query->where('subject_id', (int) $request->query('subject_id'));
-            }
-
-            return response()->json(['data' => $query->get(), 'message' => 'Audit logs retrieved']);
-        });
+        Route::get('audit-logs', [ReportingController::class, 'auditLogs']);
 
         // Stored scheduled reports (nightly generated)
-        Route::get('reports/stored', function (Request $request) {
-            $query = DB::table('scheduled_reports')
-                ->orderByDesc('report_date')
-                ->orderByDesc('generated_at')
-                ->limit(min((int) $request->query('limit', 100), 500));
-
-            if ($request->filled('fleet_id')) {
-                $query->where('fleet_id', (int) $request->query('fleet_id'));
-            }
-            if ($request->filled('report_type')) {
-                $query->where('report_type', $request->query('report_type'));
-            }
-            if ($request->filled('date')) {
-                $query->where('report_date', $request->query('date'));
-            }
-            if ($request->filled('status')) {
-                $query->where('status', $request->query('status'));
-            }
-
-            $rows = $query->get()->map(function ($row) {
-                $row->payload = json_decode($row->payload, true);
-
-                return $row;
-            });
-
-            return response()->json(['data' => $rows, 'message' => 'Stored reports retrieved']);
-        });
+        Route::get('reports/stored', [ReportingController::class, 'storedReports']);
     });

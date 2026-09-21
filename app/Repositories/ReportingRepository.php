@@ -5,6 +5,8 @@ namespace App\Repositories;
 use App\Models\Trip;
 use App\Models\Ticket;
 use App\Models\Payment;
+use App\Models\RewardTransaction;
+use App\Services\RewardService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -401,6 +403,7 @@ class ReportingRepository
             ->get();
 
         $channelData = [];
+        $inScopePaymentIds = [];
 
         foreach ($trips as $trip) {
             $paymentMap = [];
@@ -430,6 +433,7 @@ class ReportingRepository
 
                 $channelData[$channel]['total_amount'] += $payment->amount;
                 $channelData[$channel]['transaction_count']++;
+                $inScopePaymentIds[$payment->payment_id] = true;
             }
         }
 
@@ -440,6 +444,21 @@ class ReportingRepository
             }
         }
 
+        // Batch C / THESIS_OBJECTIVES_AUDIT.md item #8: reward-point
+        // redemptions were previously invisible to "multi-channel" financial
+        // reporting — a passenger applying points as a discount during
+        // checkout (PaymentService::checkoutOnline() → RewardService::
+        // redeemPoints($paymentId, ...)) reduces the effective cash collected
+        // but that value never showed up anywhere in this report. Reported
+        // as a separate reconciliation line (not injected as a fake
+        // "channel") since it's a discount/adjustment against face value,
+        // not incoming revenue.
+        $redemptions = RewardTransaction::where('type', 'redeemed')
+            ->whereIn('payment_id', array_keys($inScopePaymentIds))
+            ->get();
+
+        $totalPointsRedeemed = (int) $redemptions->sum(fn ($r) => abs($r->points));
+
         return [
             'fleet_id' => $fleetId,
             'period' => [
@@ -447,6 +466,73 @@ class ReportingRepository
                 'end_date' => $endDate,
             ],
             'channels' => array_values($channelData),
+            'reward_redemptions' => [
+                'redemption_count' => $redemptions->count(),
+                'total_points_redeemed' => $totalPointsRedeemed,
+                'total_value_php' => round($totalPointsRedeemed * RewardService::PESOS_PER_POINT, 2),
+            ],
         ];
+    }
+
+    /**
+     * Query the audit_logs table (no Eloquent model — raw log table) with
+     * optional filters. Moved here from a route closure in routes/api.php
+     * to keep data access out of the routing layer.
+     */
+    public function getAuditLogs(array $filters, int $limit): Collection
+    {
+        $query = DB::table('audit_logs')
+            ->orderByDesc('created_at')
+            ->limit($limit);
+
+        if (!empty($filters['action'])) {
+            $query->where('action', $filters['action']);
+        }
+        if (!empty($filters['actor_type'])) {
+            $query->where('actor_type', $filters['actor_type']);
+        }
+        if (!empty($filters['actor_id'])) {
+            $query->where('actor_id', (int) $filters['actor_id']);
+        }
+        if (!empty($filters['subject_type'])) {
+            $query->where('subject_type', $filters['subject_type']);
+        }
+        if (!empty($filters['subject_id'])) {
+            $query->where('subject_id', (int) $filters['subject_id']);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * Query the scheduled_reports table (no Eloquent model — raw table) with
+     * optional filters. Moved here from a route closure in routes/api.php
+     * to keep data access out of the routing layer.
+     */
+    public function getStoredReports(array $filters, int $limit): Collection
+    {
+        $query = DB::table('scheduled_reports')
+            ->orderByDesc('report_date')
+            ->orderByDesc('generated_at')
+            ->limit($limit);
+
+        if (!empty($filters['fleet_id'])) {
+            $query->where('fleet_id', (int) $filters['fleet_id']);
+        }
+        if (!empty($filters['report_type'])) {
+            $query->where('report_type', $filters['report_type']);
+        }
+        if (!empty($filters['date'])) {
+            $query->where('report_date', $filters['date']);
+        }
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get()->map(function ($row) {
+            $row->payload = json_decode($row->payload, true);
+
+            return $row;
+        });
     }
 }

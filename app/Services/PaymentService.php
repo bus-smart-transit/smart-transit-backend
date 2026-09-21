@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\Payment;
 use App\Repositories\OnlinePaymentRepository;
 use App\Repositories\OnsitePaymentRepository;
+use App\Repositories\PassengerRepository;
 use App\Repositories\PaymentRepository;
+use App\Repositories\TripRepository;
 use App\Support\Database\RlsContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +24,9 @@ class PaymentService
         private TicketService $ticketService,
         private PayMongoService $payMongoService,
         private RewardService $rewardService,
+        private TripRepository $tripRepository,
+        private PassengerRepository $passengerRepository,
+        private FcmService $fcmService,
     ) {}
 
     /**
@@ -366,7 +371,48 @@ class PaymentService
                     $this->ticketService->finalizeTicket($reservedItem, $passengerId, $payment->payment_id);
                 }
             });
+
+            // Batch 15, Item 3: push the relevant Operator(s) so their
+            // dashboard can react (silent refresh) instead of waiting on
+            // the next poll cycle. Fire-and-forget — never let a push
+            // failure affect the payment/ticket transaction above, which
+            // has already committed by this point.
+            $this->notifyOperatorsOfPayment($payment);
         });
+    }
+
+    /**
+     * Resolves the unique set of Operators who own the trip(s) covered by
+     * this payment (a multi-item cart can span more than one trip/fleet)
+     * and sends each one a push notification.
+     */
+    private function notifyOperatorsOfPayment(Payment $payment): void
+    {
+        $tripIds = collect($payment->items_payload ?? [])
+            ->pluck('trip_id')
+            ->filter()
+            ->unique();
+
+        if ($tripIds->isEmpty()) {
+            return;
+        }
+
+        $notifiedUserIds = [];
+        foreach ($tripIds as $tripId) {
+            $trip = $this->tripRepository->findById((int) $tripId);
+            $operatorUser = $trip?->companyUser?->user;
+            if (! $operatorUser || in_array($operatorUser->user_id, $notifiedUserIds, true)) {
+                continue;
+            }
+
+            $this->fcmService->sendToUser(
+                $operatorUser,
+                'Payment Confirmed',
+                "A passenger payment of \u{20B1}".number_format((float) $payment->amount, 2)." was just confirmed (transaction {$payment->transaction_reference}).",
+                ['type' => 'payment_confirmed', 'payment_id' => $payment->payment_id],
+            );
+            $notifiedUserIds[] = $operatorUser->user_id;
+        }
     }
 
     /**
@@ -390,7 +436,41 @@ class PaymentService
                     $this->ticketService->releaseTicketHold($reservedItem);
                 }
             });
+
+            // Notifications audit follow-up: let the Passenger know their
+            // payment didn't go through, since their held seat/standing
+            // capacity was just released back to the trip.
+            $this->notifyPassengerOfPaymentFailure($payment);
         });
+    }
+
+    /**
+     * Resolves the passenger who attempted this payment (guest checkouts
+     * have no passenger_id and are skipped — they have no account to push
+     * to) and sends a failure notification.
+     */
+    private function notifyPassengerOfPaymentFailure(Payment $payment): void
+    {
+        $passengerId = collect($payment->items_payload ?? [])
+            ->pluck('passenger_id')
+            ->filter()
+            ->first();
+
+        if (! $passengerId) {
+            return;
+        }
+
+        $passengerUser = $this->passengerRepository->findById((int) $passengerId)?->user;
+        if (! $passengerUser) {
+            return;
+        }
+
+        $this->fcmService->sendToUser(
+            $passengerUser,
+            'Payment Failed',
+            "Your payment of \u{20B1}".number_format((float) $payment->amount, 2)." could not be completed. Your reserved seat has been released — please try booking again.",
+            ['type' => 'payment_failed', 'payment_id' => $payment->payment_id],
+        );
     }
 
     public function findById(int $paymentId)

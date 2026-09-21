@@ -71,6 +71,9 @@ class Trip extends Model
         'total_occupancy',
         'driver_id',
         'conductor_id',
+        'driver_accepted_at',
+        'conductor_accepted_at',
+        'delay_notified_at',
     ];
 
     /**

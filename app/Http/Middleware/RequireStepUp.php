@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\StepUpService;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -16,6 +16,8 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class RequireStepUp
 {
+    public function __construct(private StepUpService $stepUpService) {}
+
     public function handle(Request $request, Closure $next): Response
     {
         // TEMPORARY dev-phase bypass — see config('app.disable_step_up').
@@ -44,28 +46,25 @@ class RequireStepUp
             ], 403);
         }
 
-        $hash = hash('sha256', $rawToken);
-        $record = DB::table('step_up_tokens')
-            ->where('token_hash', $hash)
-            ->where('expires_at', '>', now())
-            ->first();
+        $tokenUserId = $this->stepUpService->resolveUserIdForToken($rawToken);
 
-        if (! $record) {
+        if ($tokenUserId === null) {
             return response()->json([
                 'message' => 'Step-up token is invalid or has expired. Please re-authenticate.',
                 'step_up' => true,
             ], 403);
         }
 
-        if ((int) $record->user_id !== (int) $user->user_id) {
+        if ($tokenUserId !== (int) $user->user_id) {
             return response()->json([
                 'message' => 'Step-up token does not match the authenticated user.',
                 'step_up' => true,
             ], 403);
         }
 
-        $request->attributes->set('step_up_user_id', $record->user_id);
+        $request->attributes->set('step_up_user_id', $tokenUserId);
 
         return $next($request);
     }
 }
+
