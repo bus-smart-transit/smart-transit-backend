@@ -37,4 +37,18 @@ class ConductorShiftLogRepository
 
         return $log->fresh(['trip.fleetRoute.route', 'fleet']);
     }
+
+    /**
+     * Batch 17, Issue #4 prevention: see DriverShiftLogRepository::
+     * endOpenForTrip() for the full explanation.
+     */
+    public function endOpenForTrip(int $tripId, string $endSource = 'trip_status_change'): bool
+    {
+        return ConductorShiftLog::where('trip_id', $tripId)
+            ->whereNull('ended_at')
+            ->update([
+                'ended_at' => now(),
+                'end_source' => $endSource,
+            ]) > 0;
+    }
 }

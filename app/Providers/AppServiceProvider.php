@@ -16,6 +16,7 @@ class AppServiceProvider extends ServiceProvider
         }
 
         $this->guardStepUpBypassIsDevOnly();
+        $this->guardStaffOtpBypassIsDevOnly();
     }
 
     /**
@@ -33,6 +34,22 @@ class AppServiceProvider extends ServiceProvider
                 'DISABLE_STEP_UP is enabled outside a local environment (APP_ENV='
                     .config('app.env').'). Refusing to boot — this flag must never '
                     .'be true in staging/production. See SECURITY_AUDIT.md (STEPUP-01).'
+            );
+        }
+    }
+
+    /**
+     * Same fail-fast pattern as guardStepUpBypassIsDevOnly(), for the staff
+     * login OTP dev-convenience bypass. Refuses to boot if DISABLE_STAFF_OTP
+     * is ever true outside a local environment.
+     */
+    private function guardStaffOtpBypassIsDevOnly(): void
+    {
+        if (config('app.disable_staff_otp') && ! $this->app->environment('local')) {
+            throw new \RuntimeException(
+                'DISABLE_STAFF_OTP is enabled outside a local environment (APP_ENV='
+                    .config('app.env').'). Refusing to boot — this flag must never '
+                    .'be true in staging/production. See SECURITY_AUDIT.md.'
             );
         }
     }

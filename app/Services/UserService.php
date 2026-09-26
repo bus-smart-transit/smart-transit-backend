@@ -116,6 +116,20 @@ class UserService
     private const MFA_MANDATORY_ROLES = ['operator', 'admin'];
 
     /**
+     * TEMPORARY dev-phase convenience flag — see config('app.disable_staff_otp').
+     * Double-gated: the flag alone is not enough, APP_ENV must also be
+     * "local", so this can never silently activate in staging/production
+     * (AppServiceProvider also refuses to boot if the flag is set outside
+     * local as a fail-fast backstop). When active, ALL staff logins
+     * (including operator/admin, which are otherwise MFA-mandatory) skip
+     * the OTP step entirely.
+     */
+    private function staffOtpBypassActive(): bool
+    {
+        return config('app.disable_staff_otp') && app()->environment('local');
+    }
+
+    /**
      * Step 1 of staff login.
      * Validates credentials, then either issues a Sanctum token directly
      * (driver/conductor with two_factor_enabled = false) or sends an OTP
@@ -138,8 +152,10 @@ class UserService
                 ]);
             }
 
-            $requiresMfa = in_array($user->role, self::MFA_MANDATORY_ROLES)
-                || (bool) $user->two_factor_enabled;
+            $requiresMfa = !$this->staffOtpBypassActive() && (
+                in_array($user->role, self::MFA_MANDATORY_ROLES)
+                || (bool) $user->two_factor_enabled
+            );
 
             if (!$requiresMfa) {
                 return [

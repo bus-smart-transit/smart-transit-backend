@@ -39,9 +39,18 @@ class ConductorShiftService
                 return $existingOpen;
             }
 
-            throw ValidationException::withMessages([
-                'shift' => ['You already have an active shift. End it before starting a new one.'],
-            ]);
+            // Batch 17, Issue #4: see DriverShiftService::startShiftForDriver()
+            // for the full explanation — self-heal a shift left open for a
+            // trip that has since completed/cancelled instead of permanently
+            // blocking every later shift start.
+            $staleTripStatus = strtolower((string) ($existingOpen->trip?->status ?? ''));
+            if (in_array($staleTripStatus, ['completed', 'cancelled'], true)) {
+                $this->conductorShiftLogRepository->markEnded($existingOpen, 'auto_closed_stale');
+            } else {
+                throw ValidationException::withMessages([
+                    'shift' => ['You already have an active shift. End it before starting a new one.'],
+                ]);
+            }
         }
 
         return $this->conductorShiftLogRepository->create([

@@ -87,6 +87,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Staff Login OTP Dev Bypass (LOCAL/DEV ONLY)
+    |--------------------------------------------------------------------------
+    |
+    | TEMPORARY dev-phase convenience flag. When true, staff login (driver/
+    | conductor/operator/admin) skips the OTP step entirely and issues a
+    | session token immediately — useful when teammates are testing staff
+    | accounts and can't receive the OTP email themselves. Operator/Admin
+    | normally require MFA unconditionally (see UserService::
+    | MFA_MANDATORY_ROLES); this flag overrides that too. ONLY takes effect
+    | when APP_ENV is "local" (checked directly in UserService, not just
+    | here) so this can never silently activate in staging/production even
+    | if the env var is mistakenly copied into another environment's config.
+    |
+    | TODO(security): remove this flag before any production or
+    | client-facing demo deployment. Tracked in SECURITY_AUDIT.md.
+    |
+    */
+
+    'disable_staff_otp' => env('DISABLE_STAFF_OTP', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

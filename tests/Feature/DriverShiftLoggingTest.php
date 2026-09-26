@@ -202,3 +202,54 @@ test('driver current trip is unavailable after the shift is closed', function ()
         ->getJson('/api/driver/trips/current')
         ->assertStatus(404);
 });
+
+// Batch 17, Issue #4: a shift left open after its trip completed (driver
+// never pressed "End Shift") was permanently blocking every later shift
+// start for a genuinely available, paired driver on a brand new same-day
+// trip. Self-heal: auto-close the stale shift instead of hard-blocking.
+test('starting a new shift auto-closes a stale open shift left on an already-completed trip', function () {
+    $driver = makeShiftStaffUser('driver');
+    $staleTrip = makeAssignedDriverTrip($driver, 'boarding');
+
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
+
+    // Trip finished, but nobody ever pressed "End Shift".
+    $staleTrip->status = 'completed';
+    $staleTrip->save();
+
+    $newTrip = makeAssignedDriverTrip($driver, 'scheduled');
+
+    $response = $this->actingAs($driver)->postJson('/api/driver/shift/start');
+
+    $response
+        ->assertSuccessful()
+        ->assertJsonPath('data.shift.trip_id', $newTrip->trip_id);
+
+    $this->assertDatabaseHas('driver_shift_logs', [
+        'trip_id' => $staleTrip->trip_id,
+        'end_source' => 'auto_closed_stale',
+    ]);
+
+    $this->assertDatabaseHas('driver_shift_logs', [
+        'trip_id' => $newTrip->trip_id,
+        'end_source' => null,
+    ]);
+});
+
+// Batch 17, Issue #4 prevention half: completing a trip should proactively
+// close any shift still left open for it, so it can never even become a
+// stale blocker in the first place.
+test('completing a trip auto-closes any still-open shift for it', function () {
+    $driver = makeShiftStaffUser('driver');
+    $trip = makeAssignedDriverTrip($driver, 'boarding');
+
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
+
+    app(\App\Services\TripService::class)->completeTrip($trip->trip_id);
+
+    $this->assertDatabaseHas('driver_shift_logs', [
+        'trip_id' => $trip->trip_id,
+        'end_source' => 'trip_status_change',
+    ]);
+});
+

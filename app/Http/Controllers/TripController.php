@@ -251,7 +251,6 @@ class TripController extends Controller
         return $this->success($trip, 'Trip accepted.');
     }
 
-
     // Driver: see today's assigned trips
     public function myTrips(Request $request)
     {

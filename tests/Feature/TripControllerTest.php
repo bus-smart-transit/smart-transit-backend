@@ -335,6 +335,100 @@ test('assigning a non-driver user as driver fails', function () {
         ->assertJsonValidationErrors(['driver_id']);
 });
 
+// S2 (Batch 17): narrow double-booking guard — same staff member, same
+// date+departure_time, two different trips. See TripRepository::
+// hasConflictingAssignment() for why this doesn't attempt full range
+// overlap (schema has no trip end/arrival time, and the buffer-window
+// business decision is still pending).
+test('assigning a driver already booked at the same date and departure time is rejected', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+    $tripDate = now()->toDateString();
+
+    $tripA = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => $tripDate,
+        'departure_time' => '08:00:00',
+        'status' => 'scheduled',
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $tripB = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => $tripDate,
+        'departure_time' => '08:00:00',
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$tripB->trip_id}/driver", [
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['driver_id']);
+
+    $this->assertDatabaseMissing('trips', [
+        'trip_id' => $tripB->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ]);
+
+    expect($tripA->trip_id)->not->toBe($tripB->trip_id);
+});
+
+// S2 corrected model (Batch 17 continuation): supersedes the earlier
+// "different departure time is allowed" test — the reporter's corrected
+// spec is hard one-trip-per-day exclusivity, regardless of time, not a
+// time-overlap check. A second, separate trip assignment on the same date
+// is always rejected now (the only sanctioned same-day multi-assignment
+// path is a driver hand-off SEGMENT of the SAME trip — see
+// TripDriverSegmentTest.php).
+test('assigning a driver to a second separate trip on the same date is rejected even at a different departure time', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $fleetRoute = makeFleetRoute();
+    $tripDate = now()->toDateString();
+
+    Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => $tripDate,
+        'departure_time' => '08:00:00',
+        'status' => 'scheduled',
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $tripB = Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => $tripDate,
+        'departure_time' => '18:00:00',
+        'status' => 'scheduled',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$tripB->trip_id}/driver", [
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ])->assertStatus(422)
+        ->assertJsonValidationErrors(['driver_id']);
+
+    $this->assertDatabaseMissing('trips', [
+        'trip_id' => $tripB->trip_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ]);
+});
+
 // ─── Assign conductor ─────────────────────────────────────────────────────────
 
 test('operator can assign a conductor to a trip', function () {

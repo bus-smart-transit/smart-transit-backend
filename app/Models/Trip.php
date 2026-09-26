@@ -74,6 +74,7 @@ class Trip extends Model
         'driver_accepted_at',
         'conductor_accepted_at',
         'delay_notified_at',
+        'shift_block_id',
     ];
 
     /**
@@ -118,6 +119,14 @@ class Trip extends Model
     public function conductor()
     {
         return $this->belongsTo(StaffUser::class, 'conductor_id', 'company_user_id');
+    }
+
+    /**
+     * Batch 18: the shift block this trip ("leg") belongs to, if any.
+     */
+    public function shiftBlock()
+    {
+        return $this->belongsTo(ShiftBlock::class, 'shift_block_id', 'shift_block_id');
     }
 
     /**

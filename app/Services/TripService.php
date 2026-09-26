@@ -36,6 +36,24 @@ class TripService
         return $this->tripRepository->isOwnedByOperator($tripId, $companyUserId);
     }
 
+    /**
+     * Batch 18: a staff member may hold only ONE shift-block/trip
+     * assignment per calendar day. Hard exclusivity, no time-overlap math.
+     * (Superseded the earlier per-trip-segment exclusivity check from the
+     * prior, now-replaced trip_driver_segments design.)
+     */
+    private function assertNotAlreadyAssignedThatDay(string $role, int $companyUserId, string $tripDate, ?int $excludeTripId = null): void
+    {
+        $alreadyAssigned = $this->tripRepository->hasAnySameDayAssignment($role, $companyUserId, $tripDate, $excludeTripId);
+
+        if ($alreadyAssigned) {
+            $field = $role === 'driver' ? 'driver_id' : 'conductor_id';
+            throw ValidationException::withMessages([
+                $field => [ucfirst($role).' is already assigned to another trip on this date.'],
+            ]);
+        }
+    }
+
     public function scheduleTrip(array $payload): object
     {
         // StoreTripRequest only checks driver_id/conductor_id exist as SOME
@@ -50,6 +68,8 @@ class TripService
                     'driver_id' => ['The selected user is not a driver.'],
                 ]);
             }
+
+            $this->assertNotAlreadyAssignedThatDay('driver', $payload['driver_id'], $payload['trip_date']);
         }
 
         if (! empty($payload['conductor_id'])) {
@@ -59,6 +79,8 @@ class TripService
                     'conductor_id' => ['The selected user is not a conductor.'],
                 ]);
             }
+
+            $this->assertNotAlreadyAssignedThatDay('conductor', $payload['conductor_id'], $payload['trip_date']);
         }
 
         // current_* fields represent occupied slots; new trips must start at 0.
@@ -139,6 +161,13 @@ class TripService
     {
         $this->tripRepository->updateStatus($tripId, 'completed');
 
+        // Batch 17, Issue #4 prevention: a shift left open past trip
+        // completion silently blocks every later shift start for that
+        // staff member. Auto-close it here instead of relying on the
+        // driver/conductor remembering to press "End Shift".
+        $this->driverShiftLogRepository->endOpenForTrip($tripId);
+        $this->conductorShiftLogRepository->endOpenForTrip($tripId);
+
         return $this->tripRepository->findById($tripId);
     }
 
@@ -178,6 +207,14 @@ class TripService
         }
 
         $this->tripRepository->updateStatus($tripId, $newStatus);
+
+        // Batch 17, Issue #4 prevention: see completeTrip() above — same
+        // reasoning applies to an admin/operator override landing on
+        // 'completed' or 'cancelled'.
+        if (in_array($newStatus, ['completed', 'cancelled'], true)) {
+            $this->driverShiftLogRepository->endOpenForTrip($tripId);
+            $this->conductorShiftLogRepository->endOpenForTrip($tripId);
+        }
 
         // Notifications audit follow-up: passengers who already paid for a
         // now-cancelled trip previously got no notification at all.
@@ -401,6 +438,15 @@ class TripService
             ]);
         }
 
+        $targetTrip = $this->tripRepository->findById($tripId);
+        if (! $targetTrip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        // S2 corrected model: hard one-assignment-per-day exclusivity —
+        // see assertNotAlreadyAssignedThatDay().
+        $this->assertNotAlreadyAssignedThatDay('driver', $payload['driver_id'], $targetTrip->trip_date->format('Y-m-d'), $tripId);
+
         $this->tripRepository->assignDriver($tripId, $payload['driver_id']);
 
         // Auto-generate daily PIN if conductor is already assigned
@@ -436,6 +482,13 @@ class TripService
                 'conductor_id' => ['The selected user is not a conductor.'],
             ]);
         }
+
+        $targetTrip = $this->tripRepository->findById($tripId);
+        if (! $targetTrip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        $this->assertNotAlreadyAssignedThatDay('conductor', $payload['conductor_id'], $targetTrip->trip_date->format('Y-m-d'), $tripId);
 
         $this->tripRepository->assignConductor($tripId, $payload['conductor_id']);
 

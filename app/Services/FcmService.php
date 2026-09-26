@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Repositories\UserNotificationRepository;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
 use Kreait\Firebase\Contract\Messaging;
@@ -23,9 +24,12 @@ use Kreait\Firebase\Exception\MessagingException;
 class FcmService
 {
     private ?Messaging $messaging = null;
+    private UserNotificationRepository $notificationRepository;
 
-    public function __construct(?Messaging $messaging = null)
+    public function __construct(?Messaging $messaging = null, ?UserNotificationRepository $notificationRepository = null)
     {
+        $this->notificationRepository = $notificationRepository ?? app(UserNotificationRepository::class);
+
         if ($messaging) {
             $this->messaging = $messaging;
             return;
@@ -85,9 +89,25 @@ class FcmService
      * token, or the send fails for any reason (expired token, network,
      * etc.) — callers (TripService, PaymentService) must never have their
      * own operation fail because of this.
+     *
+     * S1 (Batch 17): this is the single choke point every trip/payment
+     * notification already flows through, so it's also where the in-app
+     * notification-bell history is written — regardless of whether the
+     * push itself succeeds (no token registered / device offline / FCM
+     * misconfigured), the user should still see it next time they open the
+     * app. This guarantees the bell and the push always describe the same
+     * event; there is no second, separately-maintained notification list.
      */
     public function sendToUser(User $user, string $title, string $body, array $data = []): bool
     {
+        $this->notificationRepository->createForUser(
+            $user->user_id,
+            (string) ($data['type'] ?? 'general'),
+            $title,
+            $body,
+            $data,
+        );
+
         if (! $this->isEnabled()) {
             return false;
         }
@@ -118,5 +138,29 @@ class FcmService
             Log::warning("FcmService: unexpected error sending to user {$user->user_id} — " . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * In-app notification-bell reads (S1, Batch 17) — thin passthroughs to
+     * the repository so controllers never touch it directly.
+     */
+    public function listRecentForUser(int $userId): array
+    {
+        return $this->notificationRepository->listRecentForUser($userId)->values()->all();
+    }
+
+    public function countUnreadForUser(int $userId): int
+    {
+        return $this->notificationRepository->countUnreadForUser($userId);
+    }
+
+    public function markReadForUser(int $notificationId, int $userId): bool
+    {
+        return $this->notificationRepository->markReadForUser($notificationId, $userId);
+    }
+
+    public function markAllReadForUser(int $userId): int
+    {
+        return $this->notificationRepository->markAllReadForUser($userId);
     }
 }

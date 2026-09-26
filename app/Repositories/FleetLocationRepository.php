@@ -76,6 +76,42 @@ class FleetLocationRepository
     }
 
     /**
+     * Batch 18 (Location Match Rule): current lat/lng for a fleet's last
+     * recorded position, or null if it has never reported one. Parses the
+     * dual-path storage (plain "lat,lng" string on SQLite tests; real
+     * PostGIS GEOGRAPHY(POINT) on Postgres) the same way getTripHistory()
+     * below already does for fleet_location_history.
+     */
+    public function getCurrentLatLng(int $fleetId): ?array
+    {
+        $driver = DB::getDriverName();
+
+        if ($driver === 'sqlite') {
+            $row = DB::selectOne("
+                SELECT
+                    CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
+                    CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude
+                FROM fleet_locations
+                WHERE fleet_id = ?
+            ", [$fleetId]);
+        } else {
+            $row = DB::selectOne("
+                SELECT
+                    ST_Y(location::geometry) AS latitude,
+                    ST_X(location::geometry) AS longitude
+                FROM fleet_locations
+                WHERE fleet_id = ?
+            ", [$fleetId]);
+        }
+
+        if (! $row || $row->latitude === null || $row->longitude === null) {
+            return null;
+        }
+
+        return ['latitude' => (float) $row->latitude, 'longitude' => (float) $row->longitude];
+    }
+
+    /**
      * Return GPS breadcrumb trail for a trip (most recent first, capped at 500 rows).
      */
     public function getTripHistory(int $tripId, int $limit = 500): Collection

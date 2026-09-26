@@ -19,6 +19,8 @@ use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripNotificationController;
+use App\Http\Controllers\UserNotificationController;
+use App\Http\Controllers\ShiftBlockController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -136,6 +138,17 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
         Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
 
+        // Batch 18: Shift Block Hand-off System
+        Route::get('shift-blocks', [ShiftBlockController::class, 'index']);
+        Route::post('shift-blocks', [ShiftBlockController::class, 'store']);
+        Route::get('shift-blocks/pending-review', [ShiftBlockController::class, 'pendingReview']);
+        Route::get('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'show']);
+        Route::patch('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'update']);
+        Route::patch('shift-blocks/{shiftBlockId}/cancel', [ShiftBlockController::class, 'cancel']);
+        Route::patch('shift-blocks/{shiftBlockId}/mark-reviewed', [ShiftBlockController::class, 'markReviewed']);
+        Route::post('shift-blocks/{shiftBlockId}/override-handoff', [ShiftBlockController::class, 'overrideHandoff']);
+        Route::post('shift-blocks/{shiftBlockId}/override-takeover', [ShiftBlockController::class, 'overrideTakeover']);
+
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);
         Route::get('fleets/{fleetId}/reports/revenue-by-route', [ReportingController::class, 'revenueByRoute']);
@@ -176,6 +189,15 @@ Route::prefix('driver')
         Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsDriver']);
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
 
+        // Batch 18: Shift Block Hand-off System
+        Route::get('shift-blocks', [ShiftBlockController::class, 'myBlocksAsDriver']);
+        Route::post('shift-blocks/{shiftBlockId}/confirm-takeover', [ShiftBlockController::class, 'confirmTakeover']);
+
+        // S1 (Batch 17): in-app notification bell
+        Route::get('notifications', [UserNotificationController::class, 'index']);
+        Route::patch('notifications/{id}/read', [UserNotificationController::class, 'markRead']);
+        Route::patch('notifications/read-all', [UserNotificationController::class, 'markAllRead']);
+
         Route::middleware('paired:driver')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripDriver']);
             Route::get('trips/current/stops', [TripController::class, 'currentTripStops']);
@@ -213,6 +235,16 @@ Route::prefix('conductor')
         Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsConductor']);
         Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsConductor']);
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
+
+        // Batch 18: Shift Block Hand-off System
+        Route::get('shift-blocks', [ShiftBlockController::class, 'myBlocksAsConductor']);
+        Route::get('shift-blocks/{shiftBlockId}/handoff-eligibility', [ShiftBlockController::class, 'handoffEligibility']);
+        Route::post('shift-blocks/{shiftBlockId}/initiate-handoff', [ShiftBlockController::class, 'initiateHandoff']);
+
+        // S1 (Batch 17): in-app notification bell
+        Route::get('notifications', [UserNotificationController::class, 'index']);
+        Route::patch('notifications/{id}/read', [UserNotificationController::class, 'markRead']);
+        Route::patch('notifications/read-all', [UserNotificationController::class, 'markAllRead']);
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);

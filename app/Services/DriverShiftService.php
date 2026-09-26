@@ -39,9 +39,19 @@ class DriverShiftService
                 return $existingOpen;
             }
 
-            throw ValidationException::withMessages([
-                'shift' => ['You already have an active shift. End it before starting a new one.'],
-            ]);
+            // Batch 17, Issue #4: a shift log left open for a trip that has
+            // since completed/cancelled (e.g. the driver never pressed "End
+            // Shift") was permanently blocking every later shift start,
+            // including for a same-day trip they're already paired for.
+            // Self-heal by auto-closing it instead of hard-blocking.
+            $staleTripStatus = strtolower((string) ($existingOpen->trip?->status ?? ''));
+            if (in_array($staleTripStatus, ['completed', 'cancelled'], true)) {
+                $this->driverShiftLogRepository->markEnded($existingOpen, 'auto_closed_stale');
+            } else {
+                throw ValidationException::withMessages([
+                    'shift' => ['You already have an active shift. End it before starting a new one.'],
+                ]);
+            }
         }
 
         return $this->driverShiftLogRepository->create([

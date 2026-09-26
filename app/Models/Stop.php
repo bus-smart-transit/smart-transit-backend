@@ -38,7 +38,8 @@ class Stop extends Model
     protected $fillable = [
         'stop_name',
         'longitude',
-        'latitude'
+        'latitude',
+        'geofence_radius_m',
     ];
 
     public function routeStops()

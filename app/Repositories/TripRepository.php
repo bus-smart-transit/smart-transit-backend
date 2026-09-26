@@ -166,6 +166,32 @@ class TripRepository
     }
 
     /**
+     * S2 corrected model (Batch 17 continuation), superseded by Batch 18's
+     * shift_blocks system: a staff member (driver OR conductor) may only
+     * hold ONE assignment per day — hard exclusivity, not a time-overlap
+     * check. This also transparently covers shift-block legs, since each
+     * leg is itself a `trips` row with driver_id/conductor_id populated
+     * (see ShiftBlockService::createBlock()) — no separate join needed.
+     * The reverse direction (a shift block being created for a staff
+     * member who already holds a plain trip that day) is checked in
+     * ShiftBlockService via this same method.
+     */
+    public function hasAnySameDayAssignment(string $role, int $companyUserId, string $tripDate, ?int $excludeTripId = null): bool
+    {
+        $column = $role === 'driver' ? 'driver_id' : 'conductor_id';
+
+        $query = Trip::where($column, $companyUserId)
+            ->whereDate('trip_date', $tripDate)
+            ->whereNotIn('status', ['cancelled']);
+
+        if ($excludeTripId) {
+            $query->where('trip_id', '!=', $excludeTripId);
+        }
+
+        return $query->exists();
+    }
+
+    /**
      * S2 (Batch 12): a driver/conductor declining their assignment returns
      * the trip to the unassigned pool for the Operator to manually
      * reassign — the trip itself keeps its current status, only the
