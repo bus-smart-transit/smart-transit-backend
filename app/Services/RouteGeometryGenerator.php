@@ -140,7 +140,7 @@ class RouteGeometryGenerator
                 usleep(((int) $cfg['request_delay_ms']) * 1000);
             }
 
-            $response = $this->client()->post("{$cfg['base_url']}/v2/directions/{$cfg['profile']}/geojson", [
+            $response = $this->client()->withHeaders(['Accept' => 'application/geo+json, application/json'])->post("{$cfg['base_url']}/v2/directions/{$cfg['profile']}/geojson", [
                 'coordinates' => $chunk,
                 'continue_straight' => true,
                 'preference' => 'recommended',
