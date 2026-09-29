@@ -1,8 +1,10 @@
 <?php
 namespace App\Services;
+use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
+use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
@@ -12,6 +14,8 @@ class RouteService
         private RouteRepository $routeRepository,
         private RouteStopRepository $routeStopRepository,
         private StopRepository $stopRepository,
+        private RouteGeometryRepository $geometryRepository,
+        private RouteGeometryGenerator $geometryGenerator,
     ) {
     }
 
@@ -38,18 +42,55 @@ class RouteService
      * query building in the controller — a Controller -> Service ->
      * Repository layering violation).
      */
-    public function getPublicStopsForRoute(int $routeId): Collection
+    public function getPublicStopsForRoute(int $routeId, ?string $direction = 'outbound'): Collection
     {
-        return $this->routeStopRepository->getOrderedStops($routeId)
+        return $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction)
             ->map(fn ($rs) => [
                 'stop_id' => $rs->stop_id,
                 'stop_name' => $rs->stop?->stop_name,
                 'latitude' => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
                 'longitude' => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
+                'snapped_latitude' => $rs->snapped_latitude !== null ? (float) $rs->snapped_latitude : null,
+                'snapped_longitude' => $rs->snapped_longitude !== null ? (float) $rs->snapped_longitude : null,
                 'stop_order' => $rs->stop_order,
+                'stop_type' => $rs->stop_type ?? 'stop',
                 'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
             ])
             ->values();
+    }
+
+    /**
+     * Canonical route line as GeoJSON ([lng, lat]); the reverse direction is
+     * the same line reversed (equivalent to ST_Reverse).
+     */
+    public function getRouteGeometry(int $routeId, ?string $direction = 'outbound'): array
+    {
+        $geometry = $this->geometryRepository->get($routeId);
+        $status = $this->geometryRepository->status($routeId) ?? [];
+
+        if ($geometry && $direction === 'reverse') {
+            $geometry['coordinates'] = GeoLine::reverse($geometry['coordinates']);
+        }
+
+        return [
+            'route_id' => $routeId,
+            'direction' => $direction === 'reverse' ? 'reverse' : 'outbound',
+            'geometry' => $geometry,
+            'total_length_m' => $geometry ? round(GeoLine::lengthM($geometry['coordinates']), 1) : null,
+            'geometry_stale' => (bool) ($status['geometry_stale'] ?? false),
+            'geometry_generated_at' => $status['geometry_generated_at'] ?? null,
+            'geometry_error' => $status['geometry_error'] ?? null,
+        ];
+    }
+
+    public function queueGeometryRegeneration(int $routeId): void
+    {
+        $this->geometryGenerator->queueRegeneration($routeId);
+    }
+
+    public function updateStopType(int $routeId, int $routeStopId, string $stopType): bool
+    {
+        return $this->routeStopRepository->updateStopType($routeId, $routeStopId, $stopType);
     }
 
     // $payload = ['stop_id','stop_order','distance_from_origin_km']
@@ -82,16 +123,26 @@ class RouteService
             ? (float) $payload['distance_from_origin_km']
             : $this->estimateDistanceFromOrigin($orderedStops, (int) $payload['stop_id'], (int) $payload['stop_order']);
 
-        return $this->routeStopRepository->create(array_merge(
+        $routeStop = $this->routeStopRepository->create(array_merge(
             $payload,
             ['distance_from_origin_km' => $distanceFromOrigin],
             ['route_id' => $routeId]
         ));
+
+        $this->geometryGenerator->queueRegeneration($routeId);
+
+        return $routeStop;
     }
 
-    public function removeStopFromRoute(int $routeStopId): bool
+    public function removeStopFromRoute(int $routeId, int $routeStopId): bool
     {
-        return $this->routeStopRepository->delete($routeStopId);
+        $deleted = $this->routeStopRepository->delete($routeStopId);
+
+        if ($deleted) {
+            $this->geometryGenerator->queueRegeneration($routeId);
+        }
+
+        return $deleted;
     }
 
     private function estimateDistanceFromOrigin(Collection $orderedStops, int $newStopId, int $newStopOrder): float

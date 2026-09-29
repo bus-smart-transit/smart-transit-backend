@@ -10,6 +10,7 @@ use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -285,4 +286,125 @@ test('dispatcher override can force hand-off regardless of GPS state', function 
         ->assertSuccessful();
 
     $this->assertDatabaseHas('shift_blocks', ['shift_block_id' => $blockId, 'status' => 'completed', 'audit_status' => 'pending_review']);
+});
+
+test('shift block legs alternate outbound and reverse directions for N legs', function () {
+    config(['shift_blocks.legs_per_block' => 5]);
+
+    [$operatorUser, $operator] = makeBlockTestStaff('operator');
+    [, $driver] = makeBlockTestStaff('driver');
+    [, $conductor] = makeBlockTestStaff('conductor');
+    [$fleetRoute] = makeBlockTestFleetRoute($operator->company_user_id);
+
+    $response = $this->actingAs($operatorUser)->postJson('/api/operator/shift-blocks', [
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'block_type' => 'morning',
+        'scheduled_date' => now()->toDateString(),
+        'leg_departure_times' => ['06:00', '08:00', '10:00', '12:00', '14:00'],
+    ]);
+
+    $response->assertSuccessful();
+    $blockId = $response->json('data.shift_block_id');
+
+    $directions = Trip::where('shift_block_id', $blockId)
+        ->orderBy('departure_time')
+        ->pluck('leg_direction')
+        ->values()
+        ->all();
+
+    expect($directions)->toBe(['outbound', 'reverse', 'outbound', 'reverse', 'outbound']);
+});
+
+test('repair command is idempotent, supports dry-run, and skips started/completed blocks', function () {
+    [$operatorUser, $operator] = makeBlockTestStaff('operator');
+    [, $driver] = makeBlockTestStaff('driver');
+    [, $conductor] = makeBlockTestStaff('conductor');
+    [$fleetRoute] = makeBlockTestFleetRoute($operator->company_user_id);
+
+    $scheduledBlock = ShiftBlock::create([
+        'fleet_id' => $fleetRoute->fleet_id,
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'company_user_id' => $operator->company_user_id,
+        'block_type' => 'morning',
+        'status' => 'scheduled',
+        'audit_status' => 'not_applicable',
+        'scheduled_date' => now()->toDateString(),
+    ]);
+
+    $inProgressBlock = ShiftBlock::create([
+        'fleet_id' => $fleetRoute->fleet_id,
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'company_user_id' => $operator->company_user_id,
+        'block_type' => 'afternoon',
+        'status' => 'in_progress',
+        'audit_status' => 'not_applicable',
+        'scheduled_date' => now()->toDateString(),
+    ]);
+
+    Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '06:00',
+        'status' => 'scheduled',
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'shift_block_id' => $scheduledBlock->shift_block_id,
+        'leg_direction' => null,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+    Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '08:00',
+        'status' => 'scheduled',
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'shift_block_id' => $scheduledBlock->shift_block_id,
+        'leg_direction' => null,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+    Trip::create([
+        'fleet_route_id' => $fleetRoute->fleet_route_id,
+        'company_user_id' => $operator->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'departure_time' => '10:00',
+        'status' => 'scheduled',
+        'driver_id' => $driver->company_user_id,
+        'conductor_id' => $conductor->company_user_id,
+        'shift_block_id' => $inProgressBlock->shift_block_id,
+        'leg_direction' => null,
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    // Default is a dry run: nothing is written without --apply.
+    Artisan::call('shift-blocks:repair-leg-directions');
+
+    expect(Trip::where('shift_block_id', $scheduledBlock->shift_block_id)->whereNull('leg_direction')->count())->toBe(2);
+
+    Artisan::call('shift-blocks:repair-leg-directions', ['--apply' => true]);
+
+    $scheduledDirections = Trip::where('shift_block_id', $scheduledBlock->shift_block_id)
+        ->orderBy('departure_time')
+        ->pluck('leg_direction')
+        ->values()
+        ->all();
+    expect($scheduledDirections)->toBe(['outbound', 'reverse']);
+
+    expect(Trip::where('shift_block_id', $inProgressBlock->shift_block_id)->value('leg_direction'))->toBeNull();
+
+    Artisan::call('shift-blocks:repair-leg-directions', ['--apply' => true]);
+    $output = Artisan::output();
+    expect($output)->toContain('legs_updated_or_would_update=0');
 });

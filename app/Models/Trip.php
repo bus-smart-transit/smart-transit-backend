@@ -60,6 +60,7 @@ class Trip extends Model
         'trip_date',
         'departure_time',
         'trip_type',
+        'leg_direction',
         'return_departure_time',
         'status',
         'dispatch_decision',

@@ -58,6 +58,7 @@ Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
 Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
+Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1');
 Route::get('trips', [TripController::class, 'availableTrips']);
 
 // Remove:
@@ -120,6 +121,8 @@ Route::prefix('operator')
         Route::delete('stops/{stopId}', [StopController::class, 'destroy']);
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
+        Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
+        Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
         Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
         Route::post('fleets', [FleetController::class, 'store']);
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
@@ -292,6 +295,8 @@ Route::prefix('admin')
         Route::apiResource('routes', RouteController::class);
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
+        Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
+        Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
 
         // Fleets
         Route::apiResource('fleets', FleetController::class);

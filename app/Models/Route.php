@@ -42,6 +42,10 @@ class Route extends Model
         'destination',
         'route_name',
     ];
+
+    // Canonical geometry is served by GET /routes/{id}/geometry as GeoJSON;
+    // the raw column (hex EWKB on Postgres) must never leak into payloads.
+    protected $hidden = ['route_geometry'];
     public function routeStops()
     {
         return $this->hasMany(RouteStop::class, 'route_id', 'route_id')->orderBy('stop_order');

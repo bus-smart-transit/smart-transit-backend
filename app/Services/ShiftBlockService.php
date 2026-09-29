@@ -120,12 +120,14 @@ class ShiftBlockService
             'scheduled_date' => $scheduledDate,
         ]);
 
-        foreach ($legTimes as $time) {
+        foreach ($legTimes as $index => $time) {
             $this->tripRepository->create([
                 'fleet_route_id' => $fleetRoute->fleet_route_id,
                 'company_user_id' => $payload['company_user_id'],
                 'trip_date' => $scheduledDate,
                 'departure_time' => $time,
+                'trip_type' => 'one_way',
+                'leg_direction' => $this->expectedLegDirectionFromIndex($index),
                 'status' => 'scheduled',
                 'driver_id' => $payload['driver_id'],
                 'conductor_id' => $payload['conductor_id'],
@@ -417,6 +419,15 @@ class ShiftBlockService
                 $field => ["This {$role} has not had the minimum {$thresholdHours}-hour rest period since their last shift block."],
             ]);
         }
+    }
+
+    /**
+     * B1: direction alternates by leg order for any configured leg count:
+     * outbound, reverse, outbound, reverse, ...
+     */
+    private function expectedLegDirectionFromIndex(int $index): string
+    {
+        return $index % 2 === 0 ? 'outbound' : 'reverse';
     }
 
     /**

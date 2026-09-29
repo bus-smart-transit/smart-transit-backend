@@ -20,6 +20,7 @@ class FleetLocationRepository
                     'location'    => $locationStr,
                     'heading'     => $payload['heading']    ?? null,
                     'speed_kmh'   => $payload['speed_kmh']  ?? null,
+                    'accuracy_m'  => $payload['accuracy']   ?? null,
                     'recorded_at' => now(),
                     'updated_at'  => now(),
                 ]
@@ -40,14 +41,15 @@ class FleetLocationRepository
         // PostgreSQL + PostGIS path
         DB::statement("
             INSERT INTO fleet_locations
-                (fleet_id, trip_id, location, heading, speed_kmh, recorded_at, updated_at)
+                (fleet_id, trip_id, location, heading, speed_kmh, accuracy_m, recorded_at, updated_at)
             VALUES
-                (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, NOW(), NOW())
+                (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, NOW(), NOW())
             ON CONFLICT (fleet_id) DO UPDATE SET
                 trip_id     = EXCLUDED.trip_id,
                 location    = EXCLUDED.location,
                 heading     = EXCLUDED.heading,
                 speed_kmh   = EXCLUDED.speed_kmh,
+                accuracy_m  = EXCLUDED.accuracy_m,
                 recorded_at = EXCLUDED.recorded_at,
                 updated_at  = NOW()
         ", [
@@ -57,6 +59,7 @@ class FleetLocationRepository
             $payload['latitude'],  // lat second
             $payload['heading']    ?? null,
             $payload['speed_kmh']  ?? null,
+            $payload['accuracy']   ?? null,
         ]);
 
         // Append to history (time-series, no conflict handling)
@@ -159,10 +162,12 @@ class FleetLocationRepository
                 ST_X(fl.location::geometry) AS longitude,
                 fl.heading,
                 fl.speed_kmh,
+                fl.accuracy_m,
                 fl.recorded_at,
                 f.plate_number,
                 f.fleet_type,
                 t.status AS trip_status,
+                t.leg_direction,
                 t.last_acknowledged_stop_id,
                 t.last_acknowledged_at,
                 fr.route_id,

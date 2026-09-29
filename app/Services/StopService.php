@@ -1,19 +1,25 @@
 <?php
 namespace App\Services;
+use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 
 class StopService
 {
-    public function __construct(private StopRepository $stopRepository)
-    {
+    public function __construct(
+        private StopRepository $stopRepository,
+        private StopCoordinateValidator $coordinateValidator,
+        private RouteStopRepository $routeStopRepository,
+        private RouteGeometryGenerator $geometryGenerator,
+    ) {
     }
 
     // $payload = ['stop_name','latitude','longitude']
     public function createStop(array $payload): object
     {
         $coordinates = $this->resolveCoordinates($payload);
+        $this->coordinateValidator->assertValid($coordinates['latitude'], $coordinates['longitude']);
 
         return $this->stopRepository->create([
             'stop_name' => $payload['stop_name'],
@@ -42,6 +48,7 @@ class StopService
             ];
 
             $coordinates = $this->resolveCoordinates($mergeSource, false);
+            $this->coordinateValidator->assertValid($coordinates['latitude'], $coordinates['longitude']);
             $update['latitude'] = $coordinates['latitude'];
             $update['longitude'] = $coordinates['longitude'];
         }
@@ -49,6 +56,14 @@ class StopService
         unset($update['location']);
 
         $this->stopRepository->update($stopId, $update);
+
+        // Moving a stop changes every route that passes through it.
+        if (isset($update['latitude']) || isset($update['longitude'])) {
+            foreach ($this->routeStopRepository->routeIdsForStop($stopId) as $routeId) {
+                $this->geometryGenerator->queueRegeneration($routeId);
+            }
+        }
+
         return $this->stopRepository->findById($stopId);
     }
 
@@ -72,7 +87,7 @@ class StopService
         $queryParts = array_filter([
             $payload['location'] ?? null,
             $payload['stop_name'] ?? null,
-            'Davao City Philippines',
+            config('route_geometry.geocode_region_hint'),
         ]);
         $query = trim(implode(' ', $queryParts));
 

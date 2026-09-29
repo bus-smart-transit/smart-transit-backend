@@ -26,12 +26,12 @@ class FleetLocationController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        $this->fleetLocationService->updateLocation(
+        $accepted = $this->fleetLocationService->updateLocation(
             $companyUser->company_user_id,
             $request->validated()
         );
 
-        return $this->success(null, 'Location updated');
+        return $this->success(['accepted' => $accepted], $accepted ? 'Location updated' : 'Location ignored: GPS accuracy too low');
     }
 
     // Passenger / Public: all active bus positions for the live map

@@ -45,7 +45,24 @@ class RouteStop extends Model
         'stop_id',
         'stop_order',
         'distance_from_origin_km',
+        'distance_from_origin_m',
+        'stop_type',
+        'snapped_latitude',
+        'snapped_longitude',
+        'scheduled_offset_min',
     ];
+
+    public const STOP_TYPES = ['terminal', 'stop', 'pass_through'];
+
+    protected static function booted(): void
+    {
+        // Keep the metre column in step with the km source of truth.
+        static::saving(function (RouteStop $routeStop) {
+            if ($routeStop->isDirty('distance_from_origin_km') && $routeStop->distance_from_origin_km !== null) {
+                $routeStop->distance_from_origin_m = (int) round((float) $routeStop->distance_from_origin_km * 1000);
+            }
+        });
+    }
 
     /**
      * Get the route that owns this record.

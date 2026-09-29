@@ -38,7 +38,7 @@ class DriverNavigationService
         }
 
         $routeId = $trip->fleetRoute->route_id;
-        $stops = $this->routeStopRepository->getOrderedStops($routeId);
+        $stops = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $trip->leg_direction);
         $acknowledgedStopId = (int) ($trip->last_acknowledged_stop_id ?? 0);
 
         $acknowledgedOrder = null;
@@ -95,6 +95,7 @@ class DriverNavigationService
             'trip_id' => $trip->trip_id,
             'trip_status' => $trip->status,
             'route_name' => $trip->fleetRoute->route->route_name,
+            'leg_direction' => $trip->leg_direction ?? 'outbound',
             'last_acknowledged_stop_id' => $trip->last_acknowledged_stop_id,
             'stops' => $stopsData
         ];
