@@ -102,34 +102,32 @@ test('driver can start shift and retrieve open shift status', function () {
         ->assertJsonPath('data.open_shift.trip_id', $trip->trip_id);
 });
 
-test('driver cannot end shift while trip is active but can end after completion', function () {
+test('driver cannot end a shift (403); End Trip closes the driver shift instead', function () {
     $driver = makeShiftStaffUser('driver');
-    $trip = makeAssignedDriverTrip($driver, 'boarding');
+    $trip = makeAssignedDriverTrip($driver, 'departed');
 
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
 
+    // B5: only the Chauffeur ends a shift; enforced by the API, not just the UI.
     $this->actingAs($driver)->postJson('/api/driver/shift/end')
-        ->assertStatus(422)
-        ->assertJsonValidationErrors(['shift']);
-
-    $trip->status = 'completed';
-    $trip->save();
-
-    $endResponse = $this->actingAs($driver)->postJson('/api/driver/shift/end');
-
-    $endResponse
-        ->assertSuccessful()
-        ->assertJsonPath('status', 'success')
-        ->assertJsonPath('message', 'Driver shift ended');
-
-    $shiftLogId = $endResponse->json('data.shift.shift_log_id');
-    expect($shiftLogId)->not()->toBeNull();
+        ->assertForbidden()
+        ->assertJsonPath('status', 'error');
 
     $this->assertDatabaseHas('driver_shift_logs', [
-        'shift_log_id' => $shiftLogId,
         'driver_company_user_id' => $driver->companyProfile->company_user_id,
         'trip_id' => $trip->trip_id,
-        'end_source' => 'dashboard',
+        'ended_at' => null,
+    ]);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/complete")->assertSuccessful();
+
+    $this->assertDatabaseMissing('driver_shift_logs', [
+        'trip_id' => $trip->trip_id,
+        'ended_at' => null,
+    ]);
+    $this->assertDatabaseHas('driver_shift_logs', [
+        'trip_id' => $trip->trip_id,
+        'end_source' => 'trip_status_change',
     ]);
 });
 
@@ -196,7 +194,8 @@ test('driver current trip is unavailable after the shift is closed', function ()
     $trip->status = 'completed';
     $trip->save();
 
-    $this->actingAs($driver)->postJson('/api/driver/shift/end')->assertSuccessful();
+    // End Trip (not End Shift) closes the driver's shift.
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/complete")->assertSuccessful();
 
     $this->actingAs($driver)
         ->getJson('/api/driver/trips/current')

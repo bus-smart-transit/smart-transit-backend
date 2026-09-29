@@ -87,6 +87,9 @@ class Trip extends Model
     {
         return [
             'trip_date' => 'date:Y-m-d',
+            'boarding_at' => 'datetime',
+            'departed_at' => 'datetime',
+            'completed_at' => 'datetime',
         ];
     }
 

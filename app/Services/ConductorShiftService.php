@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Repositories\ConductorShiftLogRepository;
+use App\Repositories\TripRepository;
 use Illuminate\Validation\ValidationException;
 
 class ConductorShiftService
@@ -10,6 +11,7 @@ class ConductorShiftService
     public function __construct(
         private ConductorShiftLogRepository $conductorShiftLogRepository,
         private TripService $tripService,
+        private TripRepository $tripRepository,
     ) {}
 
     public function getStatusForConductor(int $conductorCompanyUserId): array
@@ -77,6 +79,18 @@ class ConductorShiftService
             throw ValidationException::withMessages([
                 'shift' => ['Cannot end shift while your assigned trip is still boarding or in transit. Complete the trip first.'],
             ]);
+        }
+
+        // B5: End Shift closes the whole shift block, so every leg must be
+        // completed or cancelled first.
+        $blockId = $openShift->trip?->shift_block_id;
+        if ($blockId) {
+            $unfinished = $this->tripRepository->countUnfinishedLegs((int) $blockId);
+            if ($unfinished > 0) {
+                throw ValidationException::withMessages([
+                    'shift' => ["Cannot end shift: {$unfinished} leg(s) of your shift block are not completed or cancelled yet."],
+                ]);
+            }
         }
 
         return $this->conductorShiftLogRepository->markEnded($openShift, $endSource);

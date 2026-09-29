@@ -8,8 +8,7 @@ use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
-use App\Services\DriverShiftService;
-use App\Services\FleetPairingService;
+use App\Services\TripActionGuard;
 use App\Services\TripService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -21,6 +20,7 @@ class TripController extends Controller
     public function __construct(
         private TripService $tripService,
         private DriverNavigationService $navigationService,
+        private TripActionGuard $tripActionGuard,
     ) {}
 
     // Operator / Admin: schedule a new trip
@@ -84,61 +84,52 @@ class TripController extends Controller
         return $this->success($result, 'Dispatch decision saved successfully');
     }
 
-    // Operator / Admin: open boarding
+    // Driver / Operator / Admin: open boarding (idempotent)
     public function startBoarding(Request $request, int $tripId)
     {
-        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+        [$denied, $alreadyApplied] = $this->tripActionGuard->evaluate($request, $tripId, 'boarding');
+        if ($denied) {
             return $denied;
         }
 
-        $guard = $this->assertDriverShiftForTrip($request, $tripId);
-        if ($guard !== null) {
-            return $guard;
+        if (! $alreadyApplied) {
+            $result = $this->tripService->startBoarding($tripId);
+            AuditLogger::log('trip.boarding', 'Trip', $tripId);
         }
 
-        $result = $this->tripService->startBoarding($tripId);
-        AuditLogger::log('trip.boarding', 'Trip', $tripId);
-
-        return $this->success($result, 'Boarding started');
+        return $this->success($result ?? $this->tripService->getTrip($tripId), 'Boarding started');
     }
 
-    // Driver / Operator / Admin: mark departed
+    // Driver / Operator / Admin: mark departed (idempotent)
     public function depart(Request $request, int $tripId)
     {
-        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+        [$denied, $alreadyApplied] = $this->tripActionGuard->evaluate($request, $tripId, 'depart');
+        if ($denied) {
             return $denied;
         }
 
-        $pairingStatus = app(FleetPairingService::class)->getPairingStatus($tripId);
-        if (! ($pairingStatus['paired'] ?? false)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => $pairingStatus['reason'] ?? 'Pairing required before departing the trip.',
-            ], 423);
+        if (! $alreadyApplied) {
+            $result = $this->tripService->departTrip($tripId);
+            AuditLogger::log('trip.depart', 'Trip', $tripId);
         }
 
-        $guard = $this->assertDriverShiftForTrip($request, $tripId);
-        if ($guard !== null) {
-            return $guard;
-        }
-
-        $result = $this->tripService->departTrip($tripId);
-        AuditLogger::log('trip.depart', 'Trip', $tripId);
-
-        return $this->success($result, 'Trip departed');
+        return $this->success($result ?? $this->tripService->getTrip($tripId), 'Trip departed');
     }
 
-    // Driver / Operator / Admin: mark completed
+    // Driver / Operator / Admin: End Trip (idempotent)
     public function complete(Request $request, int $tripId)
     {
-        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+        [$denied, $alreadyApplied] = $this->tripActionGuard->evaluate($request, $tripId, 'complete');
+        if ($denied) {
             return $denied;
         }
 
-        $result = $this->tripService->completeTrip($tripId);
-        AuditLogger::log('trip.complete', 'Trip', $tripId);
+        if (! $alreadyApplied) {
+            $result = $this->tripService->completeTrip($tripId);
+            AuditLogger::log('trip.complete', 'Trip', $tripId);
+        }
 
-        return $this->success($result, 'Trip completed');
+        return $this->success($result ?? $this->tripService->getTrip($tripId), 'Trip completed');
     }
 
     // Operator / Admin: manually override a trip's status (e.g. driver
@@ -385,52 +376,9 @@ class TripController extends Controller
         return $this->success($trips, 'Available trips retrieved successfully');
     }
 
-    private function assertDriverShiftForTrip(Request $request, int $tripId)
-    {
-        $user = $request->user();
-        $role = strtolower((string) data_get($user, 'role', data_get($user, 'role_name', '')));
-        if (! $user || $role === '' || $role !== 'driver') {
-            return null;
-        }
-
-        $companyUser = $user->companyProfile;
-        if (! $companyUser) {
-            return $this->error('Staff profile not found.', 404);
-        }
-
-        $shiftStatus = app(DriverShiftService::class)->getStatusForDriver($companyUser->company_user_id);
-        $openShift = $shiftStatus['open_shift'] ?? null;
-        $hasOpenShift = (bool) ($shiftStatus['has_open_shift'] ?? false);
-
-        if (! $hasOpenShift || ! $openShift) {
-            return $this->error('Start your shift first.', 422);
-        }
-
-        if ((int) ($openShift->trip_id ?? 0) !== $tripId) {
-            return $this->error('Your active shift is assigned to a different trip.', 422);
-        }
-
-        return null;
-    }
-
+    // Ownership rule lives in TripActionGuard (single implementation).
     private function assertOperatorOwnsTrip(Request $request, int $tripId)
     {
-        $user = $request->user();
-        if (! $user || $user->role !== 'operator') {
-            return null;
-        }
-
-        $companyUserId = $user->companyProfile?->company_user_id;
-        if (! $companyUserId) {
-            return $this->error('Staff profile not found.', 404);
-        }
-
-        $ownsTrip = $this->tripService->isOwnedByOperator($tripId, $companyUserId);
-
-        if (! $ownsTrip) {
-            return $this->error('You do not have permission to modify this trip.', 403);
-        }
-
-        return null;
+        return $this->tripActionGuard->assertOperatorOwnsTrip($request, $tripId);
     }
 }

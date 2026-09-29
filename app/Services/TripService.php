@@ -138,6 +138,11 @@ class TripService
         return $this->tripRepository->findById($tripId);
     }
 
+    public function getTrip(int $tripId): ?object
+    {
+        return $this->tripRepository->findById($tripId);
+    }
+
     public function departTrip(int $tripId): object
     {
         $trip = $this->tripRepository->findById($tripId);
@@ -165,10 +170,26 @@ class TripService
         // completion silently blocks every later shift start for that
         // staff member. Auto-close it here instead of relying on the
         // driver/conductor remembering to press "End Shift".
-        $this->driverShiftLogRepository->endOpenForTrip($tripId);
-        $this->conductorShiftLogRepository->endOpenForTrip($tripId);
+        $this->closeShiftLogsForTrip($tripId);
 
         return $this->tripRepository->findById($tripId);
+    }
+
+    /**
+     * B5: the driver's shift log always closes with the trip (End Trip is the
+     * driver's last action). The Chauffeur's log closes with a standalone
+     * trip, but for a shift-block leg it stays open until the Chauffeur
+     * presses End Shift once every leg is finished; a forgotten one is still
+     * auto-closed as stale when the next shift starts (Batch 17 safety net).
+     */
+    private function closeShiftLogsForTrip(int $tripId): void
+    {
+        $this->driverShiftLogRepository->endOpenForTrip($tripId);
+
+        $trip = $this->tripRepository->findById($tripId);
+        if (empty($trip?->shift_block_id)) {
+            $this->conductorShiftLogRepository->endOpenForTrip($tripId);
+        }
     }
 
     /**
@@ -212,8 +233,7 @@ class TripService
         // reasoning applies to an admin/operator override landing on
         // 'completed' or 'cancelled'.
         if (in_array($newStatus, ['completed', 'cancelled'], true)) {
-            $this->driverShiftLogRepository->endOpenForTrip($tripId);
-            $this->conductorShiftLogRepository->endOpenForTrip($tripId);
+            $this->closeShiftLogsForTrip($tripId);
         }
 
         // Notifications audit follow-up: passengers who already paid for a

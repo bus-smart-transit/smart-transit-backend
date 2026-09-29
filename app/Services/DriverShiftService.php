@@ -63,23 +63,4 @@ class DriverShiftService
             'start_source' => $startSource,
         ])->fresh(['trip.fleetRoute.route', 'fleet']);
     }
-
-    public function endShiftForDriver(int $driverCompanyUserId, string $endSource = 'dashboard'): object
-    {
-        $openShift = $this->driverShiftLogRepository->findOpenByDriver($driverCompanyUserId);
-        if (!$openShift) {
-            throw ValidationException::withMessages([
-                'shift' => ['No active shift found to end.'],
-            ]);
-        }
-
-        $tripStatus = strtolower((string) ($openShift->trip?->status ?? ''));
-        if (in_array($tripStatus, ['boarding', 'departed', 'in-progress'], true)) {
-            throw ValidationException::withMessages([
-                'shift' => ['Cannot end shift while your assigned trip is still boarding or in transit. Complete the trip first.'],
-            ]);
-        }
-
-        return $this->driverShiftLogRepository->markEnded($openShift, $endSource);
-    }
 }

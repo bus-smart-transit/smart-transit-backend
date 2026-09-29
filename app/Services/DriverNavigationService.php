@@ -159,21 +159,32 @@ class DriverNavigationService
     }
 
     /**
-     * Mark a stop as acknowledged/reached by driver
+     * Mark a stop as acknowledged/reached by the driver. Idempotent and
+     * monotonic: repeating a stop, or acknowledging one already behind the
+     * last acknowledged stop, changes nothing. Only a live trip on this
+     * route's stops can be acknowledged.
      */
     public function acknowledgeStop(int $driverId, int $stopId): bool
     {
         $trip = $this->tripRepository->findCurrentByDriver($driverId);
-        
-        if (!$trip) {
+
+        if (!$trip || !$trip->fleetRoute || !in_array($trip->status, ['departed', 'in-progress'], true)) {
             return false;
         }
 
-        // Update trip with last acknowledged stop
-        return $this->tripRepository->updateLastAcknowledgedStop(
-            $trip->trip_id,
-            $stopId
-        );
+        $stops = $this->routeStopRepository->getOrderedStopsForDirection($trip->fleetRoute->route_id, $trip->leg_direction);
+        $target = $stops->firstWhere('stop_id', $stopId);
+        if (!$target) {
+            return false;
+        }
+
+        $lastId = (int) ($trip->last_acknowledged_stop_id ?? 0);
+        $last = $lastId > 0 ? $stops->firstWhere('stop_id', $lastId) : null;
+        if ($last && (int) $target->stop_order <= (int) $last->stop_order) {
+            return true;
+        }
+
+        return $this->tripRepository->updateLastAcknowledgedStop($trip->trip_id, $stopId);
     }
 
     private function resolvePassengerDisplayName(object $ticket): string

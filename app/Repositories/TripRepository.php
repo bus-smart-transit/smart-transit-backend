@@ -9,6 +9,11 @@ use Illuminate\Support\Facades\DB;
 
 class TripRepository
 {
+    // Which of a staff member's same-day trips is "current": live states first,
+    // then overdue, then upcoming; ties broken by departure_time then trip_id
+    // so the earliest unfinished shift-block leg is always the one picked.
+    private const CURRENT_LEG_STATUS_ORDER = "CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END";
+
     private const ACTIVE_STATUSES = ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'];
 
     public function create(array $payload): Trip
@@ -114,8 +119,10 @@ class TripRepository
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', $this->serviceToday())
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
             ->orderBy('trip_date', 'asc')
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
     }
 
@@ -127,14 +134,34 @@ class TripRepository
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', $this->serviceToday())
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
             ->orderBy('trip_date', 'asc')
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
+    }
+
+    /**
+     * Legs of a shift block that are neither completed nor cancelled.
+     */
+    public function countUnfinishedLegs(int $shiftBlockId): int
+    {
+        return Trip::where('shift_block_id', $shiftBlockId)
+            ->whereNotIn('status', ['completed', 'cancelled'])
+            ->count();
     }
 
     public function updateStatus(int $tripId, string $status): bool
     {
-        return Trip::where('trip_id', $tripId)->update(['status' => $status]) > 0;
+        $update = ['status' => $status];
+
+        // B5: server-side timestamps, set only on the first transition into a state.
+        $stamp = ['boarding' => 'boarding_at', 'departed' => 'departed_at', 'completed' => 'completed_at'][$status] ?? null;
+        if ($stamp !== null) {
+            Trip::where('trip_id', $tripId)->whereNull($stamp)->update([$stamp => now()]);
+        }
+
+        return Trip::where('trip_id', $tripId)->update($update) > 0;
     }
 
     /**
@@ -242,7 +269,9 @@ class TripRepository
             ->where('driver_id', $driverCompanyUserId)
             ->whereDate('trip_date', $this->serviceToday())
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
     }
 
@@ -254,7 +283,9 @@ class TripRepository
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereDate('trip_date', $this->serviceToday())
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
     }
 
@@ -267,7 +298,9 @@ class TripRepository
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', '>=', $this->serviceToday())
             ->orderBy('trip_date', 'asc')
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
     }
 
@@ -280,7 +313,9 @@ class TripRepository
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', '>=', $this->serviceToday())
             ->orderBy('trip_date', 'asc')
-            ->orderByRaw("CASE status WHEN 'in-progress' THEN 0 WHEN 'departed' THEN 1 WHEN 'boarding' THEN 2 WHEN 'delayed' THEN 3 WHEN 'scheduled' THEN 4 ELSE 5 END")
+            ->orderByRaw(self::CURRENT_LEG_STATUS_ORDER)
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
             ->first();
     }
 

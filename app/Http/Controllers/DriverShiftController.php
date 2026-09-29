@@ -38,16 +38,11 @@ class DriverShiftController extends Controller
         ], 'Driver shift started');
     }
 
+    // B5: End Shift belongs to the Chauffeur (conductor). A driver ends a
+    // trip (PATCH trips/{id}/complete), which also closes the driver's shift log.
     public function end(Request $request)
     {
-        $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
-
-        $shift = $this->driverShiftService->endShiftForDriver($companyUser->company_user_id);
-
-        return $this->success([
-            'shift' => $this->formatShift($shift),
-        ], 'Driver shift ended');
+        return $this->error('Only the Chauffeur can end a shift. Drivers end the trip instead.', 403);
     }
 
     private function formatShift(?object $shift): ?array
