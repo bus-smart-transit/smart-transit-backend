@@ -17,7 +17,7 @@ class FleetRepository
 
     public function all(): Collection
     {
-        return Fleet::where('status', 'active')->get();
+        return Fleet::with('fleetRoutes.route')->where('status', 'active')->get();
     }
 
     public function update(int $fleetId, array $payload): bool

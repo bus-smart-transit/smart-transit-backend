@@ -2,6 +2,7 @@
 namespace App\Services;
 use App\Repositories\FleetRepository;
 use App\Repositories\FleetRouteRepository;
+use Illuminate\Support\Facades\DB;
 
 class FleetService
 {
@@ -11,18 +12,36 @@ class FleetService
     ) {
     }
 
-    // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type']
+    // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type', 'routes' => [['route_id','start_time','end_time'], ...]]
     public function registerFleet(array $payload, int $staffId): object
     {
         // Auto-calculate capacity from seated + standing
         $capacity = (intval($payload['seated_capacity'] ?? 0) + intval($payload['standing_capacity'] ?? 0));
-        
-        return $this->fleetRepository->create(array_merge(
-            $payload,
-            ['company_user_id' => $staffId],
-            ['capacity' => $capacity],
-            ['status' => 'active']
-        ));
+        $routes = $payload['routes'] ?? [];
+        unset($payload['routes']);
+
+        // B3: the fleet row and its fleets_routes rows are written atomically so
+        // a fleet can never be saved while its selected routes are silently lost.
+        return DB::transaction(function () use ($payload, $staffId, $capacity, $routes) {
+            $fleet = $this->fleetRepository->create(array_merge(
+                $payload,
+                ['company_user_id' => $staffId],
+                ['capacity' => $capacity],
+                ['status' => 'active']
+            ));
+
+            foreach ($routes as $route) {
+                $this->fleetRouteRepository->create([
+                    'fleet_id' => $fleet->fleet_id,
+                    'route_id' => $route['route_id'],
+                    'start_time' => $route['start_time'],
+                    'end_time' => $route['end_time'],
+                    'status' => 'active',
+                ]);
+            }
+
+            return $fleet->load('fleetRoutes.route');
+        });
     }
 
     public function listFleets(): object

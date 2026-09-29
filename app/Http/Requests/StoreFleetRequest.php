@@ -13,7 +13,11 @@ class StoreFleetRequest extends FormRequest
             'plate_number' => 'required|string|unique:fleets,plate_number',
             'seated_capacity' => 'required|integer|min:0',
             'standing_capacity' => 'required|integer|min:0',
-            'fleet_type' => 'required|in:public,private'
+            'fleet_type' => 'required|in:public,private',
+            'routes' => 'sometimes|array|max:20',
+            'routes.*.route_id' => 'required|integer|exists:routes,route_id|distinct',
+            'routes.*.start_time' => 'required|date_format:H:i',
+            'routes.*.end_time' => 'required|date_format:H:i',
         ];
     }
 }
