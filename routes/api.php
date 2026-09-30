@@ -18,6 +18,7 @@ use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TripController;
+use App\Http\Controllers\TripAssignmentRequestController;
 use App\Http\Controllers\TripNotificationController;
 use App\Http\Controllers\UserNotificationController;
 use App\Http\Controllers\ShiftBlockController;
@@ -140,6 +141,11 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
         Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
+
+        // Batch 24 (C6): driver/Chauffeur requests to be released ("For Approval")
+        Route::get('trip-requests', [TripAssignmentRequestController::class, 'index']);
+        Route::patch('trip-requests/{requestId}/approve', [TripAssignmentRequestController::class, 'approve'])->middleware('throttle:30,1');
+        Route::patch('trip-requests/{requestId}/reject', [TripAssignmentRequestController::class, 'reject'])->middleware('throttle:30,1');
 
         // Batch 18: Shift Block Hand-off System
         Route::get('shift-blocks', [ShiftBlockController::class, 'index']);

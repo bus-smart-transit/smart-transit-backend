@@ -182,7 +182,7 @@ test('scheduling a new trip with driver and conductor assigned up front notifies
 // — arguably too slow for an event that needs urgent action (finding a
 // replacement before departure). Accept previously notified no one at all.
 // Both now also push to the Operator immediately.
-test('a driver declining a trip notifies the owning Operator', function () {
+test('a driver asking to decline a trip notifies the owning Operator', function () {
     $operator = makeStaffMemberForAssignmentNotificationTest('operator');
     $driver = makeStaffMemberForAssignmentNotificationTest('driver');
     $trip = makeUnassignedTripForNotificationTest($operator->company_user_id);
@@ -191,11 +191,12 @@ test('a driver declining a trip notifies the owning Operator', function () {
     $this->mock(FcmService::class, function ($mock) use ($operator) {
         $mock->shouldReceive('sendToUser')
             ->once()
-            ->withArgs(fn ($user, $title) => $user->user_id === $operator->user_id && $title === 'Trip Declined — Needs Replacement')
+            ->withArgs(fn ($user, $title) => $user->user_id === $operator->user_id && $title === 'Trip Decline Request')
             ->andReturn(true);
     });
 
-    app(TripService::class)->declineTrip($trip->trip_id, 'driver', $driver->company_user_id);
+    app(\App\Services\TripAssignmentRequestService::class)
+        ->requestDecline($trip->trip_id, 'driver', $driver->company_user_id, 'sick', null);
 });
 
 test('a conductor accepting a trip notifies the owning Operator', function () {

@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 /**
  * S2 (Batch 12): lightweight Operator-facing notification feed — currently
- * only populated by trip declines (TripService::declineTrip()). Any
+ * only populated by trip decline requests and their approvals (TripAssignmentRequestService). Any
  * operator/admin can view/dismiss; notifications are not addressed to a
  * specific user.
  */

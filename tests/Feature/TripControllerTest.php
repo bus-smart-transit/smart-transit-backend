@@ -970,7 +970,7 @@ test('conductor_id is mass-assignable on Trip', function () {
 
 // ─── S2 (Batch 12): decline assigned trip ────────────────────────────────────
 
-test('driver can decline their assigned trip, returning it to the unassigned pool', function () {
+test('driver decline goes For Approval: the assignment stays until the operator decides', function () {
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $conductor = makeStaffUser('conductor');
@@ -999,23 +999,31 @@ test('driver can decline their assigned trip, returning it to the unassigned poo
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", [
         'reason_code' => 'sick',
     ])->assertSuccessful()
-        ->assertJsonPath('message', 'Trip declined. It has been returned to the unassigned pool.');
+        ->assertJsonPath('message', 'Request sent. It is now waiting for Operator approval.')
+        ->assertJsonPath('data.driver_request_status', 'for_approval');
 
+    // Assignment-level status only (D6): the driver, PIN and trip status are untouched.
     $this->assertDatabaseHas('trips', [
         'trip_id' => $trip->trip_id,
-        'driver_id' => null,
+        'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
         'status' => 'scheduled',
     ]);
-    $this->assertDatabaseMissing('fleet_daily_pins', ['trip_id' => $trip->trip_id]);
-    $this->assertDatabaseHas('audit_logs', ['action' => 'trip.decline']);
+    $this->assertDatabaseHas('fleet_daily_pins', ['trip_id' => $trip->trip_id]);
+    $this->assertDatabaseHas('trip_assignment_requests', [
+        'trip_id' => $trip->trip_id,
+        'role' => 'driver',
+        'status' => 'for_approval',
+        'reason_code' => 'sick',
+    ]);
+    $this->assertDatabaseHas('audit_logs', ['action' => 'trip.decline_requested']);
     $this->assertDatabaseHas('trip_notifications', [
         'trip_id' => $trip->trip_id,
-        'type' => 'trip_declined',
+        'type' => 'trip_decline_requested',
     ]);
 });
 
-test('conductor can decline their assigned trip', function () {
+test('conductor can request to decline their assigned trip', function () {
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $conductor = makeStaffUser('conductor');
@@ -1034,11 +1042,12 @@ test('conductor can decline their assigned trip', function () {
     ]);
 
     $this->actingAs($conductor)->patchJson("/api/conductor/trips/{$trip->trip_id}/decline")
-        ->assertSuccessful();
+        ->assertSuccessful()
+        ->assertJsonPath('data.conductor_request_status', 'for_approval');
 
     $this->assertDatabaseHas('trips', [
         'trip_id' => $trip->trip_id,
-        'conductor_id' => null,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
         'driver_id' => $driver->companyProfile->company_user_id,
     ]);
 });

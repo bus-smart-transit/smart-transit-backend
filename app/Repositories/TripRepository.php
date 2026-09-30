@@ -47,7 +47,7 @@ class TripRepository
 
         $today = $this->serviceToday();
 
-        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('company_user_id', $operatorCompanyUserId)
             ->orderBy('trip_date', 'asc')
             ->orderBy('departure_time', 'asc');
@@ -85,7 +85,7 @@ class TripRepository
 
         $today = $this->serviceToday();
 
-        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('driver_id', $driverCompanyUserId)
             ->orderBy('trip_date', 'asc')
             ->orderBy('departure_time', 'asc');
@@ -101,7 +101,7 @@ class TripRepository
 
         $today = $this->serviceToday();
 
-        $query = Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        $query = Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->orderBy('trip_date', 'asc')
             ->orderBy('departure_time', 'asc');
@@ -115,7 +115,7 @@ class TripRepository
     {
         $this->markOverdueScheduledAsDelayed();
 
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', $this->serviceToday())
@@ -130,7 +130,7 @@ class TripRepository
     {
         $this->markOverdueScheduledAsDelayed();
 
-        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user'])
+        return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereDate('trip_date', $this->serviceToday())

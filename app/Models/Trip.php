@@ -50,6 +50,8 @@ class Trip extends Model
      */
     protected $table = 'trips';
 
+    protected $appends = ['driver_request_status', 'conductor_request_status'];
+
     protected $primaryKey = 'trip_id';
     /**
      * The attributes that are mass assignable from structural payloads.
@@ -140,5 +142,44 @@ class Trip extends Model
     public function tickets()
     {
         return $this->hasMany(Ticket::class, 'trip_id', 'trip_id');
+    }
+
+    /**
+     * Batch 24 (C6): assignment-level decline requests (D6), separate from the
+     * trip lifecycle status.
+     */
+    public function assignmentRequests()
+    {
+        return $this->hasMany(TripAssignmentRequest::class, 'trip_id', 'trip_id');
+    }
+
+    /** 'for_approval' | 'rejected' | null, only when assignmentRequests is eager loaded. */
+    public function getDriverRequestStatusAttribute(): ?string
+    {
+        return $this->requestStatusFor('driver', $this->driver_id);
+    }
+
+    public function getConductorRequestStatusAttribute(): ?string
+    {
+        return $this->requestStatusFor('conductor', $this->conductor_id);
+    }
+
+    private function requestStatusFor(string $role, ?int $assignedStaffId): ?string
+    {
+        if (! $assignedStaffId || ! $this->relationLoaded('assignmentRequests')) {
+            return null;
+        }
+
+        // Only a request from the staff member currently holding the
+        // assignment counts (a replacement starts with a clean slate).
+        $latest = $this->assignmentRequests
+            ->where('role', $role)
+            ->where('staff_company_user_id', $assignedStaffId)
+            ->sortByDesc('id')
+            ->first();
+
+        return in_array($latest?->status, [TripAssignmentRequest::FOR_APPROVAL, TripAssignmentRequest::REJECTED], true)
+            ? $latest->status
+            : null;
     }
 }

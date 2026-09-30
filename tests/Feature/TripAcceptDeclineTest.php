@@ -129,16 +129,18 @@ test('reassigning a driver resets acceptance and requires re-accepting', functio
     expect($reassigned->driver_accepted_at)->toBeNull();
 });
 
-test('declining a trip clears acceptance for that role', function () {
+test('a trip that was already accepted can no longer be declined (C6 guardrail)', function () {
     [, $driver] = makeStaffMemberForTripAccept('driver');
     $trip = makeTripForAcceptTest($driver->company_user_id, $driver->company_user_id, null);
 
     app(TripService::class)->acceptTrip($trip->trip_id, 'driver', $driver->company_user_id);
     expect($trip->fresh()->driver_accepted_at)->not->toBeNull();
 
-    app(TripService::class)->declineTrip($trip->trip_id, 'driver', $driver->company_user_id);
+    expect(fn () => app(\App\Services\TripAssignmentRequestService::class)
+        ->requestDecline($trip->trip_id, 'driver', $driver->company_user_id, 'sick', null))
+        ->toThrow(\Illuminate\Validation\ValidationException::class);
 
-    $declined = $trip->fresh();
-    expect($declined->driver_id)->toBeNull();
-    expect($declined->driver_accepted_at)->toBeNull();
+    $unchanged = $trip->fresh();
+    expect((int) $unchanged->driver_id)->toBe($driver->company_user_id);
+    expect($unchanged->driver_accepted_at)->not->toBeNull();
 });

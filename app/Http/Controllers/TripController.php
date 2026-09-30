@@ -9,6 +9,7 @@ use App\Http\Requests\UpdateTripStatusRequest;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
 use App\Services\TripActionGuard;
+use App\Services\TripAssignmentRequestService;
 use App\Services\TripService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class TripController extends Controller
         private TripService $tripService,
         private DriverNavigationService $navigationService,
         private TripActionGuard $tripActionGuard,
+        private TripAssignmentRequestService $assignmentRequestService,
     ) {}
 
     // Operator / Admin: schedule a new trip
@@ -159,35 +161,20 @@ class TripController extends Controller
         return $this->success($trip, 'Trip status updated');
     }
 
-    // Driver: decline their assigned trip — returns to the unassigned pool
-    // for the Operator to manually reassign. Reason is optional.
+    // Driver/Chauffeur: ask to be released from an assigned trip. The request
+    // goes to the Operator as "For Approval" (assignment-level status, D6); the
+    // assignment itself only changes when the Operator approves.
     public function declineAsDriver(Request $request, int $tripId)
     {
-        $companyUser = $request->user()?->companyProfile;
-        if (! $companyUser) {
-            return $this->error('Staff profile not found.', 404);
-        }
-
-        $validated = $request->validate([
-            'reason_code' => ['nullable', 'string', 'in:sick,vehicle_issue,schedule_conflict,other'],
-            'reason_text' => ['nullable', 'string', 'max:500'],
-        ]);
-
-        $trip = $this->tripService->declineTrip(
-            $tripId,
-            'driver',
-            $companyUser->company_user_id,
-            $validated['reason_code'] ?? null,
-            $validated['reason_text'] ?? null,
-        );
-
-        AuditLogger::log('trip.decline', 'Trip', $tripId, array_merge(['role' => 'driver'], $validated));
-
-        return $this->success($trip, 'Trip declined. It has been returned to the unassigned pool.');
+        return $this->requestDecline($request, $tripId, 'driver');
     }
 
-    // Conductor: decline their assigned trip — same rules as the driver path.
     public function declineAsConductor(Request $request, int $tripId)
+    {
+        return $this->requestDecline($request, $tripId, 'conductor');
+    }
+
+    private function requestDecline(Request $request, int $tripId, string $role)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
@@ -195,21 +182,21 @@ class TripController extends Controller
         }
 
         $validated = $request->validate([
-            'reason_code' => ['nullable', 'string', 'in:sick,vehicle_issue,schedule_conflict,other'],
-            'reason_text' => ['nullable', 'string', 'max:500'],
+            'reason_code' => ['nullable', 'string', 'in:'.implode(',', TripAssignmentRequestService::REASON_CODES)],
+            'reason_text' => ['nullable', 'string', 'max:'.TripAssignmentRequestService::REASON_TEXT_MAX, 'required_if:reason_code,other'],
         ]);
 
-        $trip = $this->tripService->declineTrip(
+        $trip = $this->assignmentRequestService->requestDecline(
             $tripId,
-            'conductor',
+            $role,
             $companyUser->company_user_id,
             $validated['reason_code'] ?? null,
             $validated['reason_text'] ?? null,
         );
 
-        AuditLogger::log('trip.decline', 'Trip', $tripId, array_merge(['role' => 'conductor'], $validated));
+        AuditLogger::log('trip.decline_requested', 'Trip', $tripId, ['role' => $role, 'reason_code' => $validated['reason_code'] ?? null]);
 
-        return $this->success($trip, 'Trip declined. It has been returned to the unassigned pool.');
+        return $this->success($trip, 'Request sent. It is now waiting for Operator approval.');
     }
 
     // Batch 15, Item 1: Driver accepts their assigned trip.
