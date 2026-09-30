@@ -49,6 +49,24 @@ class BookingController extends Controller
         return $this->success($result, 'Booking stops retrieved successfully');
     }
 
+    // The search results: the next departures for a journey, from a Manila date on. `limit`
+    // gives the short list; without it, every match in the search window.
+    public function trips(Request $request)
+    {
+        $data = $request->validate([
+            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
+            'date' => 'required|date_format:Y-m-d',
+            'seat_type' => 'nullable|in:seated,standing',
+            'limit' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        return $this->success(
+            $this->tripResolverService->upcoming($data, isset($data['limit']) ? (int) $data['limit'] : null),
+            'Trips retrieved'
+        );
+    }
+
     // Book Later: the departures of one Manila date that fit the journey, to choose from.
     public function departures(Request $request)
     {

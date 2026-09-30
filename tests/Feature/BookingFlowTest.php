@@ -236,3 +236,49 @@ it('tells the date picker today in Manila and the booking window', function () u
 
     expect($meta)->toBe(['today' => '2026-10-04', 'max_advance_days' => (int) config('booking.max_advance_days')]);
 });
+
+
+it('lists the next trips for a journey from a chosen date, filling across days, with times and the fare', function () use ($eastWest) {
+    [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
+    $q = ['origin_stop_id' => $stops['E2']->stop_id, 'destination_stop_id' => $stops['E4']->stop_id];
+
+    bkTrip($fleetRoute, $operator, '2026-10-04', '06:00'); // E2 at 06:15, already gone (now 07:00)
+    $a = bkTrip($fleetRoute, $operator, '2026-10-04', '08:00');
+    $b = bkTrip($fleetRoute, $operator, '2026-10-04', '13:00');
+    $c = bkTrip($fleetRoute, $operator, '2026-10-05', '06:00');
+    $d = bkTrip($fleetRoute, $operator, '2026-10-06', '06:00');
+    bkTrip($fleetRoute, $operator, '2026-10-05', '09:00', 'reverse'); // wrong direction
+    bkTrip($fleetRoute, $operator, '2026-10-20', '06:00'); // beyond the search window
+
+    $short = $this->getJson('/api/booking/trips?'.http_build_query($q + ['date' => '2026-10-04', 'limit' => 3]))->assertSuccessful()->json('data');
+    // Today has two buses left; the list fills up from the next day.
+    expect(array_column($short['trips'], 'trip_id'))->toBe([$a->trip_id, $b->trip_id, $c->trip_id]);
+    expect($short['total'])->toBe(4);
+    expect($short['trips'][0]['boarding_time'])->toBe('08:15');
+    expect($short['trips'][0]['arrival_time'])->toBe('08:45');
+    expect($short['trips'][0]['duration_minutes'])->toBe(30);
+    expect($short['trips'][0]['seats_left'])->toBe(30);
+    expect($short['trips'][0]['fare'])->toBeNumeric()->toBeGreaterThan(0);
+
+    $all = $this->getJson('/api/booking/trips?'.http_build_query($q + ['date' => '2026-10-04']))->assertSuccessful()->json('data');
+    expect(array_column($all['trips'], 'trip_id'))->toBe([$a->trip_id, $b->trip_id, $c->trip_id, $d->trip_id]);
+
+    $none = $this->getJson('/api/booking/trips?'.http_build_query($q + ['date' => '2026-10-25']))->assertSuccessful()->json('data');
+    expect($none['trips'])->toBe([]);
+    expect($none['message'])->toContain('No departures');
+});
+
+it('validates the trips search: stops, date window and limit', function () use ($eastWest) {
+    [, $stops] = bkRoute($eastWest);
+    $q = ['origin_stop_id' => $stops['E2']->stop_id, 'destination_stop_id' => $stops['E4']->stop_id, 'date' => '2026-10-04'];
+    $get = fn (array $over) => $this->getJson('/api/booking/trips?'.http_build_query(array_merge($q, $over)));
+
+    $get(['date' => '2026-10-03'])->assertStatus(422)->assertJsonValidationErrors(['date']);
+    $get(['date' => '2026-12-31'])->assertStatus(422)->assertJsonValidationErrors(['date']);
+    $get(['date' => 'soon'])->assertStatus(422)->assertJsonValidationErrors(['date']);
+    $get(['destination_stop_id' => $stops['E2']->stop_id])->assertStatus(422);
+    $get(['origin_stop_id' => 99999])->assertStatus(422);
+    $get(['limit' => 0])->assertStatus(422)->assertJsonValidationErrors(['limit']);
+    $get(['limit' => 500])->assertStatus(422)->assertJsonValidationErrors(['limit']);
+    $get([])->assertSuccessful();
+});
