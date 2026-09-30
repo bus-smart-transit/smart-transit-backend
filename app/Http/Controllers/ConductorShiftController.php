@@ -23,6 +23,7 @@ class ConductorShiftController extends Controller
             'open_shift' => $this->formatShift($status['open_shift']),
             'latest_shift' => $this->formatShift($status['latest_shift']),
             'has_open_shift' => (bool) $status['has_open_shift'],
+            'end_blocked_reason' => $status['end_blocked_reason'],
         ], 'Conductor shift status retrieved');
     }
 

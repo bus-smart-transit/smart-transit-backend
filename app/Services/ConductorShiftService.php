@@ -23,7 +23,34 @@ class ConductorShiftService
             'open_shift' => $openShift,
             'latest_shift' => $latestShift,
             'has_open_shift' => $openShift !== null,
+            'end_blocked_reason' => $openShift ? $this->endBlockedReason($openShift) : null,
         ];
+    }
+
+    /**
+     * C7: why End Shift is not allowed right now, or null when it is. This is
+     * the single source for both the status payload the dashboard reads and
+     * the guard in endShiftForConductor(), so the button state and the server
+     * can never disagree.
+     */
+    private function endBlockedReason(object $openShift): ?string
+    {
+        $tripStatus = strtolower((string) ($openShift->trip?->status ?? ''));
+        if (in_array($tripStatus, ['boarding', 'departed', 'in-progress'], true)) {
+            return 'Cannot end shift while your assigned trip is still boarding or in transit. Complete the trip first.';
+        }
+
+        // B5: End Shift closes the whole shift block, so every leg must be
+        // completed or cancelled first.
+        $blockId = $openShift->trip?->shift_block_id;
+        if ($blockId) {
+            $unfinished = $this->tripRepository->countUnfinishedLegs((int) $blockId);
+            if ($unfinished > 0) {
+                return "Cannot end shift: {$unfinished} leg(s) of your shift block are not completed or cancelled yet.";
+            }
+        }
+
+        return null;
     }
 
     public function startShiftForConductor(int $conductorCompanyUserId, string $startSource = 'dashboard'): object
@@ -74,23 +101,9 @@ class ConductorShiftService
             ]);
         }
 
-        $tripStatus = strtolower((string) ($openShift->trip?->status ?? ''));
-        if (in_array($tripStatus, ['boarding', 'departed', 'in-progress'], true)) {
-            throw ValidationException::withMessages([
-                'shift' => ['Cannot end shift while your assigned trip is still boarding or in transit. Complete the trip first.'],
-            ]);
-        }
-
-        // B5: End Shift closes the whole shift block, so every leg must be
-        // completed or cancelled first.
-        $blockId = $openShift->trip?->shift_block_id;
-        if ($blockId) {
-            $unfinished = $this->tripRepository->countUnfinishedLegs((int) $blockId);
-            if ($unfinished > 0) {
-                throw ValidationException::withMessages([
-                    'shift' => ["Cannot end shift: {$unfinished} leg(s) of your shift block are not completed or cancelled yet."],
-                ]);
-            }
+        $blocked = $this->endBlockedReason($openShift);
+        if ($blocked !== null) {
+            throw ValidationException::withMessages(['shift' => [$blocked]]);
         }
 
         return $this->conductorShiftLogRepository->markEnded($openShift, $endSource);

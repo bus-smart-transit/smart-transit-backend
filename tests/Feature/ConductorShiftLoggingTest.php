@@ -133,6 +133,33 @@ test('conductor cannot end shift while trip is active but can end after completi
     ]);
 });
 
+test('shift status tells the dashboard why End Shift is blocked, matching the server guard', function () {
+    $conductor = makeConductorShiftStaffUser('conductor');
+    $trip = makeAssignedConductorTrip($conductor, 'boarding');
+
+    $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
+        ->assertSuccessful()
+        ->assertJsonPath('data.has_open_shift', false)
+        ->assertJsonPath('data.end_blocked_reason', null);
+
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+
+    $blocked = $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
+        ->assertSuccessful()
+        ->json('data.end_blocked_reason');
+    expect($blocked)->toContain('boarding or in transit');
+
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/end')
+        ->assertStatus(422)
+        ->assertJsonPath('errors.shift.0', $blocked);
+
+    $trip->status = 'completed';
+    $trip->save();
+
+    $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
+        ->assertJsonPath('data.end_blocked_reason', null);
+});
+
 test('conductor current trip prefers the open shift trip when another same-day trip exists', function () {
     $conductor = makeShiftStaffUser('conductor');
     $operator = makeShiftStaffUser('operator');
