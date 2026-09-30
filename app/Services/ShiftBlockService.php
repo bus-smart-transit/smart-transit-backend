@@ -432,9 +432,9 @@ class ShiftBlockService
 
     /**
      * Location Match Rule support: the route's origin stop, treated as the
-     * "home terminal" for this route (single-route scope — Davao–Tagum —
-     * per Batch 18; a generic per-block terminal designation is future
-     * work alongside multi-route support, see SDD.md Section 10.1).
+     * "home terminal" for whichever route the leg is on (data-driven, no
+     * route is special-cased; a generic per-block terminal designation is
+     * future work, see SDD.md Section 10.1).
      */
     private function resolveHomeTerminalStop(Trip $leg, bool $originStop = false): ?Stop
     {

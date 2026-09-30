@@ -23,17 +23,20 @@ use Illuminate\Support\Facades\DB;
  */
 class DavaoTagumRouteSeeder extends Seeder
 {
-    /** [name, lat, lng, km from origin, stop_type] in travel order. */
+    /** [name, lat, lng, km from origin, stop_type, municipality] in travel order. */
     private const CORRIDOR = [
-        ['Ecoland Terminal', 7.0525, 125.6069, 0.0, 'terminal'],
-        ['Bankerohan Public Market', 7.0691, 125.6083, 3.5, 'stop'],
-        ['Agdao Public Market', 7.0870, 125.6300, 6.5, 'stop'],
-        ['Buhangin Crossing', 7.1230, 125.6270, 12.0, 'stop'],
-        ['Bunawan Public Market', 7.2310, 125.6420, 22.0, 'stop'],
-        ['Panabo City Public Market', 7.3080, 125.6840, 33.0, 'stop'],
-        ['Carmen Public Market', 7.3600, 125.7080, 43.0, 'stop'],
-        ['Tagum City Terminal', 7.4478, 125.8078, 56.0, 'terminal'],
+        ['Ecoland Terminal', 7.0525, 125.6069, 0.0, 'terminal', 'Davao City'],
+        ['Bankerohan Public Market', 7.0691, 125.6083, 3.5, 'stop', 'Davao City'],
+        ['Agdao Public Market', 7.0870, 125.6300, 6.5, 'stop', 'Davao City'],
+        ['Buhangin Crossing', 7.1230, 125.6270, 12.0, 'stop', 'Davao City'],
+        ['Bunawan Public Market', 7.2310, 125.6420, 22.0, 'stop', 'Davao City'],
+        ['Panabo City Public Market', 7.3080, 125.6840, 33.0, 'stop', 'Panabo City'],
+        ['Carmen Public Market', 7.3600, 125.7080, 43.0, 'stop', 'Carmen'],
+        ['Tagum City Terminal', 7.4478, 125.8078, 56.0, 'terminal', 'Tagum City'],
     ];
+
+    /** Municipality of the Ecoland - Toril mock stops (all inside Davao City). */
+    private const ECOLAND_TORIL_MUNICIPALITY = 'Davao City';
 
     public function run(): void
     {
@@ -52,11 +55,12 @@ class DavaoTagumRouteSeeder extends Seeder
     {
         RouteStop::where('route_id', $route->route_id)->delete();
 
-        foreach (self::CORRIDOR as $i => [$name, $lat, $lng, $km, $type]) {
+        foreach (self::CORRIDOR as $i => [$name, $lat, $lng, $km, $type, $municipality]) {
             $stop = Stop::firstOrCreate(
                 ['stop_name' => $name],
                 ['latitude' => $lat, 'longitude' => $lng]
             );
+            $stop->update(['municipality' => $municipality]);
 
             RouteStop::create([
                 'route_id' => $route->route_id,
@@ -82,6 +86,11 @@ class DavaoTagumRouteSeeder extends Seeder
         }
 
         $route = Route::where('route_name', 'Ecoland - Toril')->first();
+        if ($route) {
+            Stop::whereIn('stop_id', RouteStop::where('route_id', $route->route_id)->pluck('stop_id'))
+                ->update(['municipality' => self::ECOLAND_TORIL_MUNICIPALITY]);
+        }
+
         $bankerohan = Stop::where('stop_name', 'Bankerohan Public Market')->first();
         if (! $route || ! $bankerohan) {
             return;

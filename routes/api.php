@@ -13,6 +13,7 @@ use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
 use App\Http\Controllers\ReportingController;
+use App\Http\Controllers\RegionController;
 use App\Http\Controllers\RewardController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\StaffAuthController;
@@ -64,6 +65,7 @@ Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteF
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
 Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
+Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:60,1');
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1');
 Route::get('trips', [TripController::class, 'availableTrips']);

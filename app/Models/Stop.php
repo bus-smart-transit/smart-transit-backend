@@ -40,6 +40,7 @@ class Stop extends Model
         'longitude',
         'latitude',
         'geofence_radius_m',
+        'municipality',
     ];
 
     public function routeStops()

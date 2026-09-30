@@ -12,10 +12,11 @@ class StopService
         private StopCoordinateValidator $coordinateValidator,
         private RouteStopRepository $routeStopRepository,
         private RouteGeometryGenerator $geometryGenerator,
+        private RegionService $regionService,
     ) {
     }
 
-    // $payload = ['stop_name','latitude','longitude']
+    // $payload = ['stop_name','latitude','longitude','municipality'(optional)]
     public function createStop(array $payload): object
     {
         $coordinates = $this->resolveCoordinates($payload);
@@ -25,6 +26,7 @@ class StopService
             'stop_name' => $payload['stop_name'],
             'latitude' => $coordinates['latitude'],
             'longitude' => $coordinates['longitude'],
+            'municipality' => $this->regionService->canonicalMunicipality($payload['municipality'] ?? null),
         ]);
     }
 
@@ -54,6 +56,10 @@ class StopService
         }
 
         unset($update['location']);
+
+        if (array_key_exists('municipality', $update)) {
+            $update['municipality'] = $this->regionService->canonicalMunicipality($update['municipality']);
+        }
 
         $this->stopRepository->update($stopId, $update);
 
@@ -87,7 +93,7 @@ class StopService
         $queryParts = array_filter([
             $payload['location'] ?? null,
             $payload['stop_name'] ?? null,
-            config('route_geometry.geocode_region_hint'),
+            config('region.geocode_hint'),
         ]);
         $query = trim(implode(' ', $queryParts));
 

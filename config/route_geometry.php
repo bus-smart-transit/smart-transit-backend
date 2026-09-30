@@ -4,9 +4,9 @@
 |--------------------------------------------------------------------------
 | Route geometry, snapping and GPS acceptance settings (Batch 24, Stage 1)
 |--------------------------------------------------------------------------
-| Nothing here is route- or city-specific. The region bounding box is the
-| configured service area (default: Davao Region) and is used only to
-| validate stop coordinates; adding a route needs data, not code.
+| Nothing here is route- or city-specific; adding a route needs data, not code.
+| Region-wide values (name, centre, bounding box, geocoding hint) live in
+| config/region.php.
 */
 
 return [
@@ -26,16 +26,6 @@ return [
         'timeout_s' => (int) env('ORS_TIMEOUT_S', 20),
     ],
 
-    // Service-area bounding box used for stop-coordinate validation.
-    'region_bbox' => [
-        'min_lat' => (float) env('REGION_MIN_LAT', 5.3),
-        'max_lat' => (float) env('REGION_MAX_LAT', 8.1),
-        'min_lng' => (float) env('REGION_MIN_LNG', 124.9),
-        'max_lng' => (float) env('REGION_MAX_LNG', 126.7),
-    ],
-
-    // Text appended to free-text stop geocoding queries (never a literal in code).
-    'geocode_region_hint' => env('GEOCODE_REGION_HINT', 'Davao Region Philippines'),
 
     // A stop farther than this from the road network is rejected (D5 snap threshold).
     'max_stop_off_network_m' => (float) env('STOP_MAX_OFF_NETWORK_M', 150),

@@ -73,6 +73,7 @@ class DriverNavigationService
                 'route_stop_id' => $routeStop->id,
                 'stop_id' => $routeStop->stop_id,
                 'stop_name' => $routeStop->stop->stop_name,
+                'municipality' => $routeStop->stop->municipality,
                 'sequence_number' => $routeStop->stop_order,
                 'distance_from_origin_km' => $routeStop->distance_from_origin_km,
                 'latitude' => $routeStop->stop->latitude !== null ? (float) $routeStop->stop->latitude : null,

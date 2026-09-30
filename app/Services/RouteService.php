@@ -48,6 +48,7 @@ class RouteService
             ->map(fn ($rs) => [
                 'stop_id' => $rs->stop_id,
                 'stop_name' => $rs->stop?->stop_name,
+                'municipality' => $rs->stop?->municipality,
                 'latitude' => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
                 'longitude' => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
                 'snapped_latitude' => $rs->snapped_latitude !== null ? (float) $rs->snapped_latitude : null,

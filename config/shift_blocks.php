@@ -4,9 +4,9 @@
  * Batch 18: Shift Block Hand-off System configuration.
  *
  * Per the batch spec: represented as named config values rather than a
- * `shift_block_templates` table, since this system is deliberately scoped
- * to a single reference route (Davao–Tagum) for now — a template table
- * would only make sense once multi-route support is built (see SDD.md
+ * `shift_block_templates` table, since the system currently runs on a
+ * small set of reference routes — a template table would only make sense
+ * once per-route block templates are needed (see SDD.md
  * Section 10.1, "Recommendations for Future Work"). Defaulting to a config
  * file (not a runtime-editable settings table) since there's no current
  * requirement for non-technical staff to change these without a deploy —

@@ -29,7 +29,7 @@ class StopCoordinateValidator
             return ['Coordinates are out of range (latitude -90..90, longitude -180..180).'];
         }
 
-        $box = config('route_geometry.region_bbox');
+        $box = config('region.bbox');
         if ($lat < $box['min_lat'] || $lat > $box['max_lat'] || $lng < $box['min_lng'] || $lng > $box['max_lng']) {
             return ['Coordinates are outside the configured service area (latitude/longitude may be swapped).'];
         }

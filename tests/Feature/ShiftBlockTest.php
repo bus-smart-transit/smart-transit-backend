@@ -5,6 +5,7 @@ use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\ShiftBlock;
+use App\Repositories\FleetLocationRepository;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Trip;
@@ -170,10 +171,10 @@ test('hand-off eligibility is false until the final leg is completed and fleet i
     // Mark final leg completed but fleet is far from the terminal.
     $finalLeg = Trip::where('shift_block_id', $blockId)->orderByDesc('trip_id')->first();
     $finalLeg->update(['status' => 'completed']);
-    DB::table('fleet_locations')->updateOrInsert(['fleet_id' => $fleet->fleet_id], [
-        'location' => '8.0,126.5', // far away
-        'recorded_at' => now(),
-        'updated_at' => now(),
+    // Written through the repository so the fixture is valid on SQLite and PostGIS alike.
+    app(FleetLocationRepository::class)->upsertLocation([
+        'fleet_id' => $fleet->fleet_id, 'trip_id' => null,
+        'latitude' => 8.0, 'longitude' => 126.5, // far away
     ]);
 
     $eligibility = $this->actingAs($conductorUser)
@@ -182,8 +183,9 @@ test('hand-off eligibility is false until the final leg is completed and fleet i
     expect($eligibility['eligible'])->toBeFalse();
 
     // Now put the fleet within the origin terminal's geofence.
-    DB::table('fleet_locations')->where('fleet_id', $fleet->fleet_id)->update([
-        'location' => $originStop->latitude . ',' . $originStop->longitude,
+    app(FleetLocationRepository::class)->upsertLocation([
+        'fleet_id' => $fleet->fleet_id, 'trip_id' => null,
+        'latitude' => (float) $originStop->latitude, 'longitude' => (float) $originStop->longitude,
     ]);
 
     $eligibility = $this->actingAs($conductorUser)
@@ -210,10 +212,9 @@ test('conductor-initiated hand-off sets audit_status to pending_review and revok
 
     ShiftBlock::where('shift_block_id', $blockId)->update(['status' => 'in_progress']);
     Trip::where('shift_block_id', $blockId)->orderByDesc('trip_id')->first()->update(['status' => 'completed']);
-    DB::table('fleet_locations')->updateOrInsert(['fleet_id' => $fleet->fleet_id], [
-        'location' => $originStop->latitude . ',' . $originStop->longitude,
-        'recorded_at' => now(),
-        'updated_at' => now(),
+    app(FleetLocationRepository::class)->upsertLocation([
+        'fleet_id' => $fleet->fleet_id, 'trip_id' => null,
+        'latitude' => (float) $originStop->latitude, 'longitude' => (float) $originStop->longitude,
     ]);
 
     // Give the conductor a live token to prove it gets revoked.

@@ -11,6 +11,11 @@ class StoreStopRequest extends FormRequest
             'location'  => 'nullable|string|max:255',
             'latitude'  => 'nullable|numeric|between:-90,90|required_with:longitude',
             'longitude' => 'nullable|numeric|between:-180,180|required_with:latitude',
+            'municipality' => ['nullable', 'string', 'max:100', function (string $attribute, mixed $value, \Closure $fail) {
+                if ($value !== null && app(\App\Services\RegionService::class)->canonicalMunicipality($value) === null) {
+                    $fail('The municipality must be one listed in the region configuration.');
+                }
+            }],
         ];
     }
 }
