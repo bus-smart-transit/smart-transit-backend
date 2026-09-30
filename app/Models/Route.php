@@ -41,6 +41,11 @@ class Route extends Model
         'origin',
         'destination',
         'route_name',
+        'allow_custom_dropoff',
+    ];
+
+    protected $casts = [
+        'allow_custom_dropoff' => 'boolean',
     ];
 
     // Canonical geometry is served by GET /routes/{id}/geometry as GeoJSON;

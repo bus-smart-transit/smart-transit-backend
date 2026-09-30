@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 use App\Services\RouteService;
 use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\AddRouteStopRequest;
+use App\Http\Requests\UpdateRouteCustomDropoffRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -70,6 +71,16 @@ class RouteController extends Controller
         return $updated
             ? $this->success(null, 'Stop type updated successfully')
             : $this->error('Route stop not found.', 404);
+    }
+
+    // Operator/admin: D5 per-route switch for custom drop-off (default off).
+    public function updateCustomDropoff(UpdateRouteCustomDropoffRequest $request, int $routeId)
+    {
+        $updated = $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
+
+        return $updated
+            ? $this->success(['allow_custom_dropoff' => (bool) $request->validated('allow_custom_dropoff')], 'Custom drop-off setting updated')
+            : $this->error('Route not found.', 404);
     }
 
     private function direction(Request $request): string

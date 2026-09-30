@@ -41,6 +41,33 @@ class PaymentService
      * Actual `tickets` rows are only created once the webhook confirms
      * payment — see PaymentService::finalizeOnlinePayment().
      */
+    /**
+     * C4: what the return page shows. The webhook is the source of truth for
+     * payment state; this only reports what it (or the hold expiry job) has
+     * already recorded, so the return URL can refresh the UI without ever
+     * deciding whether a payment succeeded.
+     *
+     * @return array{transaction_reference: string, status: string, hold_expires_at: string|null}|null
+     */
+    public function onlineStatus(string $transactionReference): ?array
+    {
+        $payment = $this->paymentRepository->findByTransactionReference($transactionReference);
+        if (! $payment || $payment->payment_method !== 'online') {
+            return null;
+        }
+
+        $status = (string) $payment->status;
+        if ($status === 'pending' && $payment->hold_expires_at && Carbon::parse($payment->hold_expires_at)->isPast()) {
+            $status = 'expired';
+        }
+
+        return [
+            'transaction_reference' => $payment->transaction_reference,
+            'status' => $status,
+            'hold_expires_at' => $payment->hold_expires_at ? Carbon::parse($payment->hold_expires_at)->toIso8601String() : null,
+        ];
+    }
+
     public function checkoutOnline(?int $passengerId, ?string $guestEmail, array $payload): array
     {
         return RlsContext::withBypass(function () use ($passengerId, $guestEmail, $payload) {
@@ -201,8 +228,9 @@ class PaymentService
                 $session = $this->payMongoService->createCheckoutSession(
                     $payment,
                     $prepared['line_items'],
-                    $returnBaseUrl.'/checkout/success',
-                    $returnBaseUrl.'/checkout/cancel',
+                    $returnBaseUrl.'/checkout/success?ref='.urlencode($payment->transaction_reference),
+                    $returnBaseUrl.'/checkout/cancel?ref='.urlencode($payment->transaction_reference),
+                    $payload['billing_email'] ?? null,
                 );
 
                 Log::info('Checkout gateway session created', [
@@ -425,6 +453,13 @@ class PaymentService
         RlsContext::withBypass(function () use ($payment) {
             if ($payment->status === 'failed') {
                 Log::info('PaymentService: payment already marked failed, skipping duplicate release.', ['payment_id' => $payment->payment_id]);
+
+                return;
+            }
+
+            // A late/out-of-order failure event must never undo a confirmed payment.
+            if ($payment->status === 'paid') {
+                Log::warning('PaymentService: ignoring failure event for an already-paid payment.', ['payment_id' => $payment->payment_id]);
 
                 return;
             }

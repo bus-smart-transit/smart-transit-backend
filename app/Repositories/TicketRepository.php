@@ -221,6 +221,21 @@ class TicketRepository
     }
 
     /**
+     * D5: passengers who asked to get off at a custom point (no destination stop
+     * recorded), still on their way. The bus needs to know to stop there.
+     */
+    public function getRequestedStopsForTrip(int $tripId): Collection
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->whereIn('status', ['valid', 'boarded'])
+            ->whereNull('alighted_at')
+            ->whereNull('destination_stop_id')
+            ->whereNotNull('destination_lat')
+            ->whereNotNull('destination_lng')
+            ->get(['ticket_id', 'destination_lat', 'destination_lng', 'destination_label']);
+    }
+
+    /**
      * Get all boarded passengers with full details
      */
     public function getBoardedPassengersDetails(int $tripId): Collection

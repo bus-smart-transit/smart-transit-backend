@@ -75,6 +75,7 @@ class Ticket extends Model
         'origin_lng',
         'destination_lat',
         'destination_lng',
+        'destination_label',
     ];
 
     protected function casts(): array

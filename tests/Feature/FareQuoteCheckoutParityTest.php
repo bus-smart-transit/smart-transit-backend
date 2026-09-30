@@ -148,10 +148,8 @@ test('coordinate-based browse-time quote matches checkout-time computed price', 
     $reserved = app(TicketService::class)->reserveAndPrice([
         'trip_id' => $trip->trip_id,
         'seat_type' => 'seated',
-        'origin_lat' => (float) $originStop->latitude,
-        'origin_lng' => (float) $originStop->longitude,
-        'destination_lat' => (float) $destinationStop->latitude,
-        'destination_lng' => (float) $destinationStop->longitude,
+        'origin_stop_id' => $originStop->stop_id,
+        'destination_stop_id' => $destinationStop->stop_id,
     ]);
 
     expect((float) $reserved['amount'])->toBe((float) $browseTimeAmount);

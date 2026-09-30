@@ -17,26 +17,20 @@ class OnlineCheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'booking_date' => 'required|date|after_or_equal:today',
+            'booking_date' => ['required', 'date', 'after_or_equal:today', 'before_or_equal:'.now(config('app.timezone'))->addDays((int) config('booking.max_advance_days'))->toDateString()],
             'items' => 'required|array|min:1',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             'items.*.seat_type' => 'required|string|in:seated,standing',
 
-            // Stop-based item: both stop IDs required together, only when
-            // coordinates aren't supplied for that same item.
-            'items.*.origin_stop_id' => 'required_without_all:items.*.origin_lat,items.*.origin_lng|nullable|integer|exists:stops,stop_id',
+            // Boarding is always a known stop (B7). The drop-off is either a stop, or a
+            // custom drop-off pin (validated and snapped server-side, D5).
+            'items.*.origin_stop_id' => 'required|integer|exists:stops,stop_id',
             'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.destination_lng|nullable|integer|exists:stops,stop_id',
-
-            // Custom-point item: all four coordinates required together,
-            // only when stop IDs aren't supplied for that same item.
-            'items.*.origin_lat' => 'required_without:items.*.origin_stop_id|nullable|numeric|between:-90,90',
-            'items.*.origin_lng' => 'required_without:items.*.origin_stop_id|nullable|numeric|between:-180,180',
             'items.*.destination_lat' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-90,90',
             'items.*.destination_lng' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-180,180',
-            'items.*.origin_label' => ['nullable', 'string', 'max:255'],
             'items.*.destination_label' => ['nullable', 'string', 'max:255'],
-
-            'payment_channel' => 'required|string|in:gcash,maya,card',
+            // C4: the passenger picks GCash or Maya; PayMongo's hosted checkout collects the rest.
+            'payment_channel' => 'required|string|in:gcash,maya',
             'guest_email' => ['nullable', 'email'],
             'return_base_url' => ['nullable', 'url', 'max:255'],
             'reward_points_to_use' => ['nullable', 'integer', 'min:1'],

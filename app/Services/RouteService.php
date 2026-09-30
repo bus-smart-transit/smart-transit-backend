@@ -89,6 +89,11 @@ class RouteService
         $this->geometryGenerator->queueRegeneration($routeId);
     }
 
+    public function setAllowCustomDropoff(int $routeId, bool $allow): bool
+    {
+        return $this->routeRepository->update($routeId, ['allow_custom_dropoff' => $allow]);
+    }
+
     public function updateStopType(int $routeId, int $routeStopId, string $stopType): bool
     {
         return $this->routeStopRepository->updateStopType($routeId, $routeStopId, $stopType);

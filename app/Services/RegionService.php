@@ -30,6 +30,14 @@ class RegionService
         ];
     }
 
+    /** True when the point lies inside the configured region bounding box. */
+    public function contains(float $lat, float $lng): bool
+    {
+        $box = config('region.bbox');
+
+        return $lat >= $box['min_lat'] && $lat <= $box['max_lat'] && $lng >= $box['min_lng'] && $lng <= $box['max_lng'];
+    }
+
     /** Canonical spelling of a municipality/city from the region list, or null when unknown. */
     public function canonicalMunicipality(?string $name): ?string
     {

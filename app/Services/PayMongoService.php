@@ -27,31 +27,39 @@ class PayMongoService
         $this->client = $client ?? new PaymongoClient($this->secretKey);
     }
 
-    public function createCheckoutSession(object $payment, array $lineItems, string $successUrl, string $cancelUrl): array
+    /**
+     * C4: PayMongo's Checkout Session only requires line_items and
+     * payment_method_types; billing is optional (checked against the
+     * PayMongo docs), and the hosted page collects whatever else it needs. So no
+     * customer-information form exists in the app: an authenticated passenger's
+     * account email is passed as optional billing.email, nothing else is.
+     */
+    public function createCheckoutSession(object $payment, array $lineItems, string $successUrl, string $cancelUrl, ?string $billingEmail = null): array
     {
         $verifyOption = $this->resolveVerifyOption();
+        $methodType = ($payment->payment_channel ?? '') === 'maya' ? 'paymaya' : 'gcash';
+        $attributes = [
+            'send_email_receipt' => false,
+            'show_description' => true,
+            'show_line_items' => true,
+            'line_items' => $lineItems,
+            'payment_method_types' => [$methodType],
+            'success_url' => $successUrl,
+            'cancel_url' => $cancelUrl,
+            'reference_number' => $payment->transaction_reference,
+            'metadata' => [
+                'payment_id' => (string) $payment->payment_id,
+            ],
+        ];
+        if ($billingEmail) {
+            $attributes['billing'] = ['email' => $billingEmail];
+        }
 
         $response = Http::withBasicAuth($this->secretKey, '')
             ->withOptions(['verify' => $verifyOption])
             ->timeout(15)          // fail fast if PayMongo is unresponsive
             ->connectTimeout(5)    // TCP connect must succeed within 5s
-            ->post('https://api.paymongo.com/v1/checkout_sessions', [
-                'data' => [
-                    'attributes' => [
-                        'send_email_receipt' => false,
-                        'show_description' => true,
-                        'show_line_items' => true,
-                        'line_items' => $lineItems,
-                        'payment_method_types' => ['gcash', 'card', 'paymaya'],
-                        'success_url' => $successUrl,
-                        'cancel_url' => $cancelUrl,
-                        'reference_number' => $payment->transaction_reference,
-                        'metadata' => [
-                            'payment_id' => (string) $payment->payment_id,
-                        ],
-                    ],
-                ],
-            ]);
+            ->post('https://api.paymongo.com/v1/checkout_sessions', ['data' => ['attributes' => $attributes]]);
 
         $sessionData = $response->json('data') ?? [];
         Log::info('PayMongo checkout session created', [
@@ -100,7 +108,8 @@ class PayMongoService
 
     public function verifyAndConstructEvent(string $payload, ?string $signatureHeader): ?object
     {
-        if (!$signatureHeader) {
+        // An unset webhook secret would make the HMAC key empty and forgeable.
+        if (!$signatureHeader || trim((string) config('services.paymongo.webhook_secret')) === '') {
             return null;
         }
 
@@ -112,6 +121,10 @@ class PayMongoService
             ]);
         } catch (SignatureVerificationException $e) {
             Log::warning('PayMongo webhook signature verification failed.', ['error' => $e->getMessage()]);
+            return null;
+        } catch (\Throwable $e) {
+            // Malformed header/payload: reject as unauthenticated rather than 500.
+            Log::warning('PayMongo webhook rejected: malformed signature or payload.', ['error' => $e->getMessage()]);
             return null;
         }
     }

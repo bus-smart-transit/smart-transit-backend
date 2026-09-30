@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
 use App\Http\Controllers\DriverShiftController;
@@ -21,6 +22,7 @@ use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripAssignmentRequestController;
+use App\Http\Controllers\TripTimelineController;
 use App\Http\Controllers\TripNotificationController;
 use App\Http\Controllers\UserNotificationController;
 use App\Http\Controllers\ShiftBlockController;
@@ -69,6 +71,10 @@ Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:6
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1');
 Route::get('trips', [TripController::class, 'availableTrips']);
+Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:60,1');
+Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:60,1');
+Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:60,1');
+Route::get('booking/address-search', [BookingController::class, 'addressSearch'])->middleware('throttle:20,1');
 
 // Remove:
 
@@ -78,6 +84,7 @@ Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
     ->middleware(['auth.optional', 'throttle:10,15']);
 Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:10,15');
 Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
+Route::get('payments/status', [PaymentController::class, 'onlineStatus'])->middleware('throttle:30,1');
 
 // PASSENGER
 // Can: view own profile, get fare quotes, buy tickets, view own tickets
@@ -132,6 +139,7 @@ Route::prefix('operator')
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
         Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
+        Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
         Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
         Route::post('fleets', [FleetController::class, 'store']);
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
@@ -311,6 +319,7 @@ Route::prefix('admin')
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
         Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
+        Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
 
         // Fleets
         Route::apiResource('fleets', FleetController::class);

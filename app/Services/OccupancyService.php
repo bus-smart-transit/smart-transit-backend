@@ -182,6 +182,11 @@ class OccupancyService
                     ?? ($payloadOriginId ? ($payloadStopNames[$payloadOriginId] ?? null) : null);
                 $destinationStopName = $ticket->destinationStop?->stop_name
                     ?? ($payloadDestinationId ? ($payloadStopNames[$payloadDestinationId] ?? null) : null);
+                // D5: a custom drop-off is shown as a requested stop.
+                $requestedStop = $destinationStopName === null && $ticket->destination_lat !== null;
+                if ($requestedStop) {
+                    $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off');
+                }
 
                 return [
                     'ticket_id' => $ticket->ticket_id,
@@ -193,6 +198,7 @@ class OccupancyService
                     'is_boarded' => $ticket->status === 'boarded',
                     'origin_stop' => $originStopName,
                     'destination_stop' => $destinationStopName,
+                    'requested_stop' => $requestedStop,
                     'boarded_at' => $ticket->boarded_at,
                 ];
             })->values()->toArray(),

@@ -21,6 +21,11 @@ class PaymentRepository
         return Payment::with('tickets')->find($paymentId);
     }
 
+    public function findByTransactionReference(string $transactionReference): ?Payment
+    {
+        return Payment::where('transaction_reference', $transactionReference)->first();
+    }
+
     public function findByGatewayReference(string $gatewayReference): ?Payment
     {
         return Payment::where('gateway_reference', $gatewayReference)->first();

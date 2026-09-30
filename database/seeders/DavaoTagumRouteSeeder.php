@@ -23,16 +23,16 @@ use Illuminate\Support\Facades\DB;
  */
 class DavaoTagumRouteSeeder extends Seeder
 {
-    /** [name, lat, lng, km from origin, stop_type, municipality] in travel order. */
+    /** [name, lat, lng, km from origin, stop_type, municipality, scheduled offset min] in travel order. */
     private const CORRIDOR = [
-        ['Ecoland Terminal', 7.0525, 125.6069, 0.0, 'terminal', 'Davao City'],
-        ['Bankerohan Public Market', 7.0691, 125.6083, 3.5, 'stop', 'Davao City'],
-        ['Agdao Public Market', 7.0870, 125.6300, 6.5, 'stop', 'Davao City'],
-        ['Buhangin Crossing', 7.1230, 125.6270, 12.0, 'stop', 'Davao City'],
-        ['Bunawan Public Market', 7.2310, 125.6420, 22.0, 'stop', 'Davao City'],
-        ['Panabo City Public Market', 7.3080, 125.6840, 33.0, 'stop', 'Panabo City'],
-        ['Carmen Public Market', 7.3600, 125.7080, 43.0, 'stop', 'Carmen'],
-        ['Tagum City Terminal', 7.4478, 125.8078, 56.0, 'terminal', 'Tagum City'],
+        ['Ecoland Terminal', 7.0525, 125.6069, 0.0, 'terminal', 'Davao City', 0],
+        ['Bankerohan Public Market', 7.0691, 125.6083, 3.5, 'stop', 'Davao City', 8],
+        ['Agdao Public Market', 7.0870, 125.6300, 6.5, 'stop', 'Davao City', 14],
+        ['Buhangin Crossing', 7.1230, 125.6270, 12.0, 'stop', 'Davao City', 22],
+        ['Bunawan Public Market', 7.2310, 125.6420, 22.0, 'stop', 'Davao City', 38],
+        ['Panabo City Public Market', 7.3080, 125.6840, 33.0, 'stop', 'Panabo City', 52],
+        ['Carmen Public Market', 7.3600, 125.7080, 43.0, 'stop', 'Carmen', 68],
+        ['Tagum City Terminal', 7.4478, 125.8078, 56.0, 'terminal', 'Tagum City', 95],
     ];
 
     /** Municipality of the Ecoland - Toril mock stops (all inside Davao City). */
@@ -55,7 +55,7 @@ class DavaoTagumRouteSeeder extends Seeder
     {
         RouteStop::where('route_id', $route->route_id)->delete();
 
-        foreach (self::CORRIDOR as $i => [$name, $lat, $lng, $km, $type, $municipality]) {
+        foreach (self::CORRIDOR as $i => [$name, $lat, $lng, $km, $type, $municipality, $offsetMin]) {
             $stop = Stop::firstOrCreate(
                 ['stop_name' => $name],
                 ['latitude' => $lat, 'longitude' => $lng]
@@ -68,6 +68,7 @@ class DavaoTagumRouteSeeder extends Seeder
                 'stop_order' => $i + 1,
                 'distance_from_origin_km' => $km,
                 'stop_type' => $type,
+                'scheduled_offset_min' => $offsetMin,
             ]);
         }
     }

@@ -22,6 +22,17 @@ class PaymentController extends Controller
     {
     }
 
+    // C4: read-only payment state for the checkout return page (webhook-recorded, never client-set).
+    public function onlineStatus(Request $request)
+    {
+        $data = $request->validate(['ref' => 'required|string|max:64']);
+        $status = $this->paymentService->onlineStatus($data['ref']);
+
+        return $status
+            ? $this->success($status, 'Payment status retrieved')
+            : $this->error('Payment not found.', 404);
+    }
+
     // Passenger: buy one or more tickets in one transaction
     public function checkoutOnline(OnlineCheckoutRequest $request)
     {
@@ -35,7 +46,12 @@ class PaymentController extends Controller
 
             $guestEmail = $passengerId ? null : $request->validated('guest_email');
 
-            $result = $this->paymentService->checkoutOnline($passengerId, $guestEmail, $request->validated());
+            $payload = $request->validated();
+            // Optional PayMongo billing.email: the signed-in account's email, or the
+            // guest's own address. No other customer details are collected.
+            $payload['billing_email'] = $passengerId ? $request->user()->email : $guestEmail;
+
+            $result = $this->paymentService->checkoutOnline($passengerId, $guestEmail, $payload);
             return $this->success($result, 'Checkout initiated');
         } catch (ValidationException $e) {
             return $this->error('Checkout validation failed.', 422, $e->errors());

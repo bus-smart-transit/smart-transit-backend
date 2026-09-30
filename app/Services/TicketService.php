@@ -24,12 +24,13 @@ class TicketService
         private TripService $tripService,
         private RewardService $rewardService,
         private ReverseGeocodingService $reverseGeocodingService,
+        private CustomDropoffService $customDropoffService,
     ) {}
 
     /**
      * $item is one of two shapes:
      *   stop-based:   ['trip_id','seat_type','origin_stop_id','destination_stop_id']
-     *   custom-point: ['trip_id','seat_type','origin_lat','origin_lng','destination_lat','destination_lng']
+     *   custom drop-off: ['trip_id','seat_type','origin_stop_id','destination_lat','destination_lng'(,'destination_label')]
      */
     public function reserveAndPrice(array $item): array
     {
@@ -67,11 +68,11 @@ class TicketService
 
         if (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
             $reserved = $this->priceByStops($trip, $item);
-        } elseif (isset($item['origin_lat'], $item['origin_lng'], $item['destination_lat'], $item['destination_lng'])) {
-            $reserved = $this->priceByCoordinates($trip, $item);
+        } elseif (isset($item['origin_stop_id'], $item['destination_lat'], $item['destination_lng'])) {
+            $reserved = $this->priceByCustomDropoff($trip, $item);
         } else {
             throw ValidationException::withMessages([
-                'item' => ['Provide either origin_stop_id/destination_stop_id or origin_lat/lng + destination_lat/lng.'],
+                'item' => ['Provide origin_stop_id with either destination_stop_id or a custom drop-off (destination_lat/lng).'],
             ]);
         }
 
@@ -145,23 +146,46 @@ class TicketService
     }
 
     /**
-     * Re-derives price server-side from the trip's actual fleet + route via
-     * GPS interpolation — never trusts a client-supplied amount from an
-     * earlier browse-time quote.
+     * D5 custom drop-off: boarding is a known stop (B7), the drop-off is a pin.
+     * The pin is re-validated and snapped server-side (route flag, region,
+     * threshold, direction, spacing) and the fare is re-derived from the
+     * snapped point with the existing fare service (D4). The client's amount
+     * and coordinates are never trusted; the ticket stores the snapped point.
      */
-    private function priceByCoordinates(object $trip, array $item): array
+    private function priceByCustomDropoff(object $trip, array $item): array
     {
+        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $routeId = (int) $trip->fleetRoute->route_id;
+
+        $boardingRouteStop = $this->routeStopRepository->findByRouteAndStop($routeId, (int) $item['origin_stop_id']);
+        if (! $boardingRouteStop) {
+            throw ValidationException::withMessages([
+                'stop' => ['The boarding stop is not on this trip\'s route.'],
+            ]);
+        }
+
+        $dropoff = $this->customDropoffService->evaluate(
+            $routeId,
+            $direction,
+            (int) $item['origin_stop_id'],
+            (float) $item['destination_lat'],
+            (float) $item['destination_lng'],
+        );
+
+        $boarding = $boardingRouteStop->stop;
         $quote = $this->fareRuleService->getQuoteForTripFromCoordinates(
-            $trip->fleetRoute->fleet_id,
-            $trip->fleetRoute->route_id,
+            (int) $trip->fleetRoute->fleet_id,
+            $routeId,
             [
-                'origin_lat' => $item['origin_lat'],
-                'origin_lng' => $item['origin_lng'],
-                'destination_lat' => $item['destination_lat'],
-                'destination_lng' => $item['destination_lng'],
+                'origin_lat' => (float) $boarding->latitude,
+                'origin_lng' => (float) $boarding->longitude,
+                'destination_lat' => $dropoff['snapped_latitude'],
+                'destination_lng' => $dropoff['snapped_longitude'],
                 'seat_type' => $item['seat_type'],
             ]
         );
+
+        $label = trim(strip_tags((string) ($item['destination_label'] ?? '')));
 
         return [
             'fleet_route_id' => $trip->fleet_route_id,
@@ -170,23 +194,17 @@ class TicketService
             'fare_rule_id' => $quote['fare_rule_id'],
             'distance_km' => $quote['distance_km'],
             'amount' => $quote['amount'],
-            // Preserve custom GPS drop-off so the ticket can display where the
-            // passenger actually intends to alight (not just the route terminal).
-            'origin_lat' => (float) $item['origin_lat'],
-            'origin_lng' => (float) $item['origin_lng'],
-            'destination_lat' => (float) $item['destination_lat'],
-            'destination_lng' => (float) $item['destination_lng'],
-            'origin_label' => trim((string) ($item['origin_label'] ?? '')) ?: $this->reverseGeocodingService->resolvePlaceName(
-                (float) $item['origin_lat'],
-                (float) $item['origin_lng'],
-            ) ?? 'Custom pickup point',
-            'destination_label' => trim((string) ($item['destination_label'] ?? '')) ?: $this->reverseGeocodingService->resolvePlaceName(
-                (float) $item['destination_lat'],
-                (float) $item['destination_lng'],
-            ) ?? 'Custom drop-off point',
+            'origin_stop_id' => (int) $item['origin_stop_id'],
+            // Snapped point, so the ticket and the driver's requested stop show the
+            // place the bus will actually stop.
+            'destination_lat' => $dropoff['snapped_latitude'],
+            'destination_lng' => $dropoff['snapped_longitude'],
+            'destination_label' => mb_substr($label, 0, 255) ?: $this->reverseGeocodingService->resolvePlaceName(
+                $dropoff['snapped_latitude'],
+                $dropoff['snapped_longitude'],
+            ) ?? 'Custom drop-off',
         ];
     }
-
     /**
      * Creates the actual ticket row for a previously reserved item. Called
      * only once payment is confirmed (online) or immediately (onsite/cash).
@@ -211,6 +229,7 @@ class TicketService
             'origin_lng' => $reserved['origin_lng'] ?? null,
             'destination_lat' => $reserved['destination_lat'] ?? null,
             'destination_lng' => $reserved['destination_lng'] ?? null,
+            'destination_label' => $reserved['destination_label'] ?? null,
         ]);
 
         if ($passengerId) {
