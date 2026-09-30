@@ -90,6 +90,7 @@ class Trip extends Model
             'boarding_at' => 'datetime',
             'departed_at' => 'datetime',
             'completed_at' => 'datetime',
+            'last_acknowledged_at' => 'datetime',
         ];
     }
 
