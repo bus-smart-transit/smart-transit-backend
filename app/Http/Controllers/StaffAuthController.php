@@ -231,6 +231,44 @@ class StaffAuthController extends Controller
         ], 'Step-up verified. Token valid for 15 minutes.');
     }
 
+    /**
+     * POST /step-up/verify-password
+     * Re-authenticate with the account password and issue a 15-minute
+     * step-up token (same token the OTP flow issues).
+     *
+     * A wrong password answers 422 (not 401): the frontend treats 401 as an
+     * expired session and signs the user out.
+     */
+    public function stepUpVerifyPassword(Request $request)
+    {
+        $validated = $request->validate([
+            'password' => 'required|string|max:255',
+        ]);
+
+        $user = $request->user();
+        if (!$user) return $this->error('Unauthenticated.', 401);
+
+        $rateLimitKey = 'step-up-password:' . $user->user_id;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+            return $this->error("Too many incorrect attempts. Wait {$seconds} seconds.", 429);
+        }
+
+        if (!Hash::check($validated['password'], (string) $user->password)) {
+            RateLimiter::hit($rateLimitKey, 900);
+            throw ValidationException::withMessages(['password' => ['Incorrect password.']]);
+        }
+
+        RateLimiter::clear($rateLimitKey);
+
+        $rawToken = $this->stepUpService->issueToken($user->user_id);
+
+        return $this->success([
+            'step_up_token' => $rawToken,
+            'expires_in'    => $this->stepUpService->ttlSeconds(),
+        ], 'Step-up verified. Token valid for 15 minutes.');
+    }
+
     private function maskEmailLocal(string $email): string
     {
         [$local, $domain] = explode('@', $email, 2);

@@ -61,6 +61,8 @@ Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:3,5']);
 Route::post('step-up/verify', [StaffAuthController::class, 'stepUpVerify'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:5,15']);
+Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerifyPassword'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:10,1']);
 
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
