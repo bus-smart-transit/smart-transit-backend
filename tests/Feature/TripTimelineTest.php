@@ -325,3 +325,149 @@ it('shows a custom drop-off to the driver as a requested stop and on the conduct
     expect($manifest['passengers'][0]['requested_stop'])->toBeTrue();
     expect($manifest['passengers'][0]['destination_stop'])->toBe('Requested stop: Barangay Hall');
 });
+function tlRequestedTicket($trip, array $attributes): Ticket
+{
+    $payment = Payment::create([
+        'amount' => 60,
+        'payment_created' => now(),
+        'transaction_reference' => 'TXN-RQ-'.strtoupper(substr((string) Str::uuid(), 0, 8)),
+        'payment_method' => 'online',
+        'payment_channel' => 'gcash',
+        'status' => 'paid',
+        'payment_uuid' => (string) Str::uuid(),
+        'is_valid' => true,
+        'items_payload' => [],
+    ]);
+
+    return Ticket::create(array_merge([
+        'payment_id' => $payment->payment_id,
+        'fleet_route_id' => $trip->fleet_route_id,
+        'trip_id' => $trip->trip_id,
+        'ticket_uuid' => (string) Str::uuid(),
+        'status' => 'valid',
+        'amount' => 60,
+        'distance_km' => 20,
+        'seat_type' => 'seated',
+    ], $attributes));
+}
+
+function tlDriverView($trip): array
+{
+    $driver = tlStaff('driver');
+    $trip->forceFill(['driver_id' => $driver->companyProfile->company_user_id])->save();
+
+    return app(App\Services\DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id);
+}
+
+it('places a requested stop after the right stop on odd (outbound) and even (reverse) legs', function (string $direction, string $boarding, float $lat, int $expectedAfter) {
+    [, $stops, $makeTrip] = tlFixture();
+    $trip = $makeTrip($direction);
+    tlRequestedTicket($trip, [
+        'origin_stop_id' => $stops[$boarding]->stop_id,
+        'destination_lat' => $lat,
+        'destination_lng' => 125.0,
+        'destination_label' => 'Requested point',
+    ]);
+
+    $requested = tlDriverView($trip)['requested_stops'];
+
+    expect($requested)->toHaveCount(1);
+    expect($requested[0]['after_stop_sequence'])->toBe($expectedAfter);
+    expect($requested[0]['position_known'])->toBeTrue();
+})->with([
+    // Outbound sequence A1 B2 C3 D4 E5: 7.22 lies between C and D.
+    'odd leg' => ['outbound', 'Stop B', 7.22, 3],
+    // Reverse sequence E1 D2 C3 B4 A5: 7.12 lies between C and B, so after C.
+    'even leg' => ['reverse', 'Stop D', 7.12, 3],
+]);
+
+it('keeps a requested stop that now sits before the first stop of the leg (stops edited after the ticket was issued)', function () {
+    [$route, $stops, $makeTrip] = tlFixture();
+    $trip = $makeTrip('outbound');
+    tlRequestedTicket($trip, [
+        'origin_stop_id' => $stops['Stop B']->stop_id,
+        'destination_lat' => 7.12, // between Stop B and Stop C, valid when issued
+        'destination_lng' => 125.0,
+        'destination_label' => 'Before first now',
+    ]);
+    // The operator later removes the first two stops of the route.
+    RouteStop::where('route_id', $route->route_id)->whereIn('stop_id', [$stops['Stop A']->stop_id, $stops['Stop B']->stop_id])->delete();
+
+    $requested = tlDriverView($trip)['requested_stops'];
+
+    expect($requested)->toHaveCount(1);
+    expect($requested[0]['label'])->toBe('Before first now');
+    expect($requested[0]['after_stop_sequence'])->toBe(0);
+    expect($requested[0]['position_known'])->toBeTrue();
+});
+
+it('keeps a requested stop whose position cannot be computed, marked as unknown, and lists it last', function () {
+    [$route, $stops, $makeTrip] = tlFixture();
+    $trip = $makeTrip('outbound');
+    tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop B']->stop_id, 'destination_lat' => 7.22, 'destination_lng' => 125.0, 'destination_label' => 'No path']);
+    tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop D']->stop_id]);
+    // The route's generated path is gone (for example it was reset).
+    Illuminate\Support\Facades\DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
+
+    $requested = tlDriverView($trip)['requested_stops'];
+    expect($requested)->toHaveCount(1);
+    expect($requested[0]['after_stop_sequence'])->toBeNull();
+    expect($requested[0]['position_known'])->toBeFalse();
+
+    $manifest = app(App\Services\OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
+    expect(array_column($manifest, 'destination_stop'))->toBe(['Stop D', 'Requested stop: No path']);
+});
+
+it('lists the conductor manifest in drop-off order with requested stops between the stops around them', function (string $direction, array $expectedOrder) {
+    [, $stops, $makeTrip] = tlFixture();
+    $trip = $makeTrip($direction);
+    // Created in a deliberately scrambled order.
+    tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop D']->stop_id]);
+    tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_lat' => 7.12, 'destination_lng' => 125.0, 'destination_label' => 'Pin']);
+    tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id]);
+
+    $manifest = app(App\Services\OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
+
+    expect(array_column($manifest, 'destination_stop'))->toBe($expectedOrder);
+})->with([
+    // Outbound: B(2), pin between B and C (2.5), D(4).
+    'odd leg' => ['outbound', ['Stop B', 'Requested stop: Pin', 'Stop D']],
+    // Reverse: D(2), pin between C and B (3.5), B(4).
+    'even leg' => ['reverse', ['Stop D', 'Requested stop: Pin', 'Stop B']],
+]);
+it('runs a dummy second route end to end with no code change: options, Book Later, timeline, custom drop-off and checkout price', function () {
+    [$route, $stops, $makeTrip] = tlFixture();
+    $route->update(['allow_custom_dropoff' => true]);
+    $tomorrow = now('Asia/Manila')->addDay()->toDateString();
+    $trip = $makeTrip('outbound');
+    $trip->forceFill(['trip_date' => $tomorrow])->save();
+
+    // 1. Options come from the data: other municipalities, pass-through stops left out.
+    $groups = collect($this->getJson('/api/booking/stops')->assertSuccessful()->json('data.groups'));
+    expect($groups->pluck('municipality')->all())->toContain('Mati City', 'Mabini', 'Digos City');
+    expect($groups->pluck('stops')->flatten(1)->pluck('name')->all())->not->toContain('Stop C');
+
+    // 2. Book Later finds the trip.
+    $resolved = $this->getJson('/api/booking/resolve?'.http_build_query([
+        'mode' => 'later', 'origin_stop_id' => $stops['Stop B']->stop_id, 'destination_stop_id' => $stops['Stop E']->stop_id,
+        'date' => $tomorrow, 'time' => '00:00', 'seat_type' => 'seated',
+    ]))->assertSuccessful()->json('data.trip');
+    expect($resolved['trip_id'])->toBe($trip->trip_id);
+    expect($resolved['boarding_time'])->toBe('08:15');
+
+    // 3. Timeline for the journey, then for a custom drop-off pin.
+    $base = ['boarding_stop_id' => $stops['Stop B']->stop_id, 'seat_type' => 'seated'];
+    $stopJourney = $this->getJson("/api/trips/{$trip->trip_id}/timeline?".http_build_query($base + ['alighting_stop_id' => $stops['Stop E']->stop_id]))->assertSuccessful()->json('data');
+    expect($stopJourney['header']['duration_minutes'])->toBe(45);
+
+    $pin = ['dropoff_lat' => 7.22, 'dropoff_lng' => 125.0003];
+    $custom = $this->getJson("/api/trips/{$trip->trip_id}/timeline?".http_build_query($base + $pin))->assertSuccessful()->json('data');
+    expect($custom['journey']['custom_dropoff'])->toBeTrue();
+
+    // 4. Checkout prices the same pin exactly as the timeline showed it.
+    $reserved = app(TicketService::class)->reserveAndPrice([
+        'trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'origin_stop_id' => $stops['Stop B']->stop_id,
+        'destination_lat' => $pin['dropoff_lat'], 'destination_lng' => $pin['dropoff_lng'],
+    ]);
+    expect((float) $reserved['amount'])->toBe((float) $custom['fare']['amount']);
+});

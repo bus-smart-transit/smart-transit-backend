@@ -12,14 +12,17 @@ class DriverNavigationService
     private RouteStopRepository $routeStopRepository;
     private TicketRepository $ticketRepository;
     private RouteSnapService $routeSnapService;
+    private RequestedStopPlacementService $placementService;
 
     public function __construct(
         TripRepository $tripRepository,
         RouteStopRepository $routeStopRepository,
         TicketRepository $ticketRepository,
-        RouteSnapService $routeSnapService
+        RouteSnapService $routeSnapService,
+        RequestedStopPlacementService $placementService
     ) {
         $this->routeSnapService = $routeSnapService;
+        $this->placementService = $placementService;
         $this->tripRepository = $tripRepository;
         $this->routeStopRepository = $routeStopRepository;
         $this->ticketRepository = $ticketRepository;
@@ -107,40 +110,30 @@ class DriverNavigationService
     }
 
     /**
-     * D5: custom drop-offs passengers asked for on this trip, grouped by point and
-     * placed after the last stop that precedes them along the leg. Display only.
+     * D5: custom drop-offs passengers asked for on this trip, grouped by point and placed
+     * in travel order (see RequestedStopPlacementService for the 0 / null meanings of
+     * `after_stop_sequence`). Every requested stop is returned; none is dropped. Display only.
      */
     private function requestedStops(object $trip, $stops): array
     {
-        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
-        $routeId = (int) $trip->fleetRoute->route_id;
-        $stopAlong = [];
-        foreach ($stops as $routeStop) {
-            $snap = $this->routeSnapService->snap($routeId, (float) $routeStop->stop->latitude, (float) $routeStop->stop->longitude, $direction);
-            $stopAlong[$routeStop->stop_order] = $snap['distance_along_route_m'] ?? null;
-        }
+        $context = $this->placementService->contextFor($trip);
 
         return $this->ticketRepository->getRequestedStopsForTrip($trip->trip_id)
             ->groupBy(fn ($ticket) => round((float) $ticket->destination_lat, 5).','.round((float) $ticket->destination_lng, 5))
-            ->map(function ($group) use ($routeId, $direction, $stopAlong) {
+            ->map(function ($group) use ($context) {
                 $first = $group->first();
-                $snap = $this->routeSnapService->snap($routeId, (float) $first->destination_lat, (float) $first->destination_lng, $direction);
-                $after = null;
-                foreach ($stopAlong as $order => $along) {
-                    if ($snap && $along !== null && $along <= $snap['distance_along_route_m']) {
-                        $after = $order;
-                    }
-                }
+                $placement = $this->placementService->place($context, (float) $first->destination_lat, (float) $first->destination_lng);
 
                 return [
                     'label' => $first->destination_label ?: 'Requested drop-off',
                     'latitude' => (float) $first->destination_lat,
                     'longitude' => (float) $first->destination_lng,
                     'passenger_count' => $group->count(),
-                    'after_stop_sequence' => $after,
+                    'after_stop_sequence' => $placement['after_stop_sequence'],
+                    'position_known' => $placement['position_known'],
                 ];
             })
-            ->sortBy(fn ($row) => $row['after_stop_sequence'] ?? 0)
+            ->sortBy(fn ($row) => $this->placementService->sortKey($row['after_stop_sequence'], $row['position_known']))
             ->values()
             ->all();
     }

@@ -10,8 +10,10 @@ class QRCodeService
     public function __construct(private StopRepository $stopRepository) {}
 
     /**
-     * Generate QR code data/URL for a ticket
-     * Returns data suitable for frontend QR code generation
+     * QR payload data for a ticket. The client renders the QR image itself from
+     * `qr_content` / `group_qr_content` (no third-party image service is involved, so
+     * no ticket id ever leaves the app). The payload strings are unchanged:
+     * the ticket uuid, and `grp:<transaction_reference>` for the group QR.
      */
     public function generateQRData(Ticket $ticket): array
     {
@@ -28,9 +30,7 @@ class QRCodeService
         return [
             'ticket_uuid' => $ticket->ticket_uuid,
             'qr_content' => $qrContent,
-            'qr_url' => $this->generateQRUrl($qrContent),
             'group_qr_content' => $groupQrContent,
-            'group_qr_url' => $groupQrContent ? $this->generateQRUrl($groupQrContent) : null,
             'transaction_reference' => $transactionRef,
             'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
             'trip_id' => $ticket->trip_id,
@@ -38,6 +38,9 @@ class QRCodeService
             'destination' => $destination,
             'seat_type' => $ticket->seat_type,
             'amount' => $ticket->amount,
+            // Manila wall-clock values (as stored) for the saved ticket image.
+            'trip_date' => $ticket->trip?->trip_date?->toDateString(),
+            'departure_time' => $this->departureTime($ticket),
             'valid_from' => $ticket->trip?->trip_date?->copy()->startOfDay()?->toIso8601String(),
             'expires_at' => $ticket->trip?->trip_date?->copy()->endOfDay()?->toIso8601String(),
         ];
@@ -86,13 +89,12 @@ class QRCodeService
         return $ticket->ticket_uuid;
     }
 
-    /**
-     * Generate QR code image URL (using external API)
-     * Uses qrserver.com API for simplicity (alternative: install qrcode package)
-     */
-    private function generateQRUrl(string $content, int $size = 300): string
+    /** HH:MM the trip leaves its first stop, or null when the trip has no time. */
+    private function departureTime(Ticket $ticket): ?string
     {
-        return 'https://api.qrserver.com/v1/create-qr-code/?size='.$size.'x'.$size.'&data='.urlencode($content);
+        $time = $ticket->trip?->departure_time ?: $ticket->trip?->fleetRoute?->start_time;
+
+        return $time ? substr((string) $time, 0, 5) : null;
     }
 
     /**

@@ -15,6 +15,7 @@ class OccupancyService
         private TicketRepository $ticketRepository,
         private TripRepository $tripRepository,
         private StopRepository $stopRepository,
+        private RequestedStopPlacementService $placementService,
     ) {}
 
     /**
@@ -168,12 +169,13 @@ class OccupancyService
         }
 
         $payloadStopNames = $this->stopRepository->getNamesByIds($payloadStopIds);
+        $legContext = $trip->fleetRoute ? $this->placementService->contextFor($trip) : null;
 
         return [
             'trip_id' => $tripId,
             'trip_status' => $trip->status,
             'total_count' => $passengers->count(),
-            'passengers' => $passengers->map(function ($ticket) use ($payloadStopNames) {
+            'passengers' => $passengers->map(function ($ticket) use ($payloadStopNames, $legContext) {
                 $matchedItem = $this->matchPaymentItemForTicket($ticket);
                 $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
                 $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
@@ -188,6 +190,18 @@ class OccupancyService
                     $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off');
                 }
 
+                // Travel order of the drop-off along this leg: a stop is its leg sequence, a
+                // requested stop sits between the stops around it, an unknown position is last.
+                $dropOffOrder = 100001.0;
+                if ($legContext) {
+                    if ($requestedStop) {
+                        $placement = $this->placementService->place($legContext, (float) $ticket->destination_lat, (float) $ticket->destination_lng);
+                        $dropOffOrder = $this->placementService->sortKey($placement['after_stop_sequence'], $placement['position_known']);
+                    } elseif ($ticket->destination_stop_id !== null || $payloadDestinationId) {
+                        $dropOffOrder = (float) ($legContext['sequence_by_stop_id'][(int) ($ticket->destination_stop_id ?? $payloadDestinationId)] ?? 100001);
+                    }
+                }
+
                 return [
                     'ticket_id' => $ticket->ticket_id,
                     'ticket_uuid' => $ticket->ticket_uuid,
@@ -199,9 +213,10 @@ class OccupancyService
                     'origin_stop' => $originStopName,
                     'destination_stop' => $destinationStopName,
                     'requested_stop' => $requestedStop,
+                    'drop_off_order' => $dropOffOrder,
                     'boarded_at' => $ticket->boarded_at,
                 ];
-            })->values()->toArray(),
+            })->sortBy('drop_off_order')->values()->toArray(),
         ];
     }
 

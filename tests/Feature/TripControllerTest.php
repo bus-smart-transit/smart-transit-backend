@@ -903,14 +903,18 @@ test('trip_date serializes as a plain calendar date, not shifted by UTC conversi
 });
 
 test('operator upcoming trips excludes trips whose scheduled datetime has already passed', function () {
+    // Frozen mid-day Manila time: the scheduled-datetime comparison is anchored to Asia/Manila, so a real
+    // clock near midnight (or a different server timezone) must not decide whether a trip has passed.
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 10:00:00', 'Asia/Manila'));
+
     $operator = makeStaffUser('operator');
     $fleetRoute = makeFleetRoute();
 
     $pastTrip = Trip::create([
         'fleet_route_id' => $fleetRoute->fleet_route_id,
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'trip_date' => now()->toDateString(),
-        'departure_time' => now()->subMinutes(5)->format('H:i:s'),
+        'trip_date' => '2026-10-01',
+        'departure_time' => '09:55:00',
         'status' => 'scheduled',
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
@@ -920,8 +924,8 @@ test('operator upcoming trips excludes trips whose scheduled datetime has alread
     $futureTrip = Trip::create([
         'fleet_route_id' => $fleetRoute->fleet_route_id,
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'trip_date' => now()->toDateString(),
-        'departure_time' => now()->addMinutes(30)->format('H:i:s'),
+        'trip_date' => '2026-10-01',
+        'departure_time' => '10:30:00',
         'status' => 'scheduled',
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,

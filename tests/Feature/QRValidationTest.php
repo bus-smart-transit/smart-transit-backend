@@ -332,4 +332,81 @@ describe('QR Code & Occupancy Monitoring System', function () {
             ->assertJsonPath('data.destination', 'Bankerohan Public Market');
     });
 
+    it('qr payload is unchanged (uuid / grp:ref), scannable by the validator, and carries no third-party image url', function () {
+        $user = User::create([
+            'username' => 'passenger_'.uniqid(),
+            'email' => 'passenger+'.uniqid().'@smarttransit.test',
+            'password' => bcrypt('password123'),
+            'role' => 'passenger',
+        ]);
+        $passenger = PassengerUser::create([
+            'user_id' => $user->user_id,
+            'passenger_uuid' => (string) Str::uuid(),
+            'name' => 'QR Payload Passenger',
+            'phone_num' => '09999999998',
+            'address' => 'Test Address',
+            'birthdate' => '2000-01-01',
+            'reward_points' => 0,
+        ]);
+        $operator = makeOperatorWithProfileQr();
+        $fleetRoute = makeFleetRouteFixtureQr($operator->companyProfile->company_user_id);
+        $trip = Trip::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'company_user_id' => $operator->companyProfile->company_user_id,
+            'driver_id' => makeDriverWithProfileQr()->companyProfile->company_user_id,
+            'conductor_id' => makeConductorWithProfileQr()->companyProfile->company_user_id,
+            'trip_date' => now()->toDateString(),
+            'departure_time' => '06:30:00',
+            'status' => 'scheduled',
+            'current_seated_capacity' => 0,
+            'current_standing_capacity' => 0,
+            'total_occupancy' => 0,
+        ]);
+        $payment = Payment::create([
+            'amount' => 40,
+            'payment_created' => now(),
+            'transaction_reference' => 'TXN-PAYLOAD-1',
+            'payment_method' => 'online',
+            'payment_channel' => 'gcash',
+            'status' => 'paid',
+            'payment_uuid' => (string) Str::uuid(),
+            'is_valid' => true,
+            'items_payload' => [],
+        ]);
+        $ticket = Ticket::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'trip_id' => $trip->trip_id,
+            'payment_id' => $payment->payment_id,
+            'passenger_id' => $passenger->passenger_id,
+            'ticket_uuid' => (string) Str::uuid(),
+            'status' => 'valid',
+            'seat_type' => 'seated',
+            'amount' => 40,
+        ]);
+
+        $token = $user->createToken('passenger-qr-payload')->plainTextToken;
+        $response = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/passengers/tickets/'.$ticket->ticket_uuid.'/qr')
+            ->assertSuccessful();
+        $data = $response->json('data');
+
+        // Same payload strings the conductor scanner has always read.
+        expect($data['qr_content'])->toBe($ticket->ticket_uuid)
+            ->and($data['group_qr_content'])->toBe('grp:TXN-PAYLOAD-1');
+
+        // The validator accepts the payload exactly as the scanner posts it.
+        $rules = (new \App\Http\Requests\ScanTicketRequest())->rules();
+        expect(\Illuminate\Support\Facades\Validator::make(['ticket_uuid' => $data['qr_content']], ['ticket_uuid' => $rules['ticket_uuid']])->passes())->toBeTrue();
+        $groupRules = (new \App\Http\Requests\ScanGroupRequest())->rules();
+        expect(\Illuminate\Support\Facades\Validator::make(['transaction_reference' => substr($data['group_qr_content'], 4)], ['transaction_reference' => $groupRules['transaction_reference']])->passes())->toBeTrue();
+
+        // No third-party image URL: nothing in the response points at an external QR service.
+        expect($data)->not->toHaveKeys(['qr_url', 'group_qr_url'])
+            ->and($response->getContent())->not->toContain('qrserver');
+
+        // Manila wall-clock departure for the saved image.
+        expect($data['trip_date'])->toBe(now()->toDateString())
+            ->and($data['departure_time'])->toBe('06:30');
+    });
+
 });
