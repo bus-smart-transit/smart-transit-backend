@@ -8,6 +8,9 @@ class UpdateStopRequest extends FormRequest
     {
         return [
             'stop_name' => 'sometimes|string|max:255',
+            // Lowercase letters, digits and single hyphens; the public key in booking links.
+            'stop_code' => ['sometimes', 'nullable', 'string', 'max:64', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',
+                \Illuminate\Validation\Rule::unique('stops', 'stop_code')->ignore($this->route('stopId') ?? $this->route('stop'), 'stop_id')],
             'location'  => 'sometimes|nullable|string|max:255',
             'latitude'  => 'sometimes|nullable|numeric|between:-90,90|required_with:longitude',
             'longitude' => 'sometimes|nullable|numeric|between:-180,180|required_with:latitude',

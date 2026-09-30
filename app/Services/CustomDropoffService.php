@@ -131,4 +131,35 @@ class CustomDropoffService
     {
         throw ValidationException::withMessages(['dropoff' => [$message]]);
     }
+
+    /**
+     * Whether the passenger can use the pin control right now, and if not, why.
+     * available=false with a null reason means the route does not offer it at all
+     * (flag off): the UI hides the control. A reason means the route offers it but
+     * the current selection cannot use it: the UI shows the control with that reason.
+     *
+     * @return array{available: bool, reason: string|null}
+     */
+    public function availability(int $routeId, string $direction, ?int $boardingStopId): array
+    {
+        $route = $this->routeRepository->findById($routeId);
+        if (! $route || ! $route->allow_custom_dropoff) {
+            return ['available' => false, 'reason' => null];
+        }
+
+        if (! $this->routeSnapService->hasGeometry($routeId)) {
+            return ['available' => false, 'reason' => 'This route has no generated path yet, so a drop-off point cannot be placed.'];
+        }
+
+        if ($boardingStopId === null) {
+            return ['available' => false, 'reason' => 'Choose where you board first, then pin where you want to get off.'];
+        }
+
+        $last = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction)->last();
+        if ($last && (int) $last->stop_id === $boardingStopId) {
+            return ['available' => false, 'reason' => 'You board at the last stop of this trip, so there is nothing ahead to drop off at.'];
+        }
+
+        return ['available' => true, 'reason' => null];
+    }
 }

@@ -188,6 +188,7 @@ class TripTimelineService
                 'custom_dropoff' => $custom !== null,
             ],
             'allow_custom_dropoff' => (bool) ($route?->allow_custom_dropoff),
+            'custom_dropoff_availability' => $this->customDropoffService->availability($routeId, $direction, $boardingId),
             'fare' => $fare,
             'collapse_min_stops' => (int) config('timeline.collapse_min_stops'),
             'refresh' => [

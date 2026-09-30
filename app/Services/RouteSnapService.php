@@ -17,6 +17,11 @@ class RouteSnapService
     {
     }
 
+    public function hasGeometry(int $routeId): bool
+    {
+        return $this->geometryRepository->get($routeId) !== null;
+    }
+
     /**
      * @return array{snapped_latitude: float, snapped_longitude: float, distance_to_route_m: float, distance_along_route_m: float, total_length_m: float, on_route: bool}|null
      *         null when the route has no canonical geometry yet

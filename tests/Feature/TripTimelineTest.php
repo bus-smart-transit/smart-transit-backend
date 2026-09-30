@@ -281,6 +281,36 @@ it('lets operators and admins switch custom drop-off per route, and nobody else'
     $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/custom-dropoff", ['allow_custom_dropoff' => 'maybe'])->assertStatus(422);
 });
 
+it('tells the passenger UI when to hide the drop-off control and when to show it with a reason', function () {
+    [$route, $stops, $makeTrip] = tlFixture();
+    $trip = $makeTrip('outbound');
+    $timeline = fn (array $query = []) => $this->getJson("/api/trips/{$trip->trip_id}/timeline?".http_build_query($query))
+        ->assertSuccessful()->json('data');
+
+    // Flag off: nothing to show (no reason either).
+    $off = $timeline(['boarding_stop_id' => $stops['Stop B']->stop_id]);
+    expect($off['allow_custom_dropoff'])->toBeFalse();
+    expect($off['custom_dropoff_availability'])->toBe(['available' => false, 'reason' => null]);
+
+    $route->update(['allow_custom_dropoff' => true]);
+
+    $ok = $timeline(['boarding_stop_id' => $stops['Stop B']->stop_id]);
+    expect($ok['custom_dropoff_availability'])->toBe(['available' => true, 'reason' => null]);
+
+    // Flag on, but no boarding stop yet / boarding at the end of the leg: shown with a reason.
+    expect($timeline()['custom_dropoff_availability']['available'])->toBeFalse();
+    expect($timeline()['custom_dropoff_availability']['reason'])->toContain('board first');
+    $atEnd = $timeline(['boarding_stop_id' => $stops['Stop E']->stop_id]);
+    expect($atEnd['custom_dropoff_availability']['available'])->toBeFalse();
+    expect($atEnd['custom_dropoff_availability']['reason'])->toContain('last stop');
+
+    // Flag on, but the route has no generated path.
+    \Illuminate\Support\Facades\DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
+    $noPath = $timeline(['boarding_stop_id' => $stops['Stop B']->stop_id]);
+    expect($noPath['custom_dropoff_availability']['available'])->toBeFalse();
+    expect($noPath['custom_dropoff_availability']['reason'])->toContain('no generated path');
+});
+
 it('shows a custom drop-off to the driver as a requested stop and on the conductor manifest', function () {
     [$route, $stops, $makeTrip, $operator] = tlFixture();
     $driver = tlStaff('driver');

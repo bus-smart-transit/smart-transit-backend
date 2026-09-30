@@ -110,6 +110,10 @@ class TicketRepository
 
                 if ($email !== null && $email !== '') {
                     $q->where('guest_email', $email);
+                } else {
+                    // No email supplied: only payments with no stored guest email can match,
+                    // so a reference alone never opens a payment made with an email.
+                    $q->whereNull('guest_email');
                 }
 
                 if ($paymentId !== null) {

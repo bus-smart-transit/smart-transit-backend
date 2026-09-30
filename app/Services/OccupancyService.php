@@ -258,11 +258,12 @@ class OccupancyService
     /**
      * Record passenger alighting (mark as alighted, not removed yet)
      */
-    public function recordAlighting(int $ticketId): void
+    public function recordAlighting(int $ticketId, ?int $tripId = null): void
     {
         $ticket = $this->ticketRepository->findById($ticketId);
 
-        if (! $ticket) {
+        // A ticket from another trip is reported as not found, like a missing one.
+        if (! $ticket || ($tripId !== null && (int) $ticket->trip_id !== $tripId)) {
             throw (new ModelNotFoundException())->setModel(Ticket::class, $ticketId);
         }
 

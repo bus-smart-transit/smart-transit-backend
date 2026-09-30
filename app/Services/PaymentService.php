@@ -91,7 +91,7 @@ class PaymentService
 
                 $payment = $this->paymentRepository->create([
                     'amount' => 0,
-                    'transaction_reference' => 'TXN-'.strtoupper(uniqid()),
+                    'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
                     'payment_method' => 'online',
                     'payment_channel' => $payload['payment_channel'],
                     'guest_email' => $guestEmail,
@@ -343,7 +343,7 @@ class PaymentService
         return RlsContext::withBypass(fn () => DB::transaction(function () use ($conductorCompanyUserId, $payload) {
             $payment = $this->paymentRepository->create([
                 'amount' => 0,
-                'transaction_reference' => 'TXN-'.strtoupper(uniqid()),
+                'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
                 'payment_method' => 'cash',
                 'payment_channel' => 'onsite',
                 'status' => 'paid',

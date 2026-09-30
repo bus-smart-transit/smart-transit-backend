@@ -58,6 +58,7 @@ class BookingStopsService
             $groups[$key]['provinces'] = $entry['stop']->municipality ? $this->provincesOf($entry['stop']->municipality) : [];
             $groups[$key]['stops'][] = [
                 'stop_id' => (int) $entry['stop']->stop_id,
+                'stop_code' => $entry['stop']->stop_code,
                 'name' => $entry['stop']->stop_name,
                 'route_ids' => array_values(array_unique($entry['route_ids'])),
             ];

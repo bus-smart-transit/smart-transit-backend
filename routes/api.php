@@ -75,6 +75,7 @@ Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->
 Route::get('trips', [TripController::class, 'availableTrips']);
 Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:60,1');
 Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:60,1');
+Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:60,1');
 Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:60,1');
 Route::get('booking/address-search', [BookingController::class, 'addressSearch'])->middleware('throttle:20,1');
 

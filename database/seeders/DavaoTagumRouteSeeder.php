@@ -19,6 +19,9 @@ use Illuminate\Support\Facades\DB;
  *
  * Distances are mock road distances (km); they are inputs to fares, so this
  * seeder never rewrites them from generated geometry.
+ * Custom drop-off (routes.allow_custom_dropoff, off by default) is switched on for
+ * this seeded route so the feature is visible in dev; operators can toggle it per
+ * route in the portal (re-running this seeder turns it back on for this route).
  * Run: php artisan db:seed --class=DavaoTagumRouteSeeder
  */
 class DavaoTagumRouteSeeder extends Seeder
@@ -45,6 +48,7 @@ class DavaoTagumRouteSeeder extends Seeder
                 ['route_name' => 'Davao - Tagum'],
                 ['origin' => 'Davao', 'destination' => 'Tagum']
             );
+            $tagum->update(['allow_custom_dropoff' => true]);
 
             $this->replaceStops($tagum);
             $this->correctEcolandToril();

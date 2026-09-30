@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
 /**
  * @mixin IdeHelperStop
@@ -37,11 +38,33 @@ class Stop extends Model
      */
     protected $fillable = [
         'stop_name',
+        'stop_code',
         'longitude',
         'latitude',
         'geofence_radius_m',
         'municipality',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (Stop $stop) {
+            if (blank($stop->stop_code)) {
+                $stop->stop_code = static::makeUniqueCode((string) $stop->stop_name);
+            }
+        });
+    }
+
+    /** A URL-safe code from the stop name, made unique with -2, -3, ... when taken. */
+    public static function makeUniqueCode(string $name): string
+    {
+        $base = Str::limit(Str::slug($name) ?: 'stop', 56, '');
+        $code = $base;
+        for ($i = 2; static::where('stop_code', $code)->exists(); $i++) {
+            $code = $base.'-'.$i;
+        }
+
+        return $code;
+    }
 
     public function routeStops()
     {

@@ -22,12 +22,13 @@ class StopService
         $coordinates = $this->resolveCoordinates($payload);
         $this->coordinateValidator->assertValid($coordinates['latitude'], $coordinates['longitude']);
 
-        return $this->stopRepository->create([
+        return $this->stopRepository->create(array_filter([
             'stop_name' => $payload['stop_name'],
+            'stop_code' => $payload['stop_code'] ?? null, // null = the model derives one from the name
             'latitude' => $coordinates['latitude'],
             'longitude' => $coordinates['longitude'],
             'municipality' => $this->regionService->canonicalMunicipality($payload['municipality'] ?? null),
-        ]);
+        ], fn ($value, $key) => $key !== 'stop_code' || $value !== null, ARRAY_FILTER_USE_BOTH));
     }
 
     public function listStops(): object
@@ -57,6 +58,10 @@ class StopService
 
         unset($update['location']);
 
+        // A blank code means "leave it as it is"; a stop always keeps one.
+        if (array_key_exists('stop_code', $update) && blank($update['stop_code'])) {
+            unset($update['stop_code']);
+        }
         if (array_key_exists('municipality', $update)) {
             $update['municipality'] = $this->regionService->canonicalMunicipality($update['municipality']);
         }

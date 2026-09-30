@@ -8,6 +8,7 @@ class StoreStopRequest extends FormRequest
     {
         return [
             'stop_name' => 'required|string|max:255',
+            'stop_code' => ['nullable', 'string', 'max:64', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/', 'unique:stops,stop_code'],
             'location'  => 'nullable|string|max:255',
             'latitude'  => 'nullable|numeric|between:-90,90|required_with:longitude',
             'longitude' => 'nullable|numeric|between:-180,180|required_with:latitude',

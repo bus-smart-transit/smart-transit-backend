@@ -207,7 +207,13 @@ class TicketController extends Controller
      */
     public function recordAlighting(Request $request, int $ticketId)
     {
-        $this->occupancyService->recordAlighting($ticketId);
+        // Only tickets of the conductor's own current trip can be alighted (no cross-trip ids).
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (!$trip) return $this->error('No active trip found.', 404);
+
+        $this->occupancyService->recordAlighting($ticketId, (int) $trip->trip_id);
         return $this->success(null, 'Passenger alighting recorded successfully');
     }
 
@@ -244,8 +250,9 @@ class TicketController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
-        // Verify ownership
-        if ($ticket->passenger_id && $ticket->passenger_id !== $passengerProfile->passenger_id) {
+        // Verify ownership. A ticket with no passenger (a guest purchase) is not
+        // anyone's account ticket, so it is refused here too.
+        if ($ticket->passenger_id === null || (int) $ticket->passenger_id !== (int) $passengerProfile->passenger_id) {
             return $this->error('Unauthorized', 403);
         }
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\AddressSearchService;
+use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
 use App\Services\TripResolverService;
 use App\Traits\ApiResponse;
@@ -21,7 +22,17 @@ class BookingController extends Controller
         private BookingStopsService $bookingStopsService,
         private TripResolverService $tripResolverService,
         private AddressSearchService $addressSearchService,
+        private BookingLinkService $bookingLinkService,
     ) {}
+
+    // Checks the untrusted parts of a shared booking link (stop codes, date).
+    public function link(Request $request)
+    {
+        return $this->success(
+            $this->bookingLinkService->resolve($request->only(['from', 'to', 'date'])),
+            'Booking link is valid'
+        );
+    }
 
     public function stops(Request $request)
     {
