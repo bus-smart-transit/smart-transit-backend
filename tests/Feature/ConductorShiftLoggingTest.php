@@ -3,11 +3,13 @@
 use App\Models\Fleet;
 use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
+use App\Models\ShiftBlock;
 use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use App\Services\TripService;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -211,4 +213,64 @@ test('conductor current trip is unavailable after the shift is closed', function
     $this->actingAs($conductor)
         ->getJson('/api/conductor/trips/current')
         ->assertStatus(404);
+});
+
+test('End Shift needs every leg of the shift block completed or cancelled, not just the shift log trip', function () {
+    $operator = makeConductorShiftStaffUser('operator');
+    $driver = makeConductorShiftStaffUser('driver');
+    $conductor = makeConductorShiftStaffUser('conductor');
+    $fleetRoute = makeConductorShiftFleetRoute();
+
+    $block = ShiftBlock::create([
+        'fleet_id' => $fleetRoute->fleet_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'block_type' => 'morning',
+        'status' => 'in_progress',
+        'audit_status' => 'not_applicable',
+        'scheduled_date' => now()->toDateString(),
+    ]);
+
+    $legs = [];
+    foreach (['06:00', '09:00', '12:00'] as $time) {
+        $legs[] = Trip::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'company_user_id' => $operator->companyProfile->company_user_id,
+            'trip_date' => now()->toDateString(),
+            'departure_time' => $time,
+            'status' => 'scheduled',
+            'driver_id' => $driver->companyProfile->company_user_id,
+            'conductor_id' => $conductor->companyProfile->company_user_id,
+            'shift_block_id' => $block->shift_block_id,
+            'current_seated_capacity' => 0,
+            'current_standing_capacity' => 0,
+            'total_occupancy' => 0,
+        ]);
+    }
+
+    // The shift log binds to the first leg.
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')
+        ->assertSuccessful()
+        ->assertJsonPath('data.shift.trip_id', $legs[0]->trip_id);
+
+    // Completing the log's own leg must not close the Chauffeur's shift.
+    $legs[1]->update(['status' => 'departed']);
+    app(TripService::class)->completeTrip($legs[0]->trip_id);
+
+    $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
+        ->assertJsonPath('data.has_open_shift', true);
+
+    // The log's own trip is finished, but two legs are not: still blocked.
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/end')
+        ->assertStatus(422)
+        ->assertJsonPath('errors.shift.0', 'Cannot end shift: 2 leg(s) of your shift block are not completed or cancelled yet.');
+
+    // A completed and a cancelled leg both count as finished.
+    $legs[1]->update(['status' => 'completed']);
+    $legs[2]->update(['status' => 'cancelled']);
+
+    $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
+        ->assertJsonPath('data.end_blocked_reason', null);
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/end')->assertSuccessful();
 });
