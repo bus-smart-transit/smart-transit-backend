@@ -151,6 +151,42 @@ class TripRepository
             ->count();
     }
 
+    /**
+     * C8: trips on the calendar for one staff scope between two business
+     * dates (inclusive), cancelled ones excluded. Scope is the trips column
+     * that ties the staff member to the trip.
+     */
+    public function listForCalendar(string $role, int $companyUserId, string $fromDate, string $toDate): Collection
+    {
+        return Trip::where($this->calendarScopeColumn($role), $companyUserId)
+            ->whereDate('trip_date', '>=', $fromDate)
+            ->whereDate('trip_date', '<=', $toDate)
+            ->where('status', '!=', 'cancelled')
+            ->get(['trip_id', 'trip_date', 'shift_block_id', 'status']);
+    }
+
+    /** C8: the next trip that is still to be run (not completed or cancelled). */
+    public function findNextForCalendar(string $role, int $companyUserId, string $fromDate): ?Trip
+    {
+        return Trip::with('fleetRoute.route')
+            ->where($this->calendarScopeColumn($role), $companyUserId)
+            ->whereIn('status', self::ACTIVE_STATUSES)
+            ->whereDate('trip_date', '>=', $fromDate)
+            ->orderBy('trip_date', 'asc')
+            ->orderBy('departure_time', 'asc')
+            ->orderBy('trip_id', 'asc')
+            ->first();
+    }
+
+    private function calendarScopeColumn(string $role): string
+    {
+        return match ($role) {
+            'driver' => 'driver_id',
+            'conductor' => 'conductor_id',
+            'operator' => 'company_user_id',
+        };
+    }
+
     public function updateStatus(int $tripId, string $status): bool
     {
         $update = ['status' => $status];

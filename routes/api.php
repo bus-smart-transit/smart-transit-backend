@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
 use App\Http\Controllers\DriverShiftController;
 use App\Http\Controllers\FareRuleController;
@@ -46,6 +47,11 @@ Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFact
 // and future-proofs other notification types).
 Route::post('staff/fcm-token', [StaffAuthController::class, 'registerFcmToken'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+
+// Batch 24 (C8): dashboard calendar quick summary. One endpoint, scoped to the
+// caller's own role and staff id (driver, Chauffeur or operator).
+Route::get('staff/calendar-summary', [CalendarSummaryController::class, 'show'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
 Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])
