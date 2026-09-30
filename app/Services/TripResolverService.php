@@ -58,19 +58,71 @@ class TripResolverService
         }
 
         return [
-            'trip' => [
-                'trip_id' => (int) $best['trip']->trip_id,
-                'trip_date' => $best['trip']->trip_date->toDateString(),
-                'boarding_time' => $best['boards_at']->format('H:i'),
-                'boarding_at' => $best['boards_at']->toIso8601String(),
-                'boarding_time_is_scheduled_offset' => $best['has_offset'],
-                'route_name' => $best['trip']->fleetRoute->route?->route_name,
-                'plate_number' => $best['trip']->fleetRoute->fleet?->plate_number,
-                'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
-                'seats_left' => $best['seats_left'],
-            ],
+            'trip' => $this->present($best),
             'message' => null,
             'searched_from' => $target->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Book Later: every eligible departure on one Manila date, earliest first, for the
+     * passenger to choose from. Today lists only departures that have not yet left.
+     *
+     * @param  array{origin_stop_id: int, destination_stop_id: int, date: string, seat_type?: string|null}  $query
+     * @return array{date: string, departures: array<int, array>, message: string|null}
+     *
+     * @throws ValidationException
+     */
+    public function departures(array $query): array
+    {
+        $timezone = config('app.timezone', 'Asia/Manila');
+        $now = Carbon::now($timezone);
+        $seatType = $query['seat_type'] ?? 'seated';
+        $date = Carbon::createFromFormat('!Y-m-d', $query['date'], $timezone);
+
+        if ($date->lt($now->copy()->startOfDay())) {
+            throw ValidationException::withMessages(['date' => ['That date has already passed (Manila time).']]);
+        }
+        $maxDays = (int) config('booking.max_advance_days');
+        if ($maxDays > 0 && $date->gt($now->copy()->startOfDay()->addDays($maxDays))) {
+            throw ValidationException::withMessages(['date' => ["You can book up to $maxDays days ahead."]]);
+        }
+
+        $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
+        $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
+            ->whereDate('trip_date', $date->toDateString())
+            ->get();
+
+        $found = [];
+        foreach ($trips as $trip) {
+            $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $from, $timezone);
+            if ($candidate) {
+                $found[] = $candidate;
+            }
+        }
+        usort($found, fn ($a, $b) => $a['boards_at']->getTimestamp() <=> $b['boards_at']->getTimestamp());
+
+        return [
+            'date' => $date->toDateString(),
+            'departures' => array_map(fn ($candidate) => $this->present($candidate), $found),
+            'message' => $found === [] ? 'No departures match your journey on that date.' : null,
+        ];
+    }
+
+    /** @param array{trip: Trip, boards_at: Carbon, has_offset: bool, seats_left: int} $best */
+    private function present(array $best): array
+    {
+        return [
+            'trip_id' => (int) $best['trip']->trip_id,
+            'trip_date' => $best['trip']->trip_date->toDateString(),
+            'boarding_time' => $best['boards_at']->format('H:i'),
+            'boarding_at' => $best['boards_at']->toIso8601String(),
+            'boarding_time_is_scheduled_offset' => $best['has_offset'],
+            'route_name' => $best['trip']->fleetRoute->route?->route_name,
+            'plate_number' => $best['trip']->fleetRoute->fleet?->plate_number,
+            'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
+            'seats_left' => $best['seats_left'],
         ];
     }
 

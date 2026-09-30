@@ -8,6 +8,7 @@ use App\Services\BookingStopsService;
 use App\Services\TripResolverService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 /**
  * Public, read-only passenger booking helpers: destinations computed from data
@@ -38,10 +39,27 @@ class BookingController extends Controller
     {
         $data = $request->validate(['origin_stop_id' => 'nullable|integer|min:1']);
 
-        return $this->success(
-            $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null),
-            'Booking stops retrieved successfully'
-        );
+        $result = $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null);
+        // What the date picker needs: today in Manila and how far ahead a date may be chosen.
+        $result['meta'] = [
+            'today' => Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString(),
+            'max_advance_days' => (int) config('booking.max_advance_days'),
+        ];
+
+        return $this->success($result, 'Booking stops retrieved successfully');
+    }
+
+    // Book Later: the departures of one Manila date that fit the journey, to choose from.
+    public function departures(Request $request)
+    {
+        $data = $request->validate([
+            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
+            'date' => 'required|date_format:Y-m-d',
+            'seat_type' => 'nullable|in:seated,standing',
+        ]);
+
+        return $this->success($this->tripResolverService->departures($data), 'Departures retrieved');
     }
 
     public function resolve(Request $request)
