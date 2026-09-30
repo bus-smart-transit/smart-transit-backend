@@ -88,13 +88,11 @@ class FleetPairingController extends Controller
             $fleetId,
         );
 
-        $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($token);
-
+        // The client draws the QR itself from `token`; no image URL (and so no third party) is involved.
         return $this->success([
             'token'       => $token,
             'token_pin'   => $this->pairingService->toReadablePin($token),
             'pin_code'    => $this->pairingService->toReadablePin($token),
-            'qr_url'      => $qrUrl,
             'trip_id'     => $trip->trip_id,
             'fleet_id'    => $fleetId,
             'fleet_plate' => $trip->fleetRoute?->fleet?->plate_number,
