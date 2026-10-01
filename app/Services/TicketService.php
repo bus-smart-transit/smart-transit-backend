@@ -25,6 +25,7 @@ class TicketService
         private RewardService $rewardService,
         private ReverseGeocodingService $reverseGeocodingService,
         private CustomDropoffService $customDropoffService,
+        private TicketTrackingService $trackingService,
     ) {}
 
     /**
@@ -213,7 +214,10 @@ class TicketService
      */
     public function finalizeTicket(array $reserved, ?int $passengerId, int $paymentId): Ticket
     {
+        $tracking = $this->trackingService->newCredentials();
         $ticket = $this->ticketRepository->create([
+            'tracking_token_hash' => $tracking['tracking_token_hash'],
+            'tracking_token_enc' => $tracking['tracking_token_enc'],
             'fleet_route_id' => $reserved['fleet_route_id'],
             'trip_id' => $reserved['trip_id'],
             'fare_rule_id' => $reserved['fare_rule_id'],
@@ -559,6 +563,10 @@ class TicketService
                 $ticket->setAttribute('destination', $destinationLabel);
             }
         }
+
+        // Owners only (this runs for a passenger's own tickets and for a guest who proved the
+        // payment reference): the link that follows this ticket's bus. Virtual, never stored here.
+        $ticket->setAttribute('tracking_token', $this->trackingService->tokenFor($ticket));
 
         // Sync so these virtual attributes are never treated as dirty
         // if something calls save() again downstream.

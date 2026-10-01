@@ -76,11 +76,18 @@ class Ticket extends Model
         'destination_lat',
         'destination_lng',
         'destination_label',
+        'tracking_token_hash',
+        'tracking_token_enc',
     ];
+
+    // The tracking token is a bearer secret: never serialised with a ticket. Owners get it only
+    // through the explicit `tracking_token` attribute the ticket service sets for them.
+    protected $hidden = ['tracking_token_hash', 'tracking_token_enc'];
 
     protected function casts(): array
     {
         return [
+            'tracking_token_enc' => 'encrypted',
             'boarded_at'      => 'datetime',
             'alighted_at'     => 'datetime',
             'origin_lat'      => 'float',

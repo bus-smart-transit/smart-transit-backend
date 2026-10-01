@@ -20,6 +20,7 @@ use App\Http\Controllers\RouteController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
+use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripAssignmentRequestController;
 use App\Http\Controllers\TripTimelineController;
@@ -71,8 +72,13 @@ Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerif
 
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
-Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
-Route::get('fleet/nearest', [FleetLocationController::class, 'nearest']);
+// Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab).
+Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware('throttle:90,1');
+Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middleware('throttle:90,1');
+// Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
+Route::get('track/{token}', [TrackingController::class, 'show'])
+    ->where('token', '[A-Za-z0-9_-]{43}')
+    ->middleware('throttle:60,1');
 Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
 Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:60,1');
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);

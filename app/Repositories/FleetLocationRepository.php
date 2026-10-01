@@ -115,6 +115,54 @@ class FleetLocationRepository
     }
 
     /**
+     * Batch 26 (ticket tracking): the fleet's last position, only if it was reported for this
+     * trip. Returns position, heading and how many seconds old it is, or null. The age is worked
+     * out where the timestamp was written (the database clock on PostgreSQL, the application
+     * clock on the SQLite test database) so a timezone difference cannot make it look stale.
+     *
+     * @return array{latitude: float, longitude: float, heading: float|null, age_seconds: int}|null
+     */
+    public function getCurrentForTrip(int $fleetId, int $tripId): ?array
+    {
+        if (DB::getDriverName() === 'sqlite') {
+            $row = DB::selectOne("
+                SELECT
+                    CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
+                    CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
+                    heading,
+                    recorded_at
+                FROM fleet_locations
+                WHERE fleet_id = ? AND trip_id = ?
+            ", [$fleetId, $tripId]);
+            $age = $row?->recorded_at
+                ? max(0, now(config('app.timezone'))->diffInSeconds(\Illuminate\Support\Carbon::parse($row->recorded_at, config('app.timezone')), true))
+                : null;
+        } else {
+            $row = DB::selectOne("
+                SELECT
+                    ST_Y(location::geometry) AS latitude,
+                    ST_X(location::geometry) AS longitude,
+                    heading,
+                    GREATEST(0, EXTRACT(EPOCH FROM (NOW() - recorded_at))) AS age_seconds
+                FROM fleet_locations
+                WHERE fleet_id = ? AND trip_id = ?
+            ", [$fleetId, $tripId]);
+            $age = $row?->age_seconds;
+        }
+
+        if (! $row || $row->latitude === null || $row->longitude === null || $age === null) {
+            return null;
+        }
+
+        return [
+            'latitude' => (float) $row->latitude,
+            'longitude' => (float) $row->longitude,
+            'heading' => $row->heading !== null ? (float) $row->heading : null,
+            'age_seconds' => (int) round((float) $age),
+        ];
+    }
+
+    /**
      * Return GPS breadcrumb trail for a trip (most recent first, capped at 500 rows).
      */
     public function getTripHistory(int $tripId, int $limit = 500): Collection
