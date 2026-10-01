@@ -55,6 +55,11 @@ Route::post('staff/fcm-token', [StaffAuthController::class, 'registerFcmToken'])
 // caller's own role and staff id (driver, Chauffeur or operator).
 Route::get('staff/calendar-summary', [CalendarSummaryController::class, 'show'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator']);
+// Batch 26: the calendar widget's day markers and the list of one day, same scoping.
+Route::get('staff/calendar/days', [CalendarSummaryController::class, 'days'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator', 'throttle:120,1']);
+Route::get('staff/calendar/day', [CalendarSummaryController::class, 'day'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator', 'throttle:120,1']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
 Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])

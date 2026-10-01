@@ -196,3 +196,99 @@ test('calendar summary rejects passengers and unauthenticated callers', function
     ]);
     $this->actingAs($passenger)->getJson('/api/staff/calendar-summary')->assertForbidden();
 });
+
+
+test('calendar markers list only the days with the caller\'s own trips or shifts, by role', function () {
+    $operator = calSummaryStaff('operator');
+    $otherOperator = calSummaryStaff('operator');
+    $driver = calSummaryStaff('driver');
+    $conductor = calSummaryStaff('conductor');
+    $otherDriver = calSummaryStaff('driver');
+    $fr = calSummaryFleetRoute($operator);
+    $otherFr = calSummaryFleetRoute($otherOperator);
+
+    calSummaryTrip($fr, $operator, $driver, $conductor, '2026-10-15', '08:00', 'scheduled', 91);
+    calSummaryTrip($fr, $operator, $driver, $conductor, '2026-10-15', '15:00', 'scheduled', 91);
+    calSummaryTrip($fr, $operator, $driver, null, '2026-10-20', '09:00');
+    calSummaryTrip($fr, $operator, $driver, null, '2026-10-21', '09:00', 'cancelled'); // never marked
+    calSummaryTrip($fr, $operator, $otherDriver, null, '2026-10-22', '09:00'); // someone else's
+    calSummaryTrip($otherFr, $otherOperator, null, null, '2026-10-23', '09:00'); // another company
+    calSummaryTrip($fr, $operator, $driver, null, '2026-11-20', '09:00'); // outside the asked range
+
+    $range = ['from' => '2026-10-01', 'to' => '2026-10-31'];
+
+    $this->actingAs($driver)->getJson('/api/staff/calendar/days?'.http_build_query($range))
+        ->assertSuccessful()
+        ->assertJsonPath('data.days', [
+            ['date' => '2026-10-15', 'trips' => 2, 'shifts' => 1],
+            ['date' => '2026-10-20', 'trips' => 1, 'shifts' => 0],
+        ]);
+
+    // The Chauffeur sees the legs they are on; the Operator sees their own fleets' days, not another company's.
+    $this->actingAs($conductor)->getJson('/api/staff/calendar/days?'.http_build_query($range))
+        ->assertJsonCount(1, 'data.days')->assertJsonPath('data.days.0.date', '2026-10-15');
+    $this->actingAs($operator)->getJson('/api/staff/calendar/days?'.http_build_query($range))
+        ->assertJsonCount(3, 'data.days'); // the 15th, 20th and 22nd (its own fleet, another driver); not the cancelled 21st or another company's 23rd
+    $this->actingAs($otherOperator)->getJson('/api/staff/calendar/days?'.http_build_query($range))
+        ->assertJsonCount(1, 'data.days')->assertJsonPath('data.days.0.date', '2026-10-23');
+});
+
+test('calendar markers validate the range', function () {
+    $driver = calSummaryStaff('driver');
+    $get = fn (array $q) => $this->actingAs($driver)->getJson('/api/staff/calendar/days?'.http_build_query($q));
+
+    $get([])->assertStatus(422)->assertJsonValidationErrors(['from', 'to']);
+    $get(['from' => '2026-10-10', 'to' => '2026-10-01'])->assertStatus(422)->assertJsonValidationErrors(['to']);
+    $get(['from' => 'x', 'to' => '2026-10-01'])->assertStatus(422)->assertJsonValidationErrors(['from']);
+    $get(['from' => '2026-01-01', 'to' => '2026-12-31'])->assertStatus(422)->assertJsonValidationErrors(['to']); // wider than allowed
+    $get(['from' => '2026-09-27', 'to' => '2026-11-07'])->assertSuccessful();
+});
+
+test('the day list holds only that day\'s own items, earliest first, paginated, with the leg\'s direction and the caller\'s role', function () {
+    $operator = calSummaryStaff('operator');
+    $driver = calSummaryStaff('driver');
+    $otherDriver = calSummaryStaff('driver');
+    $fr = calSummaryFleetRoute($operator);
+
+    $late = calSummaryTrip($fr, $operator, $driver, null, '2026-10-20', '15:00');
+    $early = calSummaryTrip($fr, $operator, $driver, null, '2026-10-20', '08:00', 'scheduled', 93);
+    $back = calSummaryTrip($fr, $operator, $driver, null, '2026-10-20', '12:00');
+    $back->update(['leg_direction' => 'reverse']);
+    calSummaryTrip($fr, $operator, $driver, null, '2026-10-21', '08:00'); // another day
+    calSummaryTrip($fr, $operator, $driver, null, '2026-10-20', '09:00', 'cancelled');
+    calSummaryTrip($fr, $operator, $otherDriver, null, '2026-10-20', '07:00'); // someone else's
+
+    $page1 = $this->actingAs($driver)->getJson('/api/staff/calendar/day?date=2026-10-20&per_page=2')->assertSuccessful()->json('data');
+
+    expect(array_column($page1['items'], 'trip_id'))->toBe([$early->trip_id, $back->trip_id]);
+    expect([$page1['date'], $page1['page'], $page1['per_page'], $page1['total'], $page1['last_page']])->toBe(['2026-10-20', 1, 2, 3, 2]);
+    expect($page1['items'][0])->toMatchArray(['type' => 'shift', 'origin' => 'A', 'destination' => 'B', 'role' => 'driver', 'status' => 'scheduled', 'leg_direction' => 'outbound']);
+    expect($page1['items'][1])->toMatchArray(['type' => 'trip', 'origin' => 'B', 'destination' => 'A', 'leg_direction' => 'reverse']); // the return leg reads B to A
+
+    $page2 = $this->actingAs($driver)->getJson('/api/staff/calendar/day?date=2026-10-20&per_page=2&page=2')->json('data');
+    expect(array_column($page2['items'], 'trip_id'))->toBe([$late->trip_id]);
+
+    // The Operator's list for the day covers the whole fleet, labelled with their own role.
+    $operatorDay = $this->actingAs($operator)->getJson('/api/staff/calendar/day?date=2026-10-20')->json('data');
+    expect($operatorDay['total'])->toBe(4);
+    expect($operatorDay['items'][0]['role'])->toBe('operator');
+
+    $this->actingAs($driver)->getJson('/api/staff/calendar/day?date=2026-10-25')->assertSuccessful()->assertJsonPath('data.items', [])->assertJsonPath('data.total', 0);
+});
+
+test('the day list validates its input and the calendar endpoints reject passengers', function () {
+    $driver = calSummaryStaff('driver');
+
+    foreach (['/api/staff/calendar/days?from=2026-10-01&to=2026-10-31', '/api/staff/calendar/day?date=2026-10-20'] as $url) {
+        $this->getJson($url)->assertUnauthorized();
+    }
+
+    $this->actingAs($driver)->getJson('/api/staff/calendar/day')->assertStatus(422)->assertJsonValidationErrors(['date']);
+    $this->actingAs($driver)->getJson('/api/staff/calendar/day?date=tomorrow')->assertStatus(422)->assertJsonValidationErrors(['date']);
+    $this->actingAs($driver)->getJson('/api/staff/calendar/day?date=2026-10-20&per_page=999')->assertStatus(422)->assertJsonValidationErrors(['per_page']);
+
+    foreach (['/api/staff/calendar/days?from=2026-10-01&to=2026-10-31', '/api/staff/calendar/day?date=2026-10-20'] as $url) {
+        $passenger = User::create(['username' => 'pax'.md5($url), 'email' => md5($url).'@example.com', 'password' => bcrypt('password123'), 'role' => 'passenger']);
+        $this->actingAs($passenger)->getJson($url)->assertForbidden();
+    }
+});

@@ -165,6 +165,21 @@ class TripRepository
             ->get(['trip_id', 'trip_date', 'shift_block_id', 'status']);
     }
 
+    /**
+     * Batch 26: the trips and shift legs of one business day for the calendar's day list, earliest
+     * first, scoped like the summary (the caller's own assignments, or the operator's fleets).
+     */
+    public function paginateForCalendarDay(string $role, int $companyUserId, string $date, int $page, int $perPage): \Illuminate\Pagination\LengthAwarePaginator
+    {
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where($this->calendarScopeColumn($role), $companyUserId)
+            ->whereDate('trip_date', $date)
+            ->where('status', '!=', 'cancelled')
+            ->orderBy('departure_time')
+            ->orderBy('trip_id')
+            ->paginate($perPage, ['*'], 'page', $page);
+    }
+
     /** C8: the next trip that is still to be run (not completed or cancelled). */
     public function findNextForCalendar(string $role, int $companyUserId, string $fromDate): ?Trip
     {

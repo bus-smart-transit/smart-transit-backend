@@ -44,6 +44,63 @@ class CalendarSummaryService
         return $summary;
     }
 
+    /**
+     * Batch 26: which days in a range have trips or shifts (the calendar widget's markers), from the
+     * caller's own assignments (or the operator's fleets). Only days that have something are listed.
+     *
+     * @return array<int, array{date: string, trips: int, shifts: int}>
+     */
+    public function markersFor(string $role, int $companyUserId, string $from, string $to): array
+    {
+        return $this->tripRepository->listForCalendar($role, $companyUserId, $from, $to)
+            ->groupBy(fn ($trip) => $this->dateOf($trip))
+            ->map(fn (Collection $trips, string $date) => ['date' => $date] + $this->counts($trips))
+            ->sortKeys()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Batch 26: the trips and shift legs of one business day, earliest first, paginated. Each item
+     * names the leg in its own direction (origin to destination swaps on a return leg) and carries
+     * the caller's role in it.
+     *
+     * @return array{date: string, items: array<int, array>, page: int, per_page: int, total: int, last_page: int}
+     */
+    public function dayFor(string $role, int $companyUserId, string $date, int $page, int $perPage): array
+    {
+        $paginator = $this->tripRepository->paginateForCalendarDay($role, $companyUserId, $date, $page, $perPage);
+
+        return [
+            'date' => $date,
+            'items' => $paginator->getCollection()->map(fn ($trip) => $this->dayItem($trip, $role))->values()->all(),
+            'page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => max(1, $paginator->lastPage()),
+        ];
+    }
+
+    private function dayItem(object $trip, string $role): array
+    {
+        $route = $trip->fleetRoute?->route;
+        $reverse = $trip->leg_direction === 'reverse';
+
+        return [
+            'type' => $trip->shift_block_id ? 'shift' : 'trip',
+            'trip_id' => $trip->trip_id,
+            'shift_block_id' => $trip->shift_block_id,
+            'departure_time' => $trip->departure_time ?: $trip->fleetRoute?->start_time,
+            'status' => $trip->status,
+            'route_name' => $route?->route_name,
+            'origin' => $reverse ? $route?->destination : $route?->origin,
+            'destination' => $reverse ? $route?->origin : $route?->destination,
+            'leg_direction' => $reverse ? 'reverse' : 'outbound',
+            'plate_number' => $trip->fleetRoute?->fleet?->plate_number,
+            'role' => $role,
+        ];
+    }
+
     /** Trips are rows; a shift is a distinct shift block among those rows. */
     private function counts(Collection $trips): array
     {

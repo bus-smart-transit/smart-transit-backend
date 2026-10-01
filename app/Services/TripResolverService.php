@@ -29,61 +29,112 @@ class TripResolverService
     ) {}
 
     /**
-     * The trip list behind the search results: the earliest eligible departures from the
-     * chosen Manila date on (today: from now), looking ahead up to the search window, so the
-     * list fills up even when the chosen day runs few buses. With no limit it returns every
-     * match in the window (the "all available trips" page). Each item carries the times, the
-     * seats left and the fare quoted by the same FareRuleService the ticket is priced with.
+     * The available trips for a Manila date, optionally narrowed to a journey (both stops, one
+     * of them or neither), earliest departure first and paginated on the server. Today lists
+     * only departures that have not left yet. When the chosen date has nothing, the first later
+     * date inside the booking window that has departures comes back as `next_available_date`.
+     * Each item carries the times, the seats left and the fare quoted by the same
+     * FareRuleService the ticket is priced with. "Available" is `evaluate()`, the same
+     * eligibility Book Now / Book Later use.
      *
-     * @param  array{origin_stop_id: int, destination_stop_id: int, date: string, seat_type?: string|null}  $query
-     * @return array{date: string, trips: array<int, array>, total: int, message: string|null}
+     * A missing stop defaults per trip to the first (origin) or last (destination) stopping
+     * point of the trip's direction, so an unfiltered list is the trips end to end.
+     *
+     * @param  array{origin_stop_id?: int|null, destination_stop_id?: int|null, date?: string|null, seat_type?: string|null}  $query
+     * @return array{date: string, trips: array<int, array>, page: int, per_page: int, total: int, last_page: int, next_available_date: string|null, message: string|null}
      *
      * @throws ValidationException
      */
-    public function upcoming(array $query, ?int $limit = null): array
+    public function available(array $query, int $page = 1, ?int $perPage = null): array
     {
         $timezone = config('app.timezone', 'Asia/Manila');
         $now = Carbon::now($timezone);
         $seatType = $query['seat_type'] ?? 'seated';
-        $date = $this->assertDateInWindow($query['date'], $now, $timezone);
+        $originId = isset($query['origin_stop_id']) ? (int) $query['origin_stop_id'] : null;
+        $destinationId = isset($query['destination_stop_id']) ? (int) $query['destination_stop_id'] : null;
+        $date = $this->assertDateInWindow($query['date'] ?? $now->toDateString(), $now, $timezone);
 
+        $perPage = max(1, min($perPage ?? (int) config('booking.trips_per_page'), (int) config('booking.trips_max_per_page')));
+        $found = $this->eligibleOnDate($date, $originId, $destinationId, $seatType, $now, $timezone);
+        $total = count($found);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = max(1, min($page, $lastPage));
+
+        $fares = [];
+        $items = array_map(function ($candidate) use ($seatType, &$fares) {
+            $trip = $candidate['trip'];
+            // The fare depends on the fleet's rule and the journey, not on the individual trip.
+            $key = $trip->fleetRoute->fleet_id.'|'.$candidate['origin']['stop_id'].'|'.$candidate['destination']['stop_id'];
+            $fares[$key] ??= $this->fareFor($trip, $candidate['origin']['stop_id'], $candidate['destination']['stop_id'], $seatType);
+
+            return $this->present($candidate) + ['fare' => $fares[$key]];
+        }, array_slice($found, ($page - 1) * $perPage, $perPage));
+
+        return [
+            'date' => $date->toDateString(),
+            'trips' => $items,
+            'page' => $page,
+            'per_page' => $perPage,
+            'total' => $total,
+            'last_page' => $lastPage,
+            'next_available_date' => $total === 0 ? $this->nextAvailableDate($date, $originId, $destinationId, $seatType, $now, $timezone) : null,
+            'message' => $total === 0 ? 'No departures match your journey on that date.' : null,
+        ];
+    }
+
+    /**
+     * Every eligible departure on one Manila date, earliest first. Today only those still to come.
+     *
+     * @return array<int, array>
+     */
+    private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): array
+    {
         $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
-        $until = $date->copy()->startOfDay()->addDays((int) config('booking.search_window_days'));
         $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
-            ->whereDate('trip_date', '>=', $date->toDateString())
-            ->whereDate('trip_date', '<=', $until->toDateString())
+            ->whereDate('trip_date', $date->toDateString())
             ->get();
 
         $found = [];
         foreach ($trips as $trip) {
-            $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $from, $timezone);
+            $candidate = $this->evaluate($trip, $originId, $destinationId, $seatType, $from, $timezone);
             if ($candidate) {
                 $found[] = $candidate;
             }
         }
         usort($found, fn ($a, $b) => $a['boards_at']->getTimestamp() <=> $b['boards_at']->getTimestamp());
 
-        $total = count($found);
-        if ($limit !== null) {
-            $found = array_slice($found, 0, max(1, $limit));
+        return $found;
+    }
+
+    /** The first date after `$date`, inside the booking window, that has an eligible departure. */
+    private function nextAvailableDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): ?string
+    {
+        $last = $now->copy()->startOfDay()->addDays((int) config('booking.max_advance_days'));
+        $first = $date->copy()->startOfDay()->addDay();
+        if ($first->gt($last)) {
+            return null;
         }
 
-        $fares = [];
-        $items = array_map(function ($candidate) use ($query, $seatType, &$fares) {
-            $fleetId = (int) $candidate['trip']->fleetRoute->fleet_id;
-            // The fare depends on the fleet's rule and the journey, not on the individual trip.
-            $fares[$fleetId] ??= $this->fareFor($candidate['trip'], (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType);
+        $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
+            ->whereDate('trip_date', '>=', $first->toDateString())
+            ->whereDate('trip_date', '<=', $last->toDateString())
+            ->orderBy('trip_date')
+            ->get();
 
-            return $this->present($candidate) + ['fare' => $fares[$fleetId]];
-        }, $found);
+        $next = null;
+        foreach ($trips as $trip) {
+            $tripDate = $trip->trip_date->toDateString();
+            if ($next !== null && $tripDate >= $next) {
+                continue;
+            }
+            if ($this->evaluate($trip, $originId, $destinationId, $seatType, $first, $timezone)) {
+                $next = $tripDate;
+            }
+        }
 
-        return [
-            'date' => $date->toDateString(),
-            'trips' => $items,
-            'total' => $total,
-            'message' => $total === 0 ? 'No departures match your journey in the next days.' : null,
-        ];
+        return $next;
     }
 
     private function fareFor(Trip $trip, int $originId, int $destinationId, string $seatType): ?float
@@ -171,20 +222,7 @@ class TripResolverService
         $seatType = $query['seat_type'] ?? 'seated';
         $date = $this->assertDateInWindow($query['date'], $now, $timezone);
 
-        $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
-        $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
-            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
-            ->whereDate('trip_date', $date->toDateString())
-            ->get();
-
-        $found = [];
-        foreach ($trips as $trip) {
-            $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $from, $timezone);
-            if ($candidate) {
-                $found[] = $candidate;
-            }
-        }
-        usort($found, fn ($a, $b) => $a['boards_at']->getTimestamp() <=> $b['boards_at']->getTimestamp());
+        $found = $this->eligibleOnDate($date, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $now, $timezone);
 
         return [
             'date' => $date->toDateString(),
@@ -193,7 +231,7 @@ class TripResolverService
         ];
     }
 
-    /** @param array{trip: Trip, boards_at: Carbon, has_offset: bool, seats_left: int, arrives_at?: Carbon|null, duration_min?: int|null} $best */
+    /** @param array{trip: Trip, boards_at: Carbon, has_offset: bool, seats_left: int, arrives_at?: Carbon|null, duration_min?: int|null, origin?: array, destination?: array} $best */
     private function present(array $best): array
     {
         return [
@@ -204,6 +242,8 @@ class TripResolverService
             'boarding_time_is_scheduled_offset' => $best['has_offset'],
             'arrival_time' => ($best['arrives_at'] ?? null)?->format('H:i'),
             'duration_minutes' => $best['duration_min'] ?? null,
+            'origin' => $best['origin'] ?? null,
+            'destination' => $best['destination'] ?? null,
             'route_name' => $best['trip']->fleetRoute->route?->route_name,
             'plate_number' => $best['trip']->fleetRoute->fleet?->plate_number,
             'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
@@ -235,7 +275,11 @@ class TripResolverService
         return $target;
     }
 
-    private function evaluate(Trip $trip, int $originId, int $destinationId, string $seatType, Carbon $target, string $timezone): ?array
+    /**
+     * @param  int|null  $originId  null = the first stopping point of the trip's direction
+     * @param  int|null  $destinationId  null = the last stopping point of the trip's direction
+     */
+    private function evaluate(Trip $trip, ?int $originId, ?int $destinationId, string $seatType, Carbon $target, string $timezone): ?array
     {
         $fleetRoute = $trip->fleetRoute;
         $fleet = $fleetRoute?->fleet;
@@ -245,13 +289,15 @@ class TripResolverService
 
         $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
         $stops = $this->routeStopRepository->getOrderedStopsForDirection((int) $fleetRoute->route_id, $direction)->values();
-        $originIndex = $stops->search(fn ($s) => (int) $s->stop_id === $originId);
-        $destinationIndex = $stops->search(fn ($s) => (int) $s->stop_id === $destinationId);
         $stopping = config('timeline.stopping_types');
+        $isStopping = fn ($index) => in_array($stops[$index]->stop_type ?? 'stop', $stopping, true);
+        $stoppingIndexes = $stops->keys()->filter($isStopping)->values();
 
-        if ($originIndex === false || $destinationIndex === false || $originIndex >= $destinationIndex
-            || ! in_array($stops[$originIndex]->stop_type ?? 'stop', $stopping, true)
-            || ! in_array($stops[$destinationIndex]->stop_type ?? 'stop', $stopping, true)) {
+        $originIndex = $originId === null ? $stoppingIndexes->first() : $stops->search(fn ($s) => (int) $s->stop_id === $originId);
+        $destinationIndex = $destinationId === null ? $stoppingIndexes->last() : $stops->search(fn ($s) => (int) $s->stop_id === $destinationId);
+
+        if ($originIndex === false || $originIndex === null || $destinationIndex === false || $destinationIndex === null
+            || $originIndex >= $destinationIndex || ! $isStopping($originIndex) || ! $isStopping($destinationIndex)) {
             return null;
         }
 
@@ -283,6 +329,20 @@ class TripResolverService
         $arrivesAt = $hasTimes ? $start->copy()->addMinutes((int) $destinationOffset) : null;
         $duration = $hasTimes ? max(0, (int) round((float) $destinationOffset - (float) $offset)) : null;
 
-        return ['trip' => $trip, 'boards_at' => $boardsAt, 'has_offset' => $offset !== null, 'seats_left' => $seatsLeft, 'arrives_at' => $arrivesAt, 'duration_min' => $duration];
+        return [
+            'trip' => $trip, 'boards_at' => $boardsAt, 'has_offset' => $offset !== null, 'seats_left' => $seatsLeft, 'arrives_at' => $arrivesAt, 'duration_min' => $duration,
+            'origin' => $this->stopSummary($stops[$originIndex]),
+            'destination' => $this->stopSummary($stops[$destinationIndex]),
+        ];
+    }
+
+    /** @return array{stop_id: int, stop_code: string|null, name: string|null} */
+    private function stopSummary($routeStop): array
+    {
+        return [
+            'stop_id' => (int) $routeStop->stop_id,
+            'stop_code' => $routeStop->stop?->stop_code,
+            'name' => $routeStop->stop?->stop_name,
+        ];
     }
 }

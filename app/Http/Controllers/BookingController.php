@@ -44,27 +44,36 @@ class BookingController extends Controller
         $result['meta'] = [
             'today' => Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString(),
             'max_advance_days' => (int) config('booking.max_advance_days'),
+            'home_preview_limit' => (int) config('booking.home_preview_limit'),
+            'trips_per_page' => (int) config('booking.trips_per_page'),
         ];
 
         return $this->success($result, 'Booking stops retrieved successfully');
     }
 
-    // The search results: the next departures for a journey, from a Manila date on. `limit`
-    // gives the short list; without it, every match in the search window.
+    // Available trips for a Manila date (default today), optionally for one journey, paginated.
+    // The journey is given as readable stop codes (never ids) and is optional so the home preview
+    // can list today's buses before anything is chosen. Bad codes or dates answer a friendly 422.
     public function trips(Request $request)
     {
         $data = $request->validate([
-            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
-            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
-            'date' => 'required|date_format:Y-m-d',
+            'from' => 'nullable|string|max:64',
+            'to' => 'nullable|string|max:64',
+            'date' => 'nullable|string|max:10',
             'seat_type' => 'nullable|in:seated,standing',
-            'limit' => 'nullable|integer|min:1|max:50',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:'.(int) config('booking.trips_max_per_page'),
         ]);
 
-        return $this->success(
-            $this->tripResolverService->upcoming($data, isset($data['limit']) ? (int) $data['limit'] : null),
-            'Trips retrieved'
-        );
+        $journey = $this->bookingLinkService->resolveJourney($data);
+        $result = $this->tripResolverService->available([
+            'origin_stop_id' => $journey['from']['stop_id'] ?? null,
+            'destination_stop_id' => $journey['to']['stop_id'] ?? null,
+            'date' => $journey['date'],
+            'seat_type' => $data['seat_type'] ?? null,
+        ], (int) ($data['page'] ?? 1), isset($data['per_page']) ? (int) $data['per_page'] : null);
+
+        return $this->success($result + ['from' => $journey['from'], 'to' => $journey['to']], 'Trips retrieved');
     }
 
     // Book Later: the departures of one Manila date that fit the journey, to choose from.

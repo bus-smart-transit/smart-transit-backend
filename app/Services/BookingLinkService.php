@@ -40,6 +40,34 @@ class BookingLinkService
         ];
     }
 
+    /**
+     * The journey filter of the available-trips list: both stops are optional (the home preview
+     * lists today's buses before anything is chosen), but any code that is given must be real, the
+     * two stops must differ and the date must be a valid Manila date inside the booking window.
+     *
+     * @param  array{from?: mixed, to?: mixed, date?: mixed}  $input
+     * @return array{from: array<string, mixed>|null, to: array<string, mixed>|null, date: string}
+     *
+     * @throws ValidationException
+     */
+    public function resolveJourney(array $input): array
+    {
+        $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->startOfDay();
+
+        $from = ($input['from'] ?? '') === '' ? null : $this->stopFor($input['from'], 'from', 'where you board');
+        $to = ($input['to'] ?? '') === '' ? null : $this->stopFor($input['to'], 'to', 'where you get off');
+
+        if ($from && $to && $from->stop_id === $to->stop_id) {
+            throw ValidationException::withMessages(['to' => ['Where you board and where you get off cannot be the same stop. Choose a different stop.']]);
+        }
+
+        return [
+            'from' => $from ? $this->present($from) : null,
+            'to' => $to ? $this->present($to) : null,
+            'date' => $this->dateFor($input['date'] ?? null, $today)->toDateString(),
+        ];
+    }
+
     private function stopFor(mixed $code, string $field, string $label): Stop
     {
         $code = is_string($code) ? strtolower(trim($code)) : '';
