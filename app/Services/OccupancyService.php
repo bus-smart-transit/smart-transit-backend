@@ -112,6 +112,15 @@ class OccupancyService
         $boardingByStop = $counts['boarding'];
         $alightingByStop = $counts['alighting'];
 
+        // Tickets that boarded between stops have no origin stop: count each at the nearest preceding stop in this
+        // leg's direction, so the running total of passengers on the bus still adds up.
+        foreach ($this->ticketRepository->getSnappedBoardingDistances($tripId) as $boardingDistanceM) {
+            $stopId = \App\Support\TicketBoarding::precedingStopId($routeStops, (int) $boardingDistanceM, $trip->leg_direction);
+            if ($stopId !== null) {
+                $boardingByStop[$stopId] = (int) ($boardingByStop[$stopId] ?? 0) + 1;
+            }
+        }
+
         // Compute cumulative on-bus count in PHP — no additional DB calls
         $cumulativeOnBus = 0;
         $stopBreakdown = [];
@@ -185,6 +194,11 @@ class OccupancyService
                     ?? ($payloadOriginId ? ($payloadStopNames[$payloadOriginId] ?? null) : null);
                 $destinationStopName = $ticket->destinationStop?->stop_name
                     ?? ($payloadDestinationId ? ($payloadStopNames[$payloadDestinationId] ?? null) : null);
+                // A boarding taken between stops has no origin stop (Batch 28 Stage 2).
+                $originBetweenStops = $originStopName === null && \App\Support\TicketBoarding::isSnapped($ticket);
+                if ($originBetweenStops) {
+                    $originStopName = \App\Support\TicketBoarding::BETWEEN_STOPS;
+                }
                 // D5: a custom drop-off is shown as a requested stop.
                 $requestedStop = $destinationStopName === null && $ticket->destination_lat !== null;
                 if ($requestedStop) {
@@ -212,6 +226,7 @@ class OccupancyService
                     'status' => $ticket->status,
                     'is_boarded' => $ticket->status === 'boarded',
                     'origin_stop' => $originStopName,
+                    'origin_between_stops' => $originBetweenStops,
                     'destination_stop' => $destinationStopName,
                     'requested_stop' => $requestedStop,
                     'drop_off_order' => $dropOffOrder,

@@ -21,6 +21,11 @@ class UpdateFleetRequest extends FormRequest
             'seated_capacity' => 'sometimes|integer|min:0',
             'standing_capacity' => 'sometimes|integer|min:0',
             'fleet_type' => 'sometimes|in:public,private',
+            'vehicle_class' => ['sometimes', 'nullable', 'string', 'max:32', function ($attribute, $value, $fail) {
+                if ($value !== null && $value !== '' && \App\Support\VehicleClass::normalize($value) === null) {
+                    $fail('Choose a vehicle class from the list.');
+                }
+            }],
         ];
     }
 }

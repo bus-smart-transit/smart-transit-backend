@@ -174,7 +174,7 @@ it('refuses to sell an express ticket, and refuses a tampered stop for what it i
 
     // A served journey: still not for sale in Stage 1.
     expect(fn () => app(TicketService::class)->reserveAndPrice($item($express, 'A', 'D')))
-        ->toThrow(ValidationException::class, 'Fare unavailable for express service.');
+        ->toThrow(ValidationException::class, 'Fare unavailable');
 
     // A stop express skips: refused as a stop problem, before the fare rule is even considered.
     $thrown = null;

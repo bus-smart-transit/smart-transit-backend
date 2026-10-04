@@ -71,6 +71,7 @@ Route::post('step-up/verify', [StaffAuthController::class, 'stepUpVerify'])
 Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerifyPassword'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:10,1']);
 
+Route::get('fare/options', [FareRuleController::class, 'options']);
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 // Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab).
@@ -91,6 +92,7 @@ Route::get('booking/link', [BookingController::class, 'link'])->middleware('thro
 Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:60,1');
 Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:60,1');
 Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:60,1');
+Route::get('booking/roundtrip', [BookingController::class, 'roundtrip'])->middleware('throttle:60,1');
 Route::get('booking/address-search', [BookingController::class, 'addressSearch'])->middleware('throttle:20,1');
 
 // Remove:
@@ -116,6 +118,10 @@ Route::prefix('passengers')
         Route::post('fcm-token', [AuthController::class, 'registerFcmToken']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
+        // Batch 28 item 4: no passenger-initiated cancel or refund after payment. These routes exist so the answer is
+        // an explicit, audited 422 for every ticket (one-way or either leg of a roundtrip), never a silent 404.
+        Route::post('tickets/{ticketUuid}/cancel', [TicketController::class, 'refuseCancellation'])->middleware('throttle:20,1');
+        Route::post('tickets/{ticketUuid}/refund', [TicketController::class, 'refuseCancellation'])->middleware('throttle:20,1');
         Route::get('dashboard-summary', [PassengerController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
@@ -163,11 +169,13 @@ Route::prefix('operator')
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
         // Fare rules
+        Route::get('fare-rules', [FareRuleController::class, 'listRules']);
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
 
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);
         Route::post('trips', [TripController::class, 'store']);
+        Route::patch('trips/{tripId}/fleet', [TripController::class, 'changeFleet']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
         Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
         Route::patch('trips/{tripId}/dispatch-decision', [TripController::class, 'saveDispatchDecision']);
@@ -354,11 +362,13 @@ Route::prefix('admin')
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
 
         // Fare rules + recalculation (step-up required — irreversible pricing change)
+        Route::get('fare-rules', [FareRuleController::class, 'listRules']);
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');
         // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
 
         // Trips — full control
         Route::post('trips', [TripController::class, 'store']);
+        Route::patch('trips/{tripId}/fleet', [TripController::class, 'changeFleet']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
         Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
         Route::patch('trips/{tripId}/dispatch-decision', [TripController::class, 'saveDispatchDecision']);

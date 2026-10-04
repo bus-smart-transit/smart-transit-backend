@@ -19,6 +19,11 @@ class StoreFleetRequest extends FormRequest
             'seated_capacity' => 'required|integer|min:0',
             'standing_capacity' => 'required|integer|min:0',
             'fleet_type' => 'required|in:public,private',
+            'vehicle_class' => ['nullable', 'string', 'max:32', function ($attribute, $value, $fail) {
+                if ($value !== null && $value !== '' && \App\Support\VehicleClass::normalize($value) === null) {
+                    $fail('Choose a vehicle class from the list.');
+                }
+            }],
             'routes' => 'sometimes|array|max:20',
             'routes.*.route_id' => 'required|integer|exists:routes,route_id|distinct',
             'routes.*.start_time' => 'required|date_format:H:i',

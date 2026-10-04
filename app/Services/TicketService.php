@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\Ticket;
-use App\Repositories\FareRuleRepository;
+use App\Exceptions\FareUnavailableException;
 use App\Support\BusLabel;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
@@ -21,7 +21,7 @@ class TicketService
         private TicketRepository $ticketRepository,
         private TripRepository $tripRepository,
         private RouteStopRepository $routeStopRepository,
-        private FareRuleRepository $fareRuleRepository,
+        private FareRuleResolver $fareRuleResolver,
         private FareRuleService $fareRuleService,
         private FareCalculationService $fareCalculationService,
         private TripService $tripService,
@@ -92,6 +92,9 @@ class TicketService
             ]);
         }
 
+        // Roundtrip: which of the two tickets this is (outbound | return). Null for a one-way ticket.
+        $reserved['journey_leg'] = in_array($item['journey_leg'] ?? null, ['outbound', 'return'], true) ? $item['journey_leg'] : null;
+
         // Reserve seat/standing capacity now — throws if full. Same hold
         // semantics regardless of which pricing path was used.
         $this->tripService->recordBoarding($trip->trip_id, $item['seat_type']);
@@ -118,15 +121,6 @@ class TicketService
         return $reservedTemplate;
     }
 
-    /** Stage 1 (Batch 28): an express trip has no fare rule, and there is no fallback to the regular fare. */
-    private function assertFareAvailableForService(object $trip): void
-    {
-        if (ServiceType::isExpress($trip->service_type)) {
-            throw ValidationException::withMessages([
-                'trip' => ['Fare unavailable for express service.'],
-            ]);
-        }
-    }
 
     /**
      * Computed on the fly — no fare_matrix table. The distance between two
@@ -161,10 +155,9 @@ class TicketService
         $boardingKm = (float) $originRouteStop->distance_from_origin_km;
         $distanceKm = $this->assertAheadAndMeasure($trip, $boardingKm, $destinationRouteStop);
 
-        // Batch 28 Stage 1: express has no fare yet, so nothing is priced or sold for it
-        // (checked after the stop and direction checks, so a tampered payload is refused for what it is).
-        $this->assertFareAvailableForService($trip);
-
+        // Checked after the stop and direction checks, so a tampered payload is refused for what it is.
+        // Batch 28 item 5: no rule for this bus's class and service type (an express trip with no express rule
+        // included) means "Fare unavailable": nothing is priced or sold, and nothing is borrowed from another class.
         $rule = $this->ruleFor($trip, $item['seat_type']);
 
         return [
@@ -172,6 +165,7 @@ class TicketService
             'trip_id' => $trip->trip_id,
             'seat_type' => $item['seat_type'],
             'fare_rule_id' => $rule->fare_rule_id,
+            'rounding_mode' => $rule->rounding_mode,
             'distance_km' => $distanceKm,
             'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
             'origin_stop_id' => $item['origin_stop_id'],
@@ -212,18 +206,79 @@ class TicketService
         return $km;
     }
 
-    /** The fare rule in force on the trip's date (Manila), for this fleet and seat type. */
+    /** The fare rule that prices this trip: fleet override, then (route, class, service type, seat type), then (class, service type, seat type). */
     private function ruleFor(object $trip, string $seatType): \App\Models\FareRule
     {
-        $on = $trip->trip_date?->toDateString();
-        $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $seatType, $on)
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $seatType, $on);
+        $rule = $this->fareRuleResolver->resolve(
+            $trip->fleetRoute->fleet,
+            (int) $trip->fleetRoute->route_id,
+            $trip->service_type,
+            $seatType,
+            $trip->trip_date?->toDateString(),
+        );
 
         if (! $rule) {
-            throw new \RuntimeException('No fare configured for this fleet and seat type.');
+            throw $this->fareUnavailable();
         }
 
         return $rule;
+    }
+
+    /**
+     * Defaults for "book the return trip" from this ticket: board where this ticket gets off, get off where it boarded.
+     * When the boarding was a snapped point (no origin stop) the return destination is the nearest preceding stop,
+     * the last stop the bus passed before that point. Null when this ticket gets off at a pin (no stop to board at).
+     *
+     * @return array{origin_stop_id: int, destination_stop_id: int, origin_stop_code: string|null, destination_stop_code: string|null, destination_is_nearest_preceding_stop: bool}|null
+     */
+    private function returnJourneyFor(Ticket $ticket): ?array
+    {
+        $trip = $ticket->trip;
+        if (! $trip?->fleetRoute || ! $ticket->destination_stop_id) {
+            return null;
+        }
+
+        $snapped = \App\Support\TicketBoarding::isSnapped($ticket);
+        $destinationId = $ticket->origin_stop_id;
+        if (! $destinationId && $snapped) {
+            $destinationId = \App\Support\TicketBoarding::precedingStopId(
+                $this->routeStopRepository->getOrderedStops((int) $trip->fleetRoute->route_id),
+                $ticket->boarding_distance_m,
+                $trip->leg_direction,
+            );
+        }
+        if (! $destinationId || (int) $destinationId === (int) $ticket->destination_stop_id) {
+            return null;
+        }
+
+        $stops = \App\Models\Stop::whereIn('stop_id', [(int) $ticket->destination_stop_id, (int) $destinationId])->get()->keyBy('stop_id');
+
+        return [
+            'origin_stop_id' => (int) $ticket->destination_stop_id,
+            'destination_stop_id' => (int) $destinationId,
+            'origin_stop_code' => $stops[(int) $ticket->destination_stop_id]?->stop_code,
+            'destination_stop_code' => $stops[(int) $destinationId]?->stop_code,
+            'destination_is_nearest_preceding_stop' => $snapped,
+        ];
+    }
+
+    /** A custom-point quote for this trip: its fleet, class and service type pick the rule; no rule is a 422, not a 500. */
+    private function quoteCoordinates(object $trip, int $routeId, array $payload): array
+    {
+        try {
+            return $this->fareRuleService->getQuoteForTripFromCoordinates(
+                (int) $trip->fleetRoute->fleet_id,
+                $routeId,
+                $payload + ['service_type' => $trip->service_type],
+            );
+        } catch (FareUnavailableException) {
+            throw $this->fareUnavailable();
+        }
+    }
+
+    private function fareUnavailable(): ValidationException
+    {
+        return ValidationException::withMessages(['trip' => [FareUnavailableException::MESSAGE]]);
     }
 
     private function routeStopMeters(\App\Models\RouteStop $routeStop): int
@@ -284,11 +339,11 @@ class TicketService
             }
 
             $distanceKm = $this->assertAheadAndMeasure($trip, $boardingKm, $destination);
-            $this->assertFareAvailableForService($trip);
             $rule = $this->ruleFor($trip, $item['seat_type']);
 
             return $base + [
                 'fare_rule_id' => $rule->fare_rule_id,
+                'rounding_mode' => $rule->rounding_mode,
                 'distance_km' => $distanceKm,
                 'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
                 'destination_stop_id' => (int) $item['destination_stop_id'],
@@ -317,8 +372,8 @@ class TicketService
             (float) $item['destination_lng'],
         );
 
-        $quote = $this->fareRuleService->getQuoteForTripFromCoordinates(
-            (int) $trip->fleetRoute->fleet_id,
+        $quote = $this->quoteCoordinates(
+            $trip,
             $routeId,
             [
                 'origin_lat' => $point['latitude'],
@@ -334,6 +389,7 @@ class TicketService
 
         return $base + [
             'fare_rule_id' => $quote['fare_rule_id'],
+            'rounding_mode' => $quote['rounding_mode'] ?? null,
             'distance_km' => $quote['distance_km'],
             'amount' => $quote['amount'],
             'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
@@ -380,8 +436,8 @@ class TicketService
         );
 
         $boarding = $boardingRouteStop->stop;
-        $quote = $this->fareRuleService->getQuoteForTripFromCoordinates(
-            (int) $trip->fleetRoute->fleet_id,
+        $quote = $this->quoteCoordinates(
+            $trip,
             $routeId,
             [
                 'origin_lat' => (float) $boarding->latitude,
@@ -400,6 +456,7 @@ class TicketService
             'trip_id' => $trip->trip_id,
             'seat_type' => $item['seat_type'],
             'fare_rule_id' => $quote['fare_rule_id'],
+            'rounding_mode' => $quote['rounding_mode'] ?? null,
             'distance_km' => $quote['distance_km'],
             'amount' => $quote['amount'],
             'boarding_distance_m' => $quote['boarding_distance_m'] ?? null,
@@ -430,6 +487,8 @@ class TicketService
             'fleet_route_id' => $reserved['fleet_route_id'],
             'trip_id' => $reserved['trip_id'],
             'fare_rule_id' => $reserved['fare_rule_id'],
+            'rounding_mode' => $reserved['rounding_mode'] ?? null,
+            'journey_leg' => $reserved['journey_leg'] ?? null,
             'distance_km' => $reserved['distance_km'],
             'payment_id' => $paymentId,
             'passenger_id' => $passengerId,
@@ -560,9 +619,7 @@ class TicketService
                 : null);
 
         $originLabel = $boardedTicket->originStop?->stop_name
-            ?? ($boardedTicket->origin_lat !== null
-                ? 'GPS: '.round((float) $boardedTicket->origin_lat, 5).', '.round((float) $boardedTicket->origin_lng, 5)
-                : null);
+            ?? (\App\Support\TicketBoarding::isSnapped($boardedTicket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : null);
 
         return (object) [
             'ticket_id' => $boardedTicket->ticket_id,
@@ -774,6 +831,13 @@ class TicketService
                 $ticket->setAttribute('destination', $destinationLabel);
             }
         }
+
+        // A boarding taken between stops has no origin stop: say so, and give the stop to default a return trip to
+        // (the nearest preceding stop, so "book the return" works without asking).
+        if (! $ticket->originStop?->stop_name && \App\Support\TicketBoarding::isSnapped($ticket)) {
+            $ticket->setAttribute('origin', \App\Support\TicketBoarding::BETWEEN_STOPS);
+        }
+        $ticket->setAttribute('return_journey', $this->returnJourneyFor($ticket));
 
         // Owners only (this runs for a passenger's own tickets and for a guest who proved the
         // payment reference): the link that follows this ticket's bus. Virtual, never stored here.

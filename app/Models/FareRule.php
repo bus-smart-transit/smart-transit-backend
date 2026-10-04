@@ -41,6 +41,11 @@ class FareRule extends Model
      */
     protected $fillable = [
         'fleet_id',
+        'vehicle_class',
+        'service_type',
+        'route_id',
+        'rounding_mode',
+        'note',
         'base_fare',
         'fare_per_km',
         'base_distance_km',

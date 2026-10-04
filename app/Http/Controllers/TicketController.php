@@ -338,6 +338,28 @@ class TicketController extends Controller
         return $this->success($qrData, 'QR code generated successfully');
     }
 
+    /**
+     * A passenger cannot cancel or ask for a refund after paying (adviser decision, Batch 28). A refund exists only
+     * when the OPERATOR cancels a trip (a later stage). The rule applies per ticket, so each ticket of a
+     * roundtrip answers the same way. Another passenger's ticket is not found.
+     */
+    public function refuseCancellation(Request $request, string $ticketUuid)
+    {
+        $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
+        $passenger = $request->user()?->passengerProfile;
+
+        if (! $passenger || $ticket->passenger_id === null || (int) $ticket->passenger_id !== (int) $passenger->passenger_id) {
+            return $this->error('Ticket not found.', 404);
+        }
+
+        \App\Services\AuditLogger::log('ticket.passenger_cancel_refused', 'Ticket', (int) $ticket->ticket_id, [
+            'journey_leg' => $ticket->journey_leg,
+            'status' => $ticket->status,
+        ]);
+
+        return $this->error('A paid ticket cannot be cancelled or refunded by the passenger. A refund is possible only if the operator cancels the trip.', 422);
+    }
+
     private function assertConductorShiftForCurrentTrip(Request $request)
     {
         $user = $request->user();

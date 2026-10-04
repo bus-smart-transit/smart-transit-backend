@@ -28,6 +28,7 @@ class TripResolverService
     public function __construct(
         private RouteStopRepository $routeStopRepository,
         private FareRuleService $fareRuleService,
+        private FareRuleResolver $fareRuleResolver,
     ) {}
 
     /**
@@ -69,7 +70,7 @@ class TripResolverService
             $key = $trip->fleetRoute->fleet_id.'|'.$candidate['origin']['stop_id'].'|'.$candidate['destination']['stop_id'].'|'.ServiceType::normalize($trip->service_type);
             $fares[$key] ??= $this->fareFor($trip, $candidate['origin']['stop_id'], $candidate['destination']['stop_id'], $seatType);
 
-            return $this->present($candidate) + ['fare' => $fares[$key]];
+            return $this->present($candidate, $seatType) + ['fare' => $fares[$key]];
         }, array_slice($found, ($page - 1) * $perPage, $perPage));
 
         return [
@@ -139,16 +140,25 @@ class TripResolverService
         return $next;
     }
 
+    /** True when a fare rule prices this trip (its bus, route, service type and seat type). Express is bookable only where an express rule exists. */
+    private function hasFare(Trip $trip, string $seatType): bool
+    {
+        return $this->fareRuleResolver->isAvailable(
+            $trip->fleetRoute?->fleet,
+            (int) $trip->fleetRoute?->route_id,
+            $trip->service_type,
+            $seatType,
+            $trip->trip_date?->toDateString(),
+        );
+    }
+
     private function fareFor(Trip $trip, int $originId, int $destinationId, string $seatType): ?float
     {
-        if (ServiceType::isExpress($trip->service_type)) {
-            return null; // "Fare unavailable": no regular-fare fallback and no surcharge
-        }
-
         try {
             return (float) $this->fareRuleService->getQuote([
                 'route_id' => (int) $trip->fleetRoute->route_id,
                 'fleet_id' => (int) $trip->fleetRoute->fleet_id,
+                'service_type' => $trip->service_type,
                 'origin_stop_id' => $originId,
                 'destination_stop_id' => $destinationId,
                 'seat_type' => $seatType,
@@ -156,7 +166,7 @@ class TripResolverService
                 'on' => $trip->trip_date?->toDateString(),
             ]);
         } catch (\Throwable) {
-            return null; // shown as "fare unavailable"; never guessed
+            return null; // shown as "Fare unavailable"; never guessed
         }
     }
 
@@ -198,8 +208,8 @@ class TripResolverService
         $best = null;
         foreach ($trips as $trip) {
             $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $target, $timezone);
-            // Book Now / Book Later pick only a bookable trip; an express trip has no fare yet.
-            if ($candidate && ServiceType::isExpress($trip->service_type)) {
+            // Book Now / Book Later pick only a bookable trip: one that has a fare rule (an express trip needs an express rule).
+            if ($candidate && ! $this->hasFare($trip, $seatType)) {
                 continue;
             }
             if ($candidate && ($best === null || $candidate['boards_at']->lt($best['boards_at']))) {
@@ -212,9 +222,108 @@ class TripResolverService
         }
 
         return [
-            'trip' => $this->present($best),
+            'trip' => $this->present($best, $seatType),
             'message' => null,
             'searched_from' => $target->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Roundtrip (Batch 28, item 4): resolves BOTH legs for one booking and says whether it can be paid.
+     * The outbound leg is resolved like Book Now / Book Later; the return leg goes the other way from the
+     * outbound destination back to the outbound origin, on or after the chosen return date and time, and must
+     * depart after the outbound trip. Nothing is held or charged here. If either leg has no departure (or no
+     * fare) can_pay is false and the passenger is told which, so no checkout is started and nothing is charged.
+     *
+     * @param  array{origin_stop_id: int, destination_stop_id: int, outbound_mode: string, outbound_date?: string|null, outbound_time?: string|null, return_date: string, return_time: string, seat_type?: string|null}  $query
+     * @return array<string, mixed>
+     *
+     * @throws ValidationException
+     */
+    public function resolveRoundtrip(array $query): array
+    {
+        $timezone = config('app.timezone', 'Asia/Manila');
+        $now = Carbon::now($timezone);
+        $seatType = $query['seat_type'] ?? 'seated';
+        $originId = (int) $query['origin_stop_id'];
+        $destinationId = (int) $query['destination_stop_id'];
+
+        $outboundQuery = [
+            'mode' => $query['outbound_mode'],
+            'origin_stop_id' => $originId,
+            'destination_stop_id' => $destinationId,
+            'date' => $query['outbound_date'] ?? null,
+            'time' => $query['outbound_time'] ?? null,
+            'seat_type' => $seatType,
+        ];
+        $outboundTarget = $this->targetTime($outboundQuery, $now, $timezone);
+
+        // Future-only, inside the booking window, and after the outbound departure: all by Manila time.
+        $returnTarget = $this->targetTime(['mode' => 'later', 'date' => $query['return_date'], 'time' => $query['return_time']], $now, $timezone);
+        if ($returnTarget->lte($outboundTarget)) {
+            throw ValidationException::withMessages(['return_date' => ['The return must be after your departure.']]);
+        }
+
+        $outbound = $this->resolve($outboundQuery);
+        $return = $this->resolve([
+            'mode' => 'later',
+            'origin_stop_id' => $destinationId,
+            'destination_stop_id' => $originId,
+            'date' => $query['return_date'],
+            'time' => $query['return_time'],
+            'seat_type' => $seatType,
+        ]);
+
+        $outboundTrip = $outbound['trip'];
+        $returnTrip = $return['trip'];
+        if ($outboundTrip && $returnTrip && Carbon::parse($returnTrip['boarding_at'])->lte(Carbon::parse($outboundTrip['boarding_at']))) {
+            $returnTrip = null;
+            $return['message'] = 'No return departure leaves after your outbound trip at that time.';
+        }
+
+        $outboundLeg = $outboundTrip ? $this->roundtripLeg($outboundTrip, 'outbound', $originId, $destinationId, $seatType) : null;
+        $returnLeg = $returnTrip ? $this->roundtripLeg($returnTrip, 'return', $destinationId, $originId, $seatType) : null;
+
+        $message = null;
+        if (! $outboundLeg) {
+            $message = 'No outbound departure matches your journey at that date and time.';
+        } elseif (! $returnLeg) {
+            $message = $returnTrip === null && $return['trip'] !== null
+                ? 'No return departure leaves after your outbound trip at that time.'
+                : 'No return departure matches your journey at that date and time.';
+        } elseif ($outboundLeg['fare'] === null || $returnLeg['fare'] === null) {
+            $message = 'Fare unavailable for '.($outboundLeg['fare'] === null ? 'the outbound' : 'the return').' trip.';
+        }
+
+        $canPay = $message === null;
+
+        return [
+            'journey_type' => 'roundtrip',
+            'outbound' => $outboundLeg,
+            'return' => $returnLeg,
+            'can_pay' => $canPay,
+            'total_fare' => $canPay ? round($outboundLeg['fare'] + $returnLeg['fare'], 2) : null,
+            'message' => $message,
+            // The return ticket's stops default to the outbound ones, swapped; both stay editable.
+            'return_defaults' => ['origin_stop_id' => $destinationId, 'destination_stop_id' => $originId],
+            'cancellation_notice' => (string) config('booking.cancellation_notice'),
+        ];
+    }
+
+    /** @return array<string, mixed> one leg of a roundtrip summary: its own trip, fare and bus label */
+    private function roundtripLeg(array $presented, string $leg, int $originId, int $destinationId, string $seatType): array
+    {
+        $trip = Trip::with(['fleetRoute.fleet'])->find($presented['trip_id']);
+        $fare = $trip ? $this->fareFor($trip, $originId, $destinationId, $seatType) : null;
+
+        return $presented + [
+            'journey_leg' => $leg,
+            'origin_stop_id' => $originId,
+            'destination_stop_id' => $destinationId,
+            'fare' => $fare,
+            // Each ticket carries the label of its OWN trip's bus (never assumed to be the outbound bus).
+            // null label = the bus has no passenger label yet: the screen says so, never the plate.
+            'bus_state' => $presented['bus_label'] === null ? 'label_unavailable' : 'ready',
         ];
     }
 
@@ -238,13 +347,13 @@ class TripResolverService
 
         return [
             'date' => $date->toDateString(),
-            'departures' => array_map(fn ($candidate) => $this->present($candidate), $found),
+            'departures' => array_map(fn ($candidate) => $this->present($candidate, $seatType), $found),
             'message' => $found === [] ? 'No departures match your journey on that date.' : null,
         ];
     }
 
     /** @param array{trip: Trip, boards_at: Carbon, has_offset: bool, seats_left: int, arrives_at?: Carbon|null, duration_min?: int|null, origin?: array, destination?: array} $best */
-    private function present(array $best): array
+    private function present(array $best, string $seatType = 'seated'): array
     {
         return [
             'trip_id' => (int) $best['trip']->trip_id,
@@ -260,8 +369,9 @@ class TripResolverService
             'bus_label' => BusLabel::for($best['trip']->fleetRoute->fleet),
             'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
             'service_type' => ServiceType::normalize($best['trip']->service_type),
-            // Stage 1: express has no fare rule yet, so it is listed but cannot be booked.
-            'bookable' => ! ServiceType::isExpress($best['trip']->service_type),
+            // Bookable only where a fare rule prices this trip (an express trip needs an express rule); otherwise it is
+            // listed with "Fare unavailable" and cannot be booked.
+            'bookable' => $this->hasFare($best['trip'], $seatType),
             'seats_left' => $best['seats_left'],
         ];
     }

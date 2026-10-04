@@ -41,6 +41,28 @@ class TripController extends Controller
         return $this->success($trip, 'Trip scheduled successfully');
     }
 
+    // Operator / Admin: move a trip that has not started onto another bus of the same route (passengers are told)
+    public function changeFleet(Request $request, int $tripId)
+    {
+        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+            return $denied;
+        }
+
+        $data = $request->validate(['fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id']);
+        $user = $request->user();
+        if ($user?->role === 'operator') {
+            $fleetId = \App\Models\FleetRoute::where('fleet_route_id', $data['fleet_route_id'])->value('fleet_id');
+            if (! $fleetId || ! app(\App\Services\FleetService::class)->isOwnedByOperator((int) $fleetId, (int) $user->companyProfile?->company_user_id)) {
+                return $this->error('You do not have permission to use that bus.', 403);
+            }
+        }
+
+        $trip = $this->tripService->changeFleet($tripId, (int) $data['fleet_route_id']);
+        AuditLogger::log('trip.change_fleet', 'Trip', $tripId, $data);
+
+        return $this->success($trip, 'Bus changed. Passengers with tickets were notified.');
+    }
+
     // Operator / Admin: assign a driver
     public function assignDriver(AssignDriverRequest $request, int $tripId)
     {

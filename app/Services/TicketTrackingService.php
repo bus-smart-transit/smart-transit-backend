@@ -131,7 +131,7 @@ class TicketTrackingService
             'route_name' => $fleetRoute->route?->route_name,
         ];
         $view['route'] = ['route_id' => (int) $fleetRoute->route_id, 'direction' => $direction];
-        $view['boarding'] = $this->stopSummary($ticket->originStop, $ticket->origin_lat, $ticket->origin_lng, null);
+        $view['boarding'] = $this->stopSummary($ticket->originStop, $ticket->origin_lat, $ticket->origin_lng, \App\Support\TicketBoarding::isSnapped($ticket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : null);
         $view['alighting'] = $this->stopSummary($ticket->destinationStop, $ticket->destination_lat, $ticket->destination_lng, $ticket->destination_label);
         $view['bus'] = null;
 

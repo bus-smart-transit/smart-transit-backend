@@ -243,6 +243,64 @@ class TripService
         return [$this->tripRepository->findById($tripId), $previousStatus];
     }
 
+    /**
+     * Batch 28, item 4: move a trip that has not started onto another bus of the same route (an operator swap).
+     * Valid tickets follow the trip, every passenger holding one is told which bus it is now (FCM + in-app), and
+     * the new bus must have room for what is already sold. The label they see is the new fleet's own, read live.
+     *
+     * @throws ValidationException
+     */
+    public function changeFleet(int $tripId, int $fleetRouteId): object
+    {
+        $trip = $this->tripRepository->findById($tripId);
+        if (! $trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+        if (! in_array($trip->status, ['scheduled', 'delayed'], true)) {
+            throw ValidationException::withMessages(['trip' => ['The bus can only be changed before the trip starts boarding.']]);
+        }
+
+        $target = \App\Models\FleetRoute::with('fleet')->find($fleetRouteId);
+        if (! $target || $target->status !== 'active' || (int) $target->route_id !== (int) $trip->fleetRoute->route_id) {
+            throw ValidationException::withMessages(['fleet_route_id' => ['Choose an active bus assigned to this trip\'s route.']]);
+        }
+        if ((int) $target->fleet_route_id === (int) $trip->fleet_route_id) {
+            return $trip;
+        }
+        if ((int) $trip->current_seated_capacity > (int) $target->fleet->seated_capacity
+            || (int) $trip->current_standing_capacity > (int) $target->fleet->standing_capacity) {
+            throw ValidationException::withMessages(['fleet_route_id' => ['That bus does not have room for the tickets already sold on this trip.']]);
+        }
+
+        DB::transaction(function () use ($trip, $target) {
+            \App\Models\Trip::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
+            \App\Models\Ticket::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
+        });
+
+        $fresh = $this->tripRepository->findById($tripId);
+        $this->notifyPassengersOfBusChange($fresh);
+
+        return $fresh;
+    }
+
+    /** "Your bus is now ..." to every passenger holding a valid ticket on the trip. Fail-soft like every push here. */
+    private function notifyPassengersOfBusChange(object $trip): void
+    {
+        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
+        $label = \App\Support\BusLabel::for($trip->fleetRoute?->fleet);
+        $body = $label
+            ? "{$routeName} on {$trip->trip_date->toDateString()} will now run on {$label}."
+            : "{$routeName} on {$trip->trip_date->toDateString()} has a new bus. Its label will be shown on your ticket as soon as it is available.";
+
+        foreach ($this->ticketRepository->findActivePassengersForTrip($trip->trip_id) as $passenger) {
+            if (! $passenger->user) {
+                continue;
+            }
+
+            $this->fcmService->sendToUser($passenger->user, 'Your bus has changed', $body, ['type' => 'trip_bus_changed', 'trip_id' => $trip->trip_id]);
+        }
+    }
+
     private function notifyPassengersOfCancellation(object $trip): void
     {
         $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';

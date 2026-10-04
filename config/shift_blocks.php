@@ -44,7 +44,8 @@ return [
     'operator_card_limit' => (int) env('SHIFT_BLOCK_OPERATOR_CARD_LIMIT', 60),
 
     // Batch 27 Part 2: from the second leg on, the bus must be at that leg's origin terminal before the
-    // leg can start (the Location Match Rule applied per leg). Leave on; the switch exists for dev machines
-    // with no GPS feed.
+    // leg can start (the Location Match Rule applied per leg). DEFAULT: ON, and it must stay on in any real
+    // deployment. Turning it OFF (SHIFT_BLOCK_LEG_LOCATION_RULE=false) is for a DEV machine with no GPS feed
+    // only: with it off a leg can start anywhere, which defeats the rule.
     'leg_location_rule_enabled' => filter_var(env('SHIFT_BLOCK_LEG_LOCATION_RULE', true), FILTER_VALIDATE_BOOLEAN),
 ];

@@ -6,7 +6,10 @@ use App\Repositories\StopRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\FleetRouteRepository;
 use App\Repositories\RouteRepository;
+use App\Exceptions\FareUnavailableException;
 use App\Support\LegDistance;
+use App\Support\ServiceType;
+use App\Support\VehicleClass;
 use Illuminate\Validation\ValidationException;
 
 class FareRuleService
@@ -19,6 +22,7 @@ class FareRuleService
         private FleetRouteRepository $fleetRouteRepository,
         private RouteRepository $routeRepository,
         private FareCalculationService $fareCalculationService,
+        private FareRuleResolver $fareRuleResolver,
     ) {
     }
 
@@ -49,12 +53,16 @@ class FareRuleService
             }
         }
 
-        $on = $payload['on'] ?? null;
-        $rule = $this->fareRuleRepository->getActiveRule($payload['fleet_id'], $payload['seat_type'], $on)
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($payload['route_id'], $payload['seat_type'], $on);
+        $rule = $this->fareRuleResolver->resolve(
+            (int) $payload['fleet_id'],
+            (int) $payload['route_id'],
+            $payload['service_type'] ?? null,
+            $payload['seat_type'],
+            $payload['on'] ?? null,
+        );
 
         if (!$rule) {
-            throw new \RuntimeException('No fare configured for this fleet and seat type.');
+            throw new FareUnavailableException();
         }
 
         return $this->fareCalculationService->priceWithRule($rule, $distanceKm);
@@ -118,15 +126,16 @@ class FareRuleService
         $quotes = [];
 
         foreach ($fleets as $fleet) {
-            $rule = $this->fareRuleRepository->getActiveRule($fleet->fleet_id, $payload['seat_type']);
+            $rule = $this->fareRuleResolver->resolve((int) $fleet->fleet_id, (int) $route->route_id, $payload['service_type'] ?? null, $payload['seat_type']);
             if (!$rule) {
-                continue; // this fleet hasn't configured pricing for this seat type
+                continue; // no fare for this bus (no override and no rule for its class): "Fare unavailable", never guessed
             }
 
             $quotes[] = [
                 'fleet_id' => $fleet->fleet_id,
                 'bus_label' => BusLabel::for($fleet),
                 'fleet_type' => $fleet->fleet_type,
+                'vehicle_class' => $fleet->vehicle_class,
                 'seat_type' => $payload['seat_type'],
                 'amount' => $this->fareCalculationService->priceWithRule($rule, $tripDistanceKm),
             ];
@@ -165,16 +174,16 @@ class FareRuleService
             throw new \RuntimeException('Pickup and drop-off resolved to the same point on the route.');
         }
 
-        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $payload['seat_type'], $payload['on'] ?? null)
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $payload['seat_type'], $payload['on'] ?? null);
+        $rule = $this->fareRuleResolver->resolve($fleetId, $routeId, $payload['service_type'] ?? null, $payload['seat_type'], $payload['on'] ?? null);
         if (!$rule) {
-            throw new \RuntimeException('No fare configured for this fleet and seat type.');
+            throw new FareUnavailableException();
         }
 
         return [
             'amount' => $this->fareCalculationService->priceWithRule($rule, $tripDistanceKm),
             'distance_km' => round($tripDistanceKm, 2),
             'fare_rule_id' => $rule->fare_rule_id,
+            'rounding_mode' => $rule->rounding_mode,
             'boarding_distance_m' => LegDistance::toMeters((float) $match['origin']['distance_from_origin_km']),
             'alighting_distance_m' => LegDistance::toMeters((float) $match['destination']['distance_from_origin_km']),
         ];
@@ -185,7 +194,7 @@ class FareRuleService
      * stop-pair fare for one fleet+seat_type on demand — nothing stored,
      * nothing to keep in sync.
      */
-    public function listComputedFaresForRoute(int $routeId, int $fleetId, string $seatType): array
+    public function listComputedFaresForRoute(int $routeId, int $fleetId, string $seatType, ?string $serviceType = null): array
     {
         $route = $this->routeRepository->findById($routeId);
 
@@ -193,11 +202,10 @@ class FareRuleService
             throw new \RuntimeException('Route not found.');
         }
 
-        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $seatType)
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $seatType);
+        $rule = $this->fareRuleResolver->resolve($fleetId, $routeId, $serviceType, $seatType);
 
         if (!$rule) {
-            throw new \RuntimeException('No fare configured for this fleet and seat type.');
+            throw new FareUnavailableException();
         }
 
         $stops = $route->routeStops;
@@ -231,17 +239,42 @@ class FareRuleService
         ];
     }
 
+    /** @return \Illuminate\Support\Collection<int, \App\Models\FareRule> */
+    public function listRules(array $filters = []): \Illuminate\Support\Collection
+    {
+        return $this->fareRuleRepository->list($filters)->map(function ($rule) {
+            $rule->setAttribute('vehicle_class_label', VehicleClass::label($rule->vehicle_class));
+
+            return $rule;
+        });
+    }
+
     public function createFareRule(array $payload): object
     {
-        // Two rules of one fleet and seat type may not be in force on the same day.
+        // A rule is an override (it names a fleet) or a general rule (it names a vehicle class). Either way the
+        // class is stored in its canonical form ("deluxe" is part of aircon).
+        $payload['vehicle_class'] = VehicleClass::normalize($payload['vehicle_class'] ?? null);
+        $payload['service_type'] = ServiceType::normalize($payload['service_type'] ?? null);
+        $payload['rounding_mode'] = $payload['rounding_mode'] ?? config('fares.default_rounding_mode');
+
+        if (empty($payload['fleet_id']) && $payload['vehicle_class'] === null) {
+            throw ValidationException::withMessages(['vehicle_class' => ['A general fare rule needs a vehicle class.']]);
+        }
+
+        // Two rules with the same key (fleet, route, class, service type, seat type) may not be in force on the same day.
         if ($this->fareRuleRepository->overlappingRuleExists(
-            (int) $payload['fleet_id'],
-            (string) $payload['seat_type'],
+            [
+                'fleet_id' => $payload['fleet_id'] ?? null,
+                'route_id' => $payload['route_id'] ?? null,
+                'vehicle_class' => $payload['vehicle_class'],
+                'service_type' => $payload['service_type'],
+                'seat_type' => (string) $payload['seat_type'],
+            ],
             $payload['effective_from'] ?? null,
             $payload['effective_to'] ?? null,
         )) {
             throw ValidationException::withMessages([
-                'effective_from' => ['Another active fare rule for this fleet and seat type is in force on those dates. Set its end date first.'],
+                'effective_from' => ['Another active fare rule with the same fleet, route, class, service type and seat type is in force on those dates. Set its end date first.'],
             ]);
         }
 

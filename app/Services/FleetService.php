@@ -19,6 +19,7 @@ class FleetService
         $capacity = (intval($payload['seated_capacity'] ?? 0) + intval($payload['standing_capacity'] ?? 0));
         $routes = $payload['routes'] ?? [];
         unset($payload['routes']);
+        $payload['vehicle_class'] = \App\Support\VehicleClass::normalize($payload['vehicle_class'] ?? null);
 
         // B3: the fleet row and its fleets_routes rows are written atomically so
         // a fleet can never be saved while its selected routes are silently lost.
@@ -56,6 +57,11 @@ class FleetService
             $seated = (int) ($payload['seated_capacity'] ?? $fleet->seated_capacity);
             $standing = (int) ($payload['standing_capacity'] ?? $fleet->standing_capacity);
             $payload['capacity'] = $seated + $standing;
+        }
+
+        // The class is stored in its canonical form (an alias such as "deluxe" becomes "aircon"); empty clears it.
+        if (array_key_exists('vehicle_class', $payload)) {
+            $payload['vehicle_class'] = \App\Support\VehicleClass::normalize($payload['vehicle_class']);
         }
 
         // An empty string clears an optional label field.

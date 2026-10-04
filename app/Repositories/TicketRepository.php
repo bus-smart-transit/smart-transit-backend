@@ -207,6 +207,22 @@ class TicketRepository
     }
 
     /**
+     * Boarding distances (metres along the route) of tickets that boarded between stops: they have no origin stop.
+     *
+     * @return array<int, int>
+     */
+    public function getSnappedBoardingDistances(int $tripId): array
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->whereIn('status', ['boarded', 'alighted'])
+            ->whereNull('origin_stop_id')
+            ->whereNotNull('boarding_distance_m')
+            ->pluck('boarding_distance_m')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+    }
+
+    /**
      * Count cumulative passengers on bus after a specific stop
      */
     public function countPassengersAfterStop(int $tripId, int $stopId): int

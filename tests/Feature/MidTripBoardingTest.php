@@ -364,3 +364,87 @@ it('reports the address search as unavailable when the geocoder queue is too lon
     $lock->release();
     \Illuminate\Support\Facades\Http::assertNothingSent();
 });
+
+
+// Batch 28 Stage 2: the cash flow follows the fare key, and still refuses finished trips.
+
+it('prices a bus-position sale from the class rule and ignores a tampered fare', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    FareRule::where('fleet_id', $fleet->fleet_id)->delete(); // no override: the fleet's class decides
+    $fleet->update(['vehicle_class' => 'aircon']);
+    FareRule::create(['fleet_id' => null, 'vehicle_class' => 'aircon', 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 13, 'fare_per_km' => 2.25, 'base_distance_km' => 5, 'note' => 'SAMPLE']);
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+
+    $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id, 'amount' => 1, 'fare_rule_id' => 999])->assertSuccessful();
+    $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
+    expect((float) $ticket->amount)->toEqualWithDelta(13 + (15 - 5) * 2.25, 0.2); // 15 km from the bus position, 5 km base
+    expect($ticket->rounding_mode)->toBe('nearest')->and($ticket->fare_rule_id)->not->toBe(999);
+
+    // The same bus without a class and without an override: nothing is sold.
+    $fleet->update(['vehicle_class' => null]);
+    midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop E']->stop_id])->assertStatus(422)->assertJsonValidationErrors(['trip']);
+});
+
+it('refuses a cash sale on a completed or cancelled trip', function () {
+    foreach (['completed', 'cancelled'] as $status) {
+        [$conductor, $trip, $stops] = midFixture();
+        $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+        $trip->update(['status' => $status]);
+
+        $response = midSell($this, $conductor, $trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id]);
+        expect($response->status())->toBeIn([404, 422]);
+        expect(Ticket::where('trip_id', $trip->trip_id)->count())->toBe(0);
+
+        // And the service itself, whoever calls it, refuses a finished trip even on the cash channel.
+        expect(fn () => app(TicketService::class)->reserveAndPrice([
+            'trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'channel' => 'onsite',
+            'origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id,
+        ]))->toThrow(ValidationException::class, 'not accepting tickets');
+    }
+});
+
+
+// Batch 28 Stage 2: every reader of tickets.origin_stop_id copes with a boarding point that is a snapped position.
+
+it('shows a boarding between stops everywhere a ticket is read, and counts it at the nearest preceding stop', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135); // about 15 km along: after Stop B (10 km), before Stop D (30 km)
+    $sold = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->assertSuccessful();
+    $ticket = Ticket::find($sold->json('data.tickets.0.ticket_id'));
+    $ticket->update(['status' => 'boarded', 'boarded_at' => now()]);
+    expect($ticket->origin_stop_id)->toBeNull();
+    $label = \App\Support\TicketBoarding::BETWEEN_STOPS;
+
+    // Manifest (Chauffeur's passenger list): a label and a flag, never a blank or a stop id of 0.
+    $row = collect($this->actingAs($conductor)->getJson('/api/conductor/trips/current/passengers')->assertSuccessful()->json('data.passengers') ?? $this->actingAs($conductor)->getJson('/api/conductor/trips/current/passengers')->json('data'))->first();
+    expect($row['origin_stop'])->toBe($label)->and($row['origin_between_stops'])->toBeTrue();
+
+    // Passengers on the bus by stop: the boarding counts at the nearest preceding stop (Stop B), so the running total adds up.
+    $byStop = collect($this->actingAs($conductor)->getJson('/api/conductor/trips/current/occupancy/by-stop')->assertSuccessful()->json('data.stops'))->keyBy('stop_name');
+    expect($byStop['Stop B']['boarding_count'])->toBe(1)->and($byStop['Stop A']['boarding_count'])->toBe(0);
+    expect($byStop['Stop C']['passengers_on_bus_after'])->toBe(1)->and($byStop['Stop D']['alighting_count'])->toBe(1); // its drop-off stop, counted as the other tickets are
+
+    // Saved QR image and the ticket's own payload.
+    $qr = app(\App\Services\QRCodeService::class)->generateQRData($ticket->fresh()->load(['payment', 'trip.fleetRoute.fleet', 'passenger']));
+    expect($qr['origin'])->toBe($label)->and($qr['destination'])->toBe('Stop D');
+
+    // Public tracking summary of the ticket: the boarding row says it, with no ETA invented for a point that is not a stop.
+    $view = app(\App\Services\TicketTrackingService::class)->viewFor($ticket->fresh());
+    expect($view['boarding']['name'] ?? null)->toBe($label);
+});
+
+it('defaults a return trip to the nearest preceding stop when the outbound boarding was a snapped point', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+    $ticket = Ticket::find(midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->json('data.tickets.0.ticket_id'));
+
+    // The same stop-array helper the ticket payload uses: Stop B is the last stop passed before 15 km on an outbound leg.
+    $routeStops = app(\App\Repositories\RouteStopRepository::class)->getOrderedStops((int) $trip->fleetRoute->route_id);
+    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'outbound'))->toBe($stops['Stop B']->stop_id);
+    // On a reverse leg the stop passed before the same point is the one further along the route (Stop D).
+    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'reverse'))->toBe($stops['Stop D']->stop_id);
+    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, null, 'outbound'))->toBeNull();
+});

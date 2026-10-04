@@ -177,10 +177,11 @@ class TripTimelineService
             'bus' => [
                 'fleet_id' => (int) $trip->fleetRoute->fleet_id,
                 'label' => BusLabel::for($trip->fleetRoute->fleet),
-                // fleets.fleet_type is public/private ownership, not a comfort class such
-                // as "Aircon"; no class field exists, so none is reported.
+                // fleets.fleet_type is public/private ownership; fleets.vehicle_class is the comfort class (item 5a).
+                // Each is null when the operator has not set it; the screen then says "not specified".
                 'fleet_type' => $trip->fleetRoute->fleet?->fleet_type,
-                'class' => null,
+                'class' => $trip->fleetRoute->fleet?->vehicle_class,
+                'class_label' => \App\Support\VehicleClass::label($trip->fleetRoute->fleet?->vehicle_class),
             ],
             'header' => [
                 'from' => $first->stop->stop_name,
@@ -368,11 +369,6 @@ class TripTimelineService
     /** @return array{amount: float, distance_km: float, seat_type: string}|array{error: string}|null */
     private function fareFor($trip, $routeStops, array $rows, ?int $boardingId, ?int $alightingId, ?array $custom, string $seatType): ?array
     {
-        if (ServiceType::isExpress($trip->service_type)) {
-            // Stage 1: no express fare rule exists. Never fall back to the regular fare.
-            return ['error' => 'Fare unavailable', 'unavailable' => true];
-        }
-
         try {
             if ($custom !== null) {
                 $boarding = $routeStops->firstWhere('stop_id', $boardingId);
@@ -385,6 +381,8 @@ class TripTimelineService
                         'destination_lat' => $custom['snapped_latitude'],
                         'destination_lng' => $custom['snapped_longitude'],
                         'seat_type' => $seatType,
+                        'service_type' => $trip->service_type,
+                        'on' => $trip->trip_date?->toDateString(),
                     ]
                 );
 
@@ -394,6 +392,7 @@ class TripTimelineService
             $amount = $this->fareRuleService->getQuote([
                 'route_id' => (int) $trip->fleetRoute->route_id,
                 'fleet_id' => (int) $trip->fleetRoute->fleet_id,
+                'service_type' => $trip->service_type,
                 'origin_stop_id' => $boardingId,
                 'destination_stop_id' => $alightingId,
                 'seat_type' => $seatType,
@@ -412,6 +411,9 @@ class TripTimelineService
             }
 
             return ['amount' => (float) $amount, 'distance_km' => round($km, 2), 'seat_type' => $seatType];
+        } catch (\App\Exceptions\FareUnavailableException) {
+            // No rule for this bus's class and service type (an express trip needs an express rule): never borrowed.
+            return ['error' => 'Fare unavailable', 'unavailable' => true];
         } catch (\Throwable $e) {
             return ['error' => $e->getMessage()];
         }

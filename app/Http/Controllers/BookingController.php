@@ -89,6 +89,23 @@ class BookingController extends Controller
         return $this->success($this->tripResolverService->departures($data), 'Departures retrieved');
     }
 
+    // Roundtrip (Batch 28, item 4): both legs resolved, with fares and bus labels, before anything is paid.
+    public function roundtrip(Request $request)
+    {
+        $data = $request->validate([
+            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
+            'outbound_mode' => 'required|in:now,later',
+            'outbound_date' => 'nullable|date_format:Y-m-d|required_if:outbound_mode,later',
+            'outbound_time' => 'nullable|date_format:H:i|required_if:outbound_mode,later',
+            'return_date' => 'required|date_format:Y-m-d',
+            'return_time' => 'required|date_format:H:i',
+            'seat_type' => 'nullable|in:seated,standing',
+        ]);
+
+        return $this->success($this->tripResolverService->resolveRoundtrip($data), 'Roundtrip resolved');
+    }
+
     public function resolve(Request $request)
     {
         $data = $request->validate([

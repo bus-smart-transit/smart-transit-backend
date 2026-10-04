@@ -78,8 +78,11 @@ class PaymentService
             $startedAt = microtime(true);
 
             $prepared = DB::transaction(function () use ($passengerId, $guestEmail, $payload, $startedAt) {
-                DB::statement("SET LOCAL lock_timeout TO '5s'");
-                DB::statement("SET LOCAL statement_timeout TO '12s'");
+                // PostgreSQL only: bounded waits for row locks. (Other drivers, i.e. the SQLite test database, have no such setting.)
+                if (DB::getDriverName() === 'pgsql') {
+                    DB::statement("SET LOCAL lock_timeout TO '5s'");
+                    DB::statement("SET LOCAL statement_timeout TO '12s'");
+                }
 
                 $pointsRequested = max(0, (int) ($payload['reward_points_to_use'] ?? 0));
 
@@ -112,12 +115,17 @@ class PaymentService
                 $groupedItems = [];
 
                 foreach ($payload['items'] as $item) {
-                    $item['booking_date'] = $payload['booking_date'] ?? null;
+                    // A roundtrip item carries its own date; a one-way item takes the booking's.
+                    $item['booking_date'] = $item['booking_date'] ?? $payload['booking_date'] ?? null;
+                    if (($payload['journey_type'] ?? 'one_way') !== 'roundtrip') {
+                        unset($item['journey_leg']);
+                    }
 
                     $itemKey = json_encode([
                         'trip_id' => (int) ($item['trip_id'] ?? 0),
                         'seat_type' => (string) ($item['seat_type'] ?? ''),
                         'booking_date' => isset($item['booking_date']) ? (string) $item['booking_date'] : null,
+                        'journey_leg' => $item['journey_leg'] ?? null,
                         'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
                         'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
                         'origin_lat' => isset($item['origin_lat']) ? (float) $item['origin_lat'] : null,

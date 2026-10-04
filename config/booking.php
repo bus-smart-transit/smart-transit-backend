@@ -8,6 +8,10 @@
 
 return [
 
+    // Shown on the roundtrip confirmation summary before payment (Batch 28, item 4). The server also enforces it:
+    // a ticket cannot be cancelled or refunded by the passenger after payment (the cancel route answers 422).
+    'cancellation_notice' => 'Once you pay, a ticket cannot be cancelled or refunded by you. A refund exists only if the operator cancels the trip. Each ticket of a roundtrip is separate and has its own date.',
+
     // Book Later: how far ahead (in days, Manila calendar) a departure can be booked.
     'max_advance_days' => (int) env('BOOKING_MAX_ADVANCE_DAYS', 30),
 

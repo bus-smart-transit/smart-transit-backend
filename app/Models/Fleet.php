@@ -51,6 +51,7 @@ class Fleet extends Model
         'standing_capacity',
         'status',
         'fleet_type', // 'public' | 'private'
+        'vehicle_class', // config('fares.vehicle_classes') key; null until the operator sets it (Batch 28 item 5)
     ];
 
     public function companyUser()

@@ -140,7 +140,7 @@ class PaymentRepository
                 }
 
                 if (!$originName && isset($item['origin_lat'], $item['origin_lng'])) {
-                    $originName = 'Custom pickup point';
+                    $originName = \App\Support\TicketBoarding::BETWEEN_STOPS;
                 }
 
                 if (!$destinationName && isset($item['destination_lat'], $item['destination_lng'])) {

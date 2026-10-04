@@ -182,8 +182,9 @@ it('uses the rule in force on the trip date and ignores one that has not started
     $current = FareRule::create(['fleet_id' => $fleet->fleet_id, 'base_fare' => 20, 'fare_per_km' => 3, 'status' => 'active', 'seat_type' => 'seated', 'effective_from' => '2026-10-01']);
 
     $repo = app(FareRuleRepository::class);
-    expect($repo->getActiveRule($fleet->fleet_id, 'seated', '2026-10-04')->fare_rule_id)->toBe($current->fare_rule_id);
-    expect($repo->getActiveRule($fleet->fleet_id, 'seated', '2026-11-02')->fare_rule_id)->toBe($future->fare_rule_id);
+    $routeId = (int) $trip->fleetRoute->route_id;
+    expect($repo->findFleetOverride($fleet->fleet_id, 'seated', 'regular', $routeId, '2026-10-04')->fare_rule_id)->toBe($current->fare_rule_id);
+    expect($repo->findFleetOverride($fleet->fleet_id, 'seated', 'regular', $routeId, '2026-11-02')->fare_rule_id)->toBe($future->fare_rule_id);
 
     // The trip's own date decides, not the day the ticket is sold.
     expect(fdPrice($trip, $stops, 'B', 'D')['amount'])->toBe(20 + 20 * 3.0);

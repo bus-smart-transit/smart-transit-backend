@@ -23,7 +23,8 @@ class QRCodeService
         $qrContent = $this->encodeTicketData($ticket);
         ['origin' => $origin, 'destination' => $destination] = $this->resolveLabelsFromPaymentPayload($ticket);
 
-        $origin = $ticket->originStop?->stop_name ?? $origin ?? 'Not specified';
+        // A boarding taken between stops (a Chauffeur's mid-trip sale) has no origin stop, only a snapped point.
+        $origin = $ticket->originStop?->stop_name ?? $origin ?? (\App\Support\TicketBoarding::isSnapped($ticket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : 'Not specified');
         $destination = $ticket->destinationStop?->stop_name ?? $destination ?? 'Not specified';
 
         $transactionRef = $ticket->payment?->transaction_reference;
