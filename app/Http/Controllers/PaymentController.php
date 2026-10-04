@@ -106,6 +106,18 @@ class PaymentController extends Controller
             $conductor->company_user_id,
             $payload
         );
+
+        // Batch 27: who issued the cash ticket is part of the answer and the audit trail.
+        $result['issued_by'] = [
+            'conductor_id' => $conductor->company_user_id,
+            'name' => $conductor->name ?? null,
+        ];
+        \App\Services\AuditLogger::log('payment.cash_ticket_issued', 'Payment', (int) ($result['payment']->payment_id ?? 0), [
+            'trip_id' => $requestedTripId ?: null,
+            'tickets' => count($result['tickets'] ?? []),
+            'amount' => $result['payment']->amount ?? null,
+        ]);
+
         return $this->success($result, 'Onsite sale recorded successfully');
     }
 

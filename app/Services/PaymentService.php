@@ -350,9 +350,13 @@ class PaymentService
                 'is_valid' => true,
             ]);
 
+            $issuedAt = \Illuminate\Support\Carbon::now('UTC');
+
             $this->onsitePaymentRepository->create([
                 'payment_id' => $payment->payment_id,
                 'conductor_id' => $conductorCompanyUserId,
+                // Batch 27: explicit server time in UTC (the stored value is UTC).
+                'issued_at' => $issuedAt->format('Y-m-d H:i:s'),
             ]);
 
             $total = 0;
@@ -368,7 +372,12 @@ class PaymentService
             $payment->amount = $total;
             $payment->save();
 
-            return ['payment' => $payment, 'tickets' => $tickets];
+            return [
+                'payment' => $payment,
+                'tickets' => $tickets,
+                // ISO 8601 with Z: clients convert to Asia/Manila for display.
+                'issued_at' => $issuedAt->toIso8601ZuluString(),
+            ];
         }));
     }
 

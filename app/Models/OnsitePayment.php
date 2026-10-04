@@ -37,6 +37,7 @@ class OnsitePayment extends Model
     protected $fillable = [
         'payment_id',
         'conductor_id',
+        'issued_at',
     ];
 
     /**

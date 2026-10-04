@@ -7,6 +7,7 @@ use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\Notifications\NotificationLink;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -112,7 +113,7 @@ class TripService
                 $driver->user,
                 'New Trip Assignment',
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
-                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+                NotificationLink::tripAssignedData('driver', (int) $trip->trip_id),
             );
         }
         if (! empty($trip->conductor_id) && isset($conductor)) {
@@ -120,7 +121,7 @@ class TripService
                 $conductor->user,
                 'New Trip Assignment',
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
-                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+                NotificationLink::tripAssignedData('conductor', (int) $trip->trip_id),
             );
         }
 
@@ -407,7 +408,7 @@ class TripService
                 $driver->user,
                 'New Trip Assignment',
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
-                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+                NotificationLink::tripAssignedData('driver', (int) $trip->trip_id),
             );
         }
     }
@@ -452,7 +453,7 @@ class TripService
                 $conductor->user,
                 'New Trip Assignment',
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
-                ['type' => 'trip_assigned', 'trip_id' => $trip->trip_id],
+                NotificationLink::tripAssignedData('conductor', (int) $trip->trip_id),
             );
         }
     }
@@ -695,6 +696,10 @@ class TripService
             return null;
         }
 
-        return $trip->loadMissing(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user']);
+        // Batch 27, Task 2: the stops must come with the trip. The Chauffeur's
+        // Manual Cash Ticket lists origin/destination from route_stops; since this
+        // lookup replaced the repository's findCurrentByConductor() (which loaded
+        // them) in commit 18f11ee, the lists were empty and no ticket could be sold.
+        return $trip->loadMissing(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user']);
     }
 }
