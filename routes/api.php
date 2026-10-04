@@ -22,6 +22,8 @@ use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketResolutionController;
 use App\Http\Controllers\RouteDurationFactorController;
+use App\Http\Controllers\DropoffRulesController;
+use App\Http\Controllers\DropoffOptionsController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripAssignmentRequestController;
@@ -89,6 +91,8 @@ Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1');
 Route::get('trips', [TripController::class, 'availableTrips']);
 Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:60,1');
+// Batch 28 Stage 3, item 10: restricted areas and designated drop-off points for a trip (feedback only; the server re-checks).
+Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:60,1');
 Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:60,1');
 Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:60,1');
 Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:60,1');
@@ -202,6 +206,14 @@ Route::prefix('operator')
         Route::put('duration-factors/{id}', [RouteDurationFactorController::class, 'update'])->middleware('throttle:30,1');
         Route::delete('duration-factors/{id}', [RouteDurationFactorController::class, 'destroy'])->middleware('throttle:30,1');
         Route::get('duration-report', [RouteDurationFactorController::class, 'report'])->middleware('throttle:20,1');
+        // Batch 28 Stage 3, item 10: designated alighting points and restricted areas for custom drop-off.
+        Route::get('dropoff/points', [DropoffRulesController::class, 'points']);
+        Route::post('dropoff/points', [DropoffRulesController::class, 'storePoint'])->middleware('throttle:30,1');
+        Route::put('dropoff/points/{id}', [DropoffRulesController::class, 'updatePoint'])->middleware('throttle:30,1');
+        Route::get('dropoff/restrictions', [DropoffRulesController::class, 'restrictions']);
+        Route::post('dropoff/restrictions', [DropoffRulesController::class, 'storeRestriction'])->middleware('throttle:30,1');
+        Route::put('dropoff/restrictions/{id}', [DropoffRulesController::class, 'updateRestriction'])->middleware('throttle:30,1');
+        Route::post('dropoff/restrictions/{id}/review', [DropoffRulesController::class, 'reviewRestriction'])->middleware('throttle:30,1');
         // Batch 24 (C6): driver/Chauffeur requests to be released ("For Approval")
         Route::get('trip-requests', [TripAssignmentRequestController::class, 'index']);
         Route::get('assignments', [AssignmentController::class, 'operatorBlocks']);
@@ -409,6 +421,14 @@ Route::prefix('admin')
         Route::put('duration-factors/{id}', [RouteDurationFactorController::class, 'update'])->middleware('throttle:30,1');
         Route::delete('duration-factors/{id}', [RouteDurationFactorController::class, 'destroy'])->middleware('throttle:30,1');
         Route::get('duration-report', [RouteDurationFactorController::class, 'report'])->middleware('throttle:20,1');
+        // Batch 28 Stage 3, item 10: designated alighting points and restricted areas for custom drop-off.
+        Route::get('dropoff/points', [DropoffRulesController::class, 'points']);
+        Route::post('dropoff/points', [DropoffRulesController::class, 'storePoint'])->middleware('throttle:30,1');
+        Route::put('dropoff/points/{id}', [DropoffRulesController::class, 'updatePoint'])->middleware('throttle:30,1');
+        Route::get('dropoff/restrictions', [DropoffRulesController::class, 'restrictions']);
+        Route::post('dropoff/restrictions', [DropoffRulesController::class, 'storeRestriction'])->middleware('throttle:30,1');
+        Route::put('dropoff/restrictions/{id}', [DropoffRulesController::class, 'updateRestriction'])->middleware('throttle:30,1');
+        Route::post('dropoff/restrictions/{id}/review', [DropoffRulesController::class, 'reviewRestriction'])->middleware('throttle:30,1');
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);
         Route::get('fleets/{fleetId}/reports/revenue-by-route', [ReportingController::class, 'revenueByRoute']);

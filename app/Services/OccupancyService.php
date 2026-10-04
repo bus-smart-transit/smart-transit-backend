@@ -202,7 +202,8 @@ class OccupancyService
                 // D5: a custom drop-off is shown as a requested stop.
                 $requestedStop = $destinationStopName === null && $ticket->destination_lat !== null;
                 if ($requestedStop) {
-                    $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off');
+                    $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off')
+                        .($ticket->alightingPoint ? ' ('.$ticket->alightingPoint->kind.')' : '');
                 }
 
                 // Travel order of the drop-off along this leg: a stop is its leg sequence, a
@@ -229,6 +230,7 @@ class OccupancyService
                     'origin_between_stops' => $originBetweenStops,
                     'destination_stop' => $destinationStopName,
                     'requested_stop' => $requestedStop,
+                    'requested_stop_kind' => $requestedStop ? $ticket->alightingPoint?->kind : null,
                     'drop_off_order' => $dropOffOrder,
                     'boarded_at' => $ticket->boarded_at,
                 ];

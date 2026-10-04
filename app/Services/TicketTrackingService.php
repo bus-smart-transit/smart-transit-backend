@@ -133,6 +133,9 @@ class TicketTrackingService
         $view['route'] = ['route_id' => (int) $fleetRoute->route_id, 'direction' => $direction];
         $view['boarding'] = $this->stopSummary($ticket->originStop, $ticket->origin_lat, $ticket->origin_lng, \App\Support\TicketBoarding::isSnapped($ticket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : null);
         $view['alighting'] = $this->stopSummary($ticket->destinationStop, $ticket->destination_lat, $ticket->destination_lng, $ticket->destination_label);
+        if ($ticket->alightingPoint) {
+            $view['alighting']['point_kind'] = $ticket->alightingPoint->kind;
+        }
         $view['bus'] = null;
 
         if ($trip->status === 'cancelled') {
@@ -201,6 +204,8 @@ class TicketTrackingService
         $selection = ['boarding_stop_id' => (int) $ticket->origin_stop_id];
         if ($ticket->destination_stop_id) {
             $selection['alighting_stop_id'] = (int) $ticket->destination_stop_id;
+        } elseif ($ticket->alighting_point_id) {
+            $selection['alighting_point_id'] = (int) $ticket->alighting_point_id;
         } elseif ($ticket->destination_lat !== null && $ticket->destination_lng !== null) {
             $selection['dropoff_lat'] = (float) $ticket->destination_lat;
             $selection['dropoff_lng'] = (float) $ticket->destination_lng;

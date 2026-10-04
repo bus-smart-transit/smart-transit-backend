@@ -448,3 +448,34 @@ it('defaults a return trip to the nearest preceding stop when the outbound board
     expect(\App\Support\TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'reverse'))->toBe($stops['Stop D']->stop_id);
     expect(\App\Support\TicketBoarding::precedingStopId($routeStops, null, 'outbound'))->toBeNull();
 });
+// Batch 28 Stage 3, item 10: the Chauffeur's cash flow with a designated drop-off point and a restricted area.
+it('sells a designated drop-off point from the bus position and from a stop, and refuses one inside a restricted area', function () {
+    [$conductor, $trip, $stops, $fleet, $route] = midFixture(dropoff: true);
+    $route->update(['custom_dropoff_mode' => 'designated_points']);
+    app(\App\Services\DropoffRestrictionService::class)->save([
+        'route_id' => $route->route_id, 'name' => 'Zone X', 'from_stop_id' => $stops['Stop B']->stop_id, 'to_stop_id' => $stops['Stop D']->stop_id,
+    ]);
+    $point = fn (float $lat, string $name, string $kind) => \App\Models\AlightingPoint::create(app(\App\Services\AlightingPointService::class)->prepare([
+        'route_id' => $route->route_id, 'name' => $name, 'kind' => $kind, 'latitude' => $lat, 'longitude' => 125.0002, 'source' => 'test',
+    ]));
+    $inside = $point(7.20, 'Inside point', 'landmark');
+    $outside = $point(7.31, 'Outside point', 'barangay');
+
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.03); // between A and B
+
+    // A raw pin is not accepted on a designated-points route; a point inside the area is refused with the area's name.
+    midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_lat' => 7.31, 'destination_lng' => 125.0])->assertStatus(422)->assertJsonValidationErrors(['dropoff']);
+    midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'alighting_point_id' => $inside->id])->assertStatus(422)->assertJsonPath('errors.dropoff.0', 'Custom drop-off is not available inside Zone X. Please choose an official stop.');
+
+    $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'alighting_point_id' => $outside->id, 'destination_lat' => 7.10, 'destination_lng' => 125.0, 'destination_label' => 'Ignored'])->assertSuccessful();
+    $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
+    expect($ticket->alighting_point_id)->toBe($outside->id)->and($ticket->destination_label)->toBe('Outside point')->and($ticket->origin_stop_id)->toBeNull();
+    expect(round((float) $ticket->destination_lat, 2))->toBe(7.31);
+
+    // From a stop, by the same point id, and the requested stop lists the point with its kind.
+    $second = midSell($this, $conductor, $trip, ['origin_stop_id' => $stops['Stop D']->stop_id, 'alighting_point_id' => $outside->id])->assertSuccessful();
+    expect(Ticket::find($second->json('data.tickets.0.ticket_id'))->alighting_point_id)->toBe($outside->id);
+    $requested = app(TicketRepository::class)->getRequestedStopsForTrip($trip->trip_id);
+    expect($requested)->toHaveCount(2)->and($requested->first()->alightingPoint->kind)->toBe('barangay');
+});

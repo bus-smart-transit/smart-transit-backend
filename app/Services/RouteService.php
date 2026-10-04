@@ -93,7 +93,26 @@ class RouteService
 
     public function setAllowCustomDropoff(int $routeId, bool $allow): bool
     {
-        return $this->routeRepository->update($routeId, ['allow_custom_dropoff' => $allow]);
+        // The older on/off switch: on keeps designated-points mode if that is what the route had, otherwise free pin.
+        $current = \App\Models\Route::where('route_id', $routeId)->value('custom_dropoff_mode');
+        $mode = ! $allow
+            ? \App\Models\Route::MODE_OFF
+            : ($current === \App\Models\Route::MODE_DESIGNATED ? $current : \App\Models\Route::MODE_FREE_PIN);
+
+        return $this->routeRepository->update($routeId, ['allow_custom_dropoff' => $allow, 'custom_dropoff_mode' => $mode]);
+    }
+
+    /** Batch 28 Stage 3, item 10: off | designated_points | free_pin (the old on/off flag follows it). */
+    public function setCustomDropoffMode(int $routeId, string $mode): bool
+    {
+        if (! in_array($mode, \App\Models\Route::MODES, true)) {
+            return false;
+        }
+
+        return $this->routeRepository->update($routeId, [
+            'allow_custom_dropoff' => $mode !== \App\Models\Route::MODE_OFF,
+            'custom_dropoff_mode' => $mode,
+        ]);
     }
 
     public function updateStopType(int $routeId, int $routeStopId, string $stopType): bool

@@ -129,6 +129,7 @@ class PaymentService
                         'journey_leg' => $item['journey_leg'] ?? null,
                         'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
                         'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
+                        'alighting_point_id' => isset($item['alighting_point_id']) ? (int) $item['alighting_point_id'] : null,
                         'origin_lat' => isset($item['origin_lat']) ? (float) $item['origin_lat'] : null,
                         'origin_lng' => isset($item['origin_lng']) ? (float) $item['origin_lng'] : null,
                         'destination_lat' => isset($item['destination_lat']) ? (float) $item['destination_lat'] : null,

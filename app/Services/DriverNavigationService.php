@@ -126,6 +126,7 @@ class DriverNavigationService
 
                 return [
                     'label' => $first->destination_label ?: 'Requested drop-off',
+                    'kind' => $first->alightingPoint?->kind,
                     'latitude' => (float) $first->destination_lat,
                     'longitude' => (float) $first->destination_lng,
                     'passenger_count' => $group->count(),

@@ -80,6 +80,10 @@ class TicketService
             ]);
         }
 
+        // Batch 28 Stage 3, item 10: a designated drop-off point is named by id only; its coordinates and label are the
+        // stored point's, never the request's.
+        $item = $this->customDropoffService->normaliseItem($item, (int) $trip->fleetRoute->route_id);
+
         if ($onsite && ($item['boarding_mode'] ?? null) === 'gps') {
             $reserved = $this->priceFromBoardingPoint($trip, $item);
         } elseif (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
@@ -363,14 +367,16 @@ class TicketService
             ]);
         }
 
-        $dropoff = $this->customDropoffService->evaluateFrom(
-            $routeId,
-            $direction,
-            null,
-            (float) $point['distance_along_leg_m'],
-            (float) $item['destination_lat'],
-            (float) $item['destination_lng'],
-        );
+        $dropoff = isset($item['alighting_point_id'])
+            ? $this->customDropoffService->evaluatePoint($routeId, $direction, null, (float) $point['distance_along_leg_m'], (int) $item['alighting_point_id'])
+            : $this->customDropoffService->evaluateFrom(
+                $routeId,
+                $direction,
+                null,
+                (float) $point['distance_along_leg_m'],
+                (float) $item['destination_lat'],
+                (float) $item['destination_lng'],
+            );
 
         $quote = $this->quoteCoordinates(
             $trip,
@@ -393,6 +399,7 @@ class TicketService
             'distance_km' => $quote['distance_km'],
             'amount' => $quote['amount'],
             'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
+            'alighting_point_id' => $dropoff['alighting_point']['id'] ?? null,
             'destination_lat' => $dropoff['snapped_latitude'],
             'destination_lng' => $dropoff['snapped_longitude'],
             'destination_label' => mb_substr($label, 0, 255) ?: $this->reverseGeocodingService->resolvePlaceName(
@@ -427,13 +434,15 @@ class TicketService
             ]);
         }
 
-        $dropoff = $this->customDropoffService->evaluate(
-            $routeId,
-            $direction,
-            (int) $item['origin_stop_id'],
-            (float) $item['destination_lat'],
-            (float) $item['destination_lng'],
-        );
+        $dropoff = isset($item['alighting_point_id'])
+            ? $this->customDropoffService->evaluatePoint($routeId, $direction, (int) $item['origin_stop_id'], null, (int) $item['alighting_point_id'])
+            : $this->customDropoffService->evaluate(
+                $routeId,
+                $direction,
+                (int) $item['origin_stop_id'],
+                (float) $item['destination_lat'],
+                (float) $item['destination_lng'],
+            );
 
         $boarding = $boardingRouteStop->stop;
         $quote = $this->quoteCoordinates(
@@ -462,6 +471,7 @@ class TicketService
             'boarding_distance_m' => $quote['boarding_distance_m'] ?? null,
             'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
             'origin_stop_id' => (int) $item['origin_stop_id'],
+            'alighting_point_id' => $dropoff['alighting_point']['id'] ?? null,
             // Snapped point, so the ticket and the driver's requested stop show the
             // place the bus will actually stop.
             'destination_lat' => $dropoff['snapped_latitude'],
@@ -502,6 +512,7 @@ class TicketService
             'destination_lat' => $reserved['destination_lat'] ?? null,
             'destination_lng' => $reserved['destination_lng'] ?? null,
             'destination_label' => $reserved['destination_label'] ?? null,
+            'alighting_point_id' => $reserved['alighting_point_id'] ?? null,
             'boarding_distance_m' => $reserved['boarding_distance_m'] ?? null,
             'alighting_distance_m' => $reserved['alighting_distance_m'] ?? null,
         ]);
@@ -614,6 +625,7 @@ class TicketService
         // Destination label — prefer a named stop; fall back to GPS coords for
         // custom-pinpoint tickets so the conductor sees WHERE the passenger alights.
         $destinationLabel = $boardedTicket->destinationStop?->stop_name
+            ?? ($boardedTicket->alightingPoint ? $boardedTicket->alightingPoint->name.' ('.$boardedTicket->alightingPoint->kind.')' : null)
             ?? ($boardedTicket->destination_lat !== null
                 ? 'GPS: '.round((float) $boardedTicket->destination_lat, 5).', '.round((float) $boardedTicket->destination_lng, 5)
                 : null);

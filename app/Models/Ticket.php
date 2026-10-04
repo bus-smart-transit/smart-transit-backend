@@ -76,6 +76,7 @@ class Ticket extends Model
         'destination_lat',
         'destination_lng',
         'destination_label',
+        'alighting_point_id',
         'boarding_distance_m',
         'rounding_mode',
         'journey_leg',
@@ -127,6 +128,12 @@ class Ticket extends Model
     public function trip()
     {
         return $this->belongsTo(Trip::class, 'trip_id');
+    }
+
+    /** Batch 28 Stage 3, item 10: the designated drop-off point this ticket was sold for (null for a stop or a free pin). */
+    public function alightingPoint()
+    {
+        return $this->belongsTo(AlightingPoint::class, 'alighting_point_id');
     }
 
     public function originStop()

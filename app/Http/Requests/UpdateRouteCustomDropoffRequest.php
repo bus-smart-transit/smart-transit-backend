@@ -10,7 +10,9 @@ class UpdateRouteCustomDropoffRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'allow_custom_dropoff' => 'required|boolean',
+            // Either the older on/off switch or (Batch 28 Stage 3, item 10) the mode: off, designated_points or free_pin.
+            'allow_custom_dropoff' => 'required_without:custom_dropoff_mode|boolean',
+            'custom_dropoff_mode' => 'nullable|string|in:off,designated_points,free_pin',
         ];
     }
 }

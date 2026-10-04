@@ -62,14 +62,19 @@ class TripTimelineService
         $boardingId = isset($selection['boarding_stop_id']) ? (int) $selection['boarding_stop_id'] : null;
         $alightingId = isset($selection['alighting_stop_id']) ? (int) $selection['alighting_stop_id'] : null;
         $hasPin = isset($selection['dropoff_lat'], $selection['dropoff_lng']);
+        // Batch 28 Stage 3, item 10: a designated drop-off point is chosen by id (never by coordinates).
+        $pointId = isset($selection['alighting_point_id']) ? (int) $selection['alighting_point_id'] : null;
 
-        if ($alightingId !== null && $hasPin) {
+        if ($alightingId !== null && ($hasPin || $pointId !== null)) {
             throw ValidationException::withMessages(['alighting_stop_id' => ['Choose either a stop or a custom drop-off, not both.']]);
         }
-        if ($express && $hasPin) {
+        if ($pointId !== null && $hasPin) {
+            throw ValidationException::withMessages(['alighting_point_id' => ['Choose either a drop-off point or a pin, not both.']]);
+        }
+        if ($express && ($hasPin || $pointId !== null)) {
             throw ValidationException::withMessages(['dropoff_lat' => ['A custom drop-off is not available on an express trip.']]);
         }
-        if (($alightingId !== null || $hasPin) && $boardingId === null) {
+        if (($alightingId !== null || $hasPin || $pointId !== null) && $boardingId === null) {
             throw ValidationException::withMessages(['boarding_stop_id' => ['Choose where you board first.']]);
         }
 
@@ -90,7 +95,9 @@ class TripTimelineService
         }
 
         $custom = null;
-        if ($hasPin) {
+        if ($pointId !== null) {
+            $custom = $this->customDropoffService->evaluatePoint($routeId, $direction, $boardingId, null, $pointId);
+        } elseif ($hasPin) {
             $custom = $this->customDropoffService->evaluate($routeId, $direction, $boardingId, (float) $selection['dropoff_lat'], (float) $selection['dropoff_lng']);
         }
 
@@ -127,9 +134,11 @@ class TripTimelineService
                 : null;
             $customRow = [
                 'stop_id' => null,
-                'name' => 'Custom drop-off',
+                'name' => $custom['alighting_point']['name'] ?? 'Custom drop-off',
                 'municipality' => null,
                 'type' => 'custom',
+                'point_kind' => $custom['alighting_point']['kind'] ?? null,
+                'alighting_point_id' => $custom['alighting_point']['id'] ?? null,
                 'sequence' => null,
                 'distance_km' => round($custom['km_from_origin'], 2),
                 'eta' => $eta?->toIso8601String(),
@@ -207,6 +216,7 @@ class TripTimelineService
                 'custom_dropoff' => $custom !== null,
             ],
             'allow_custom_dropoff' => ! $express && (bool) ($route?->allow_custom_dropoff),
+            'dropoff_mode' => $express || ! $route ? \App\Models\Route::MODE_OFF : $route->dropoffMode(),
             'custom_dropoff_availability' => $express
                 ? ['available' => false, 'reason' => 'Custom drop-off is not available on an express trip.']
                 : $this->customDropoffService->availability($routeId, $direction, $boardingId),

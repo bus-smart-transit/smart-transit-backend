@@ -15,7 +15,8 @@ class OnsiteCheckoutRequest extends FormRequest
             'items.*.boarding_mode'       => 'nullable|string|in:gps',
             'items.*.origin_stop_id'      => 'required_unless:items.*.boarding_mode,gps|nullable|integer|exists:stops,stop_id',
             // Task 7: the destination is a stop or a custom drop-off pin (coordinates re-validated and snapped server-side).
-            'items.*.destination_stop_id' => 'required_without:items.*.destination_lat|nullable|integer|exists:stops,stop_id',
+            'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.alighting_point_id|nullable|integer|exists:stops,stop_id',
+            'items.*.alighting_point_id'  => 'nullable|integer|exists:alighting_points,id',
             'items.*.destination_lat'     => 'nullable|required_with:items.*.destination_lng|numeric|between:-90,90',
             'items.*.destination_lng'     => 'nullable|required_with:items.*.destination_lat|numeric|between:-180,180',
             'items.*.destination_label'   => 'nullable|string|max:255',

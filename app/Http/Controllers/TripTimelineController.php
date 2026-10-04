@@ -24,6 +24,7 @@ class TripTimelineController extends Controller
             'alighting_stop_id' => 'nullable|integer|min:1',
             'dropoff_lat' => 'nullable|numeric|between:-90,90|required_with:dropoff_lng',
             'dropoff_lng' => 'nullable|numeric|between:-180,180|required_with:dropoff_lat',
+            'alighting_point_id' => 'nullable|integer|min:1',
             'seat_type' => 'nullable|in:seated,standing',
         ]);
 

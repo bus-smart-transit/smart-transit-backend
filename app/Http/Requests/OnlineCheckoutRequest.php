@@ -31,9 +31,11 @@ class OnlineCheckoutRequest extends FormRequest
             // Boarding is always a known stop (B7). The drop-off is either a stop, or a
             // custom drop-off pin (validated and snapped server-side, D5).
             'items.*.origin_stop_id' => 'required|integer|exists:stops,stop_id',
-            'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.destination_lng|nullable|integer|exists:stops,stop_id',
-            'items.*.destination_lat' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-90,90',
-            'items.*.destination_lng' => 'required_without:items.*.destination_stop_id|nullable|numeric|between:-180,180',
+            'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.destination_lng,items.*.alighting_point_id|nullable|integer|exists:stops,stop_id',
+            'items.*.destination_lat' => 'required_without_all:items.*.destination_stop_id,items.*.alighting_point_id|nullable|numeric|between:-90,90',
+            'items.*.destination_lng' => 'required_without_all:items.*.destination_stop_id,items.*.alighting_point_id|nullable|numeric|between:-180,180',
+            // Batch 28 Stage 3, item 10: a designated drop-off point is named by id only (the server owns where it is).
+            'items.*.alighting_point_id' => 'nullable|integer|exists:alighting_points,id',
             'items.*.destination_label' => ['nullable', 'string', 'max:255'],
             // C4: the passenger picks GCash or Maya; PayMongo's hosted checkout collects the rest.
             'payment_channel' => 'required|string|in:gcash,maya',
@@ -57,6 +59,12 @@ class OnlineCheckoutRequest extends FormRequest
             if ($legs->filter()->isNotEmpty()) {
                 $validator->errors()->add('journey_type', 'A journey leg is only for a roundtrip booking.');
             }
+
+            return;
+        }
+
+        if ($roundtrip && collect($items)->contains(fn ($item) => ! empty($item['alighting_point_id']))) {
+            $validator->errors()->add('items', 'A drop-off point is for one-way tickets. Choose a stop to book a roundtrip.');
 
             return;
         }

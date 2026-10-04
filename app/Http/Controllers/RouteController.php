@@ -87,10 +87,14 @@ class RouteController extends Controller
     // Operator/admin: D5 per-route switch for custom drop-off (default off).
     public function updateCustomDropoff(UpdateRouteCustomDropoffRequest $request, int $routeId)
     {
-        $updated = $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
+        $mode = $request->validated('custom_dropoff_mode');
+        $updated = $mode !== null
+            ? $this->routeService->setCustomDropoffMode($routeId, (string) $mode)
+            : $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
+        $route = $updated ? \App\Models\Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']) : null;
 
-        return $updated
-            ? $this->success(['allow_custom_dropoff' => (bool) $request->validated('allow_custom_dropoff')], 'Custom drop-off setting updated')
+        return $route
+            ? $this->success(['allow_custom_dropoff' => (bool) $route->allow_custom_dropoff, 'custom_dropoff_mode' => $route->custom_dropoff_mode], 'Custom drop-off setting updated')
             : $this->error('Route not found.', 404);
     }
 

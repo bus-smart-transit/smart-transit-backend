@@ -85,6 +85,46 @@ class GeoLine
     }
 
     /**
+     * The part of the polyline between two distances along it (metres from its first point), with the two ends
+     * interpolated on the segments they fall in. Used to draw a stretch of the route (a restricted area) on a map.
+     *
+     * @param  array<int, array{0: float, 1: float}>  $coords  [lng, lat] pairs
+     * @return array<int, array{0: float, 1: float}>
+     */
+    public static function slice(array $coords, float $fromM, float $toM): array
+    {
+        if (count($coords) < 2 || $toM <= $fromM) {
+            return [];
+        }
+
+        $out = [];
+        $travelled = 0.0;
+        for ($i = 0; $i < count($coords) - 1; $i++) {
+            [$ax, $ay] = $coords[$i];
+            [$bx, $by] = $coords[$i + 1];
+            $segLen = self::haversineM($ay, $ax, $by, $bx);
+            $segStart = $travelled;
+            $segEnd = $travelled + $segLen;
+            $travelled = $segEnd;
+
+            if ($segEnd < $fromM || $segStart > $toM || $segLen <= 0.0) {
+                continue;
+            }
+
+            $at = fn (float $d) => [$ax + (($d - $segStart) / $segLen) * ($bx - $ax), $ay + (($d - $segStart) / $segLen) * ($by - $ay)];
+            $start = max($fromM, $segStart);
+            $end = min($toM, $segEnd);
+
+            if ($out === []) {
+                $out[] = $at($start);
+            }
+            $out[] = $at($end);
+        }
+
+        return $out;
+    }
+
+    /**
      * @param  array<int, array{0: float, 1: float}>  $coords
      * @return array<int, array{0: float, 1: float}>
      */

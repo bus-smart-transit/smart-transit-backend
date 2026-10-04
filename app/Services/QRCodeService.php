@@ -25,7 +25,10 @@ class QRCodeService
 
         // A boarding taken between stops (a Chauffeur's mid-trip sale) has no origin stop, only a snapped point.
         $origin = $ticket->originStop?->stop_name ?? $origin ?? (\App\Support\TicketBoarding::isSnapped($ticket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : 'Not specified');
-        $destination = $ticket->destinationStop?->stop_name ?? $destination ?? 'Not specified';
+        $destination = $ticket->destinationStop?->stop_name
+            ?? ($ticket->alightingPoint ? $ticket->alightingPoint->name.' ('.$ticket->alightingPoint->kind.')' : null)
+            ?? $destination
+            ?? 'Not specified';
 
         $transactionRef = $ticket->payment?->transaction_reference;
         $groupQrContent = $transactionRef ? "grp:{$transactionRef}" : null;
@@ -39,6 +42,7 @@ class QRCodeService
             'trip_id' => $ticket->trip_id,
             'origin' => $origin,
             'destination' => $destination,
+            'destination_point_kind' => $ticket->alightingPoint?->kind,
             'seat_type' => $ticket->seat_type,
             'amount' => $ticket->amount,
             'bus_label' => BusLabel::for($ticket->trip?->fleetRoute?->fleet),
