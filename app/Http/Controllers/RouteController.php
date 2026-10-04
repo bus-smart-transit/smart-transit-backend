@@ -5,6 +5,7 @@ use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\AddRouteStopRequest;
 use App\Http\Requests\UpdateRouteCustomDropoffRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
+use App\Http\Requests\UpdateRouteStopExpressRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -70,6 +71,16 @@ class RouteController extends Controller
 
         return $updated
             ? $this->success(null, 'Stop type updated successfully')
+            : $this->error('Route stop not found.', 404);
+    }
+
+    // Operator/admin: which stops an express trip serves (and optional express timing).
+    public function updateStopExpress(UpdateRouteStopExpressRequest $request, int $routeId, int $routeStopId)
+    {
+        $updated = $this->routeService->updateStopExpress($routeId, $routeStopId, $request->validated());
+
+        return $updated
+            ? $this->success(null, 'Express stop setting updated successfully')
             : $this->error('Route stop not found.', 404);
     }
 

@@ -26,6 +26,7 @@ use App\Http\Controllers\TripAssignmentRequestController;
 use App\Http\Controllers\TripTimelineController;
 use App\Http\Controllers\TripNotificationController;
 use App\Http\Controllers\UserNotificationController;
+use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\ShiftBlockController;
 use Illuminate\Support\Facades\Route;
 
@@ -73,8 +74,8 @@ Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerif
 Route::post('fare/quote', [FareRuleController::class, 'quote']);
 Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
 // Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab).
-Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware('throttle:90,1');
-Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middleware('throttle:90,1');
+Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware(['auth.optional', 'throttle:90,1']);
+Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middleware(['auth.optional', 'throttle:90,1']);
 // Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')
@@ -154,6 +155,7 @@ Route::prefix('operator')
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
+        Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress']);
         Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
         Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
         Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
@@ -176,6 +178,7 @@ Route::prefix('operator')
 
         // Batch 24 (C6): driver/Chauffeur requests to be released ("For Approval")
         Route::get('trip-requests', [TripAssignmentRequestController::class, 'index']);
+        Route::get('assignments', [AssignmentController::class, 'operatorBlocks']);
         Route::patch('trip-requests/{requestId}/approve', [TripAssignmentRequestController::class, 'approve'])->middleware('throttle:30,1');
         Route::patch('trip-requests/{requestId}/reject', [TripAssignmentRequestController::class, 'reject'])->middleware('throttle:30,1');
 
@@ -228,6 +231,10 @@ Route::prefix('driver')
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsDriver']);
         Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsDriver']);
+        // Batch 28: a shift block (or a standalone trip) is one card; accept / decline once, on the block.
+        Route::get('assignments', [AssignmentController::class, 'indexAsDriver']);
+        Route::patch('assignments/{key}/accept', [AssignmentController::class, 'acceptAsDriver'])->where('key', '(block|trip)-[0-9]+');
+        Route::patch('assignments/{key}/decline', [AssignmentController::class, 'declineAsDriver'])->where('key', '(block|trip)-[0-9]+');
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
 
         // Batch 18: Shift Block Hand-off System
@@ -275,6 +282,9 @@ Route::prefix('conductor')
         Route::post('shift/end', [ConductorShiftController::class, 'end']);
         Route::patch('trips/{tripId}/decline', [TripController::class, 'declineAsConductor']);
         Route::patch('trips/{tripId}/accept', [TripController::class, 'acceptAsConductor']);
+        Route::get('assignments', [AssignmentController::class, 'indexAsConductor']);
+        Route::patch('assignments/{key}/accept', [AssignmentController::class, 'acceptAsConductor'])->where('key', '(block|trip)-[0-9]+');
+        Route::patch('assignments/{key}/decline', [AssignmentController::class, 'declineAsConductor'])->where('key', '(block|trip)-[0-9]+');
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
 
         // Batch 18: Shift Block Hand-off System
@@ -334,6 +344,7 @@ Route::prefix('admin')
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
+        Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress']);
         Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1');
         Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
 

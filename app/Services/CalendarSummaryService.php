@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Repositories\TripAssignmentRequestRepository;
 use App\Repositories\TripRepository;
+use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
@@ -96,6 +97,7 @@ class CalendarSummaryService
             'origin' => $reverse ? $route?->destination : $route?->origin,
             'destination' => $reverse ? $route?->origin : $route?->destination,
             'leg_direction' => $reverse ? 'reverse' : 'outbound',
+            'service_type' => ServiceType::normalize($trip->service_type),
             'plate_number' => $trip->fleetRoute?->fleet?->plate_number,
             'role' => $role,
         ];

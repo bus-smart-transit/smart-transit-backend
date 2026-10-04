@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Ticket;
 use App\Repositories\FareRuleRepository;
+use App\Support\BusLabel;
+use App\Support\ServiceType;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
@@ -103,6 +105,32 @@ class TicketService
         return $reservedTemplate;
     }
 
+    /** @param  array<int, \App\Models\RouteStop>  $routeStops */
+    private function assertExpressServes(object $trip, array $routeStops): void
+    {
+        if (! ServiceType::isExpress($trip->service_type)) {
+            return;
+        }
+
+        foreach ($routeStops as $routeStop) {
+            if (! ServiceType::isServed($trip->service_type, $routeStop)) {
+                throw ValidationException::withMessages([
+                    'stop' => ['This express trip does not stop at one of the chosen stops.'],
+                ]);
+            }
+        }
+    }
+
+    /** Stage 1 (Batch 28): an express trip has no fare rule, and there is no fallback to the regular fare. */
+    private function assertFareAvailableForService(object $trip): void
+    {
+        if (ServiceType::isExpress($trip->service_type)) {
+            throw ValidationException::withMessages([
+                'trip' => ['Fare unavailable for express service.'],
+            ]);
+        }
+    }
+
     /**
      * Computed on the fly — no fare_matrix table. The distance between two
      * known stops on a known route is exact (no interpolation needed), so
@@ -126,6 +154,12 @@ class TicketService
         }
 
         $distanceKm = abs($destinationRouteStop->distance_from_origin_km - $originRouteStop->distance_from_origin_km);
+
+        // Batch 28: on an express trip only stops it serves can be boarded or alighted at
+        // (checked first, so a tampered stop id is refused for what it is), then the Stage 1
+        // rule: express has no fare yet, so nothing is priced or sold for it.
+        $this->assertExpressServes($trip, [$originRouteStop, $destinationRouteStop]);
+        $this->assertFareAvailableForService($trip);
 
         $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $item['seat_type'])
             ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $item['seat_type']);
@@ -162,6 +196,12 @@ class TicketService
         if (! $boardingRouteStop) {
             throw ValidationException::withMessages([
                 'stop' => ['The boarding stop is not on this trip\'s route.'],
+            ]);
+        }
+
+        if (ServiceType::isExpress($trip->service_type)) {
+            throw ValidationException::withMessages([
+                'destination' => ['A custom drop-off is not available on an express trip.'],
             ]);
         }
 
@@ -567,6 +607,11 @@ class TicketService
         // Owners only (this runs for a passenger's own tickets and for a guest who proved the
         // payment reference): the link that follows this ticket's bus. Virtual, never stored here.
         $ticket->setAttribute('tracking_token', $this->trackingService->tokenFor($ticket));
+
+        // Passenger-facing: the bus is identified by its company label, never by the plate.
+        $fleet = $ticket->trip?->fleetRoute?->fleet;
+        $ticket->setAttribute('bus_label', BusLabel::for($fleet));
+        $fleet?->makeHidden(['plate_number']);
 
         // Sync so these virtual attributes are never treated as dirty
         // if something calls save() again downstream.

@@ -14,6 +14,7 @@ class StoreTripRequest extends FormRequest
             'return_departure_time' => ['nullable', 'date_format:H:i', 'required_if:trip_type,round_trip'],
             'driver_id'             => 'required|integer|exists:company_users,company_user_id',
             'conductor_id'          => 'required|integer|exists:company_users,company_user_id',
+            'service_type'          => ['sometimes', 'in:regular,express'],
         ];
     }
 }

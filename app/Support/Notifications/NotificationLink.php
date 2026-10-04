@@ -30,6 +30,28 @@ final class NotificationLink
     }
 
     /**
+     * Batch 28: a shift block is one card on the Driver / Chauffeur dashboard, so its
+     * "assigned" notification opens that card (the block id travels as `block`).
+     */
+    public static function blockAssignment(string $role, int $shiftBlockId): string
+    {
+        $tab = self::TRIP_TAB[$role] ?? 'dashboard';
+
+        return "/employee/{$role}/dashboard?tab={$tab}&block={$shiftBlockId}";
+    }
+
+    /** @return array<string, string|int> */
+    public static function blockAssignedData(string $role, int $shiftBlockId): array
+    {
+        return [
+            'type' => 'shift_block_assigned',
+            'shift_block_id' => $shiftBlockId,
+            'role' => $role,
+            'link' => self::blockAssignment($role, $shiftBlockId),
+        ];
+    }
+
+    /**
      * Data for a "trip assigned" notification. All values are scalars so the
      * FCM data map (strings only) can carry them unchanged.
      *

@@ -50,7 +50,16 @@ class RouteStop extends Model
         'snapped_latitude',
         'snapped_longitude',
         'scheduled_offset_min',
+        'served_by_express',
+        'express_offset_min',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'served_by_express' => 'boolean',
+        ];
+    }
 
     public const STOP_TYPES = ['terminal', 'stop', 'pass_through'];
 

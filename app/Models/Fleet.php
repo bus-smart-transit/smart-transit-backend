@@ -44,6 +44,8 @@ class Fleet extends Model
     protected $fillable = [
         'company_user_id',
         'plate_number',
+        'bus_company_name', // passenger-facing label part 1 (Batch 28)
+        'body_no',          // passenger-facing label part 2 (Batch 28)
         'capacity',
         'seated_capacity',
         'standing_capacity',

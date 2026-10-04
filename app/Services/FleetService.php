@@ -44,6 +44,32 @@ class FleetService
         });
     }
 
+    /** Editable fleet details. Capacity is recomputed whenever a seat count changes. */
+    public function updateFleet(int $fleetId, array $payload): ?object
+    {
+        $fleet = $this->fleetRepository->findById($fleetId);
+        if (! $fleet) {
+            return null;
+        }
+
+        if (array_key_exists('seated_capacity', $payload) || array_key_exists('standing_capacity', $payload)) {
+            $seated = (int) ($payload['seated_capacity'] ?? $fleet->seated_capacity);
+            $standing = (int) ($payload['standing_capacity'] ?? $fleet->standing_capacity);
+            $payload['capacity'] = $seated + $standing;
+        }
+
+        // An empty string clears an optional label field.
+        foreach (['bus_company_name', 'body_no'] as $key) {
+            if (array_key_exists($key, $payload) && trim((string) $payload[$key]) === '') {
+                $payload[$key] = null;
+            }
+        }
+
+        $fleet->fill($payload)->save();
+
+        return $fleet->fresh();
+    }
+
     public function listFleets(): object
     {
         return $this->fleetRepository->all();

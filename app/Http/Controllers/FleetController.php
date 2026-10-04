@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 use App\Services\FleetService;
 use App\Services\StaffService;
 use App\Http\Requests\StoreFleetRequest;
+use App\Http\Requests\UpdateFleetRequest;
 use App\Http\Requests\AssignFleetRouteRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -31,6 +32,16 @@ class FleetController extends Controller
 
         $fleet = $this->fleetService->registerFleet($request->validated(), $staffProfile->company_user_id);
         return $this->success($fleet, 'Fleet registered successfully');
+    }
+
+    public function update(UpdateFleetRequest $request, int $fleetId)
+    {
+        $fleet = $this->fleetService->updateFleet($fleetId, $request->validated());
+        if (! $fleet) {
+            return $this->error('Fleet not found.', 404);
+        }
+
+        return $this->success($fleet, 'Fleet updated successfully');
     }
 
     public function assignRoute(AssignFleetRouteRequest $request, int $fleetId)

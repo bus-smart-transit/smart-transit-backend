@@ -35,6 +35,7 @@ class TripAssignmentRequestService
         private FleetDailyPinRepository $pinRepository,
         private TripNotificationRepository $notificationRepository,
         private FcmService $fcmService,
+        private ShiftBlockAssignmentService $blockAssignments,
     ) {
     }
 
@@ -59,6 +60,12 @@ class TripAssignmentRequestService
         $trip = $this->tripRepository->findById($tripId);
         if (! $trip) {
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+
+        if ($trip->shift_block_id) {
+            throw ValidationException::withMessages([
+                'trip' => ['This trip is a leg of a shift block. Decline the whole shift block instead.'],
+            ]);
         }
 
         if (! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
@@ -152,6 +159,13 @@ class TripAssignmentRequestService
             throw ValidationException::withMessages(['request' => ['This request has already been decided.']]);
         }
 
+        // A request that belongs to a shift block is decided for the whole block at once.
+        if ($blockRecord = $this->blockAssignments->recordForLegRequest($request)) {
+            $this->blockAssignments->decide($blockRecord, $decision, $operatorCompanyUserId);
+
+            return $this->requestRepository->findById($requestId);
+        }
+
         $approve = $decision === 'approve';
         if ($approve && ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
             throw ValidationException::withMessages([
@@ -206,14 +220,32 @@ class TripAssignmentRequestService
         return $this->requestRepository->findById($requestId);
     }
 
+    /**
+     * One row per shift block and requester: a block's per-leg requests collapse to its first leg's
+     * request, which carries the block id and the number of legs.
+     */
     public function pendingForOperator(int $operatorCompanyUserId)
     {
-        return $this->requestRepository->listPendingForOperator($operatorCompanyUserId);
+        $pending = $this->requestRepository->listPendingForOperator($operatorCompanyUserId);
+
+        return $pending
+            ->groupBy(fn ($r) => $r->trip?->shift_block_id
+                ? 'block-'.$r->trip->shift_block_id.'-'.$r->role.'-'.$r->staff_company_user_id
+                : 'trip-'.$r->id)
+            ->map(function ($group) {
+                $first = $group->sortBy('id')->first();
+                $blockId = $first->trip?->shift_block_id;
+                $first->setAttribute('shift_block_id', $blockId);
+                $first->setAttribute('legs_count', $blockId ? $group->count() : 1);
+
+                return $first;
+            })
+            ->values();
     }
 
     public function pendingCountForOperator(int $operatorCompanyUserId): int
     {
-        return $this->requestRepository->countPendingForOperator($operatorCompanyUserId);
+        return $this->pendingForOperator($operatorCompanyUserId)->count();
     }
 
     private function tripWithRequests(int $tripId): object

@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 use App\Repositories\FareRuleRepository;
+use App\Support\BusLabel;
 use App\Repositories\StopRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\FleetRouteRepository;
@@ -110,7 +111,7 @@ class FareRuleService
 
             $quotes[] = [
                 'fleet_id' => $fleet->fleet_id,
-                'plate_number' => $fleet->plate_number,
+                'bus_label' => BusLabel::for($fleet),
                 'fleet_type' => $fleet->fleet_type,
                 'seat_type' => $payload['seat_type'],
                 'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $tripDistanceKm),

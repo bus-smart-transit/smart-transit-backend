@@ -55,6 +55,8 @@ class RouteService
                 'snapped_longitude' => $rs->snapped_longitude !== null ? (float) $rs->snapped_longitude : null,
                 'stop_order' => $rs->stop_order,
                 'stop_type' => $rs->stop_type ?? 'stop',
+                'served_by_express' => (bool) $rs->served_by_express,
+                'express_offset_min' => $rs->express_offset_min !== null ? (int) $rs->express_offset_min : null,
                 'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
             ])
             ->values();
@@ -97,6 +99,12 @@ class RouteService
     public function updateStopType(int $routeId, int $routeStopId, string $stopType): bool
     {
         return $this->routeStopRepository->updateStopType($routeId, $routeStopId, $stopType);
+    }
+
+    /** Whether express trips stop here, and (optionally) when an express trip reaches it. */
+    public function updateStopExpress(int $routeId, int $routeStopId, array $payload): bool
+    {
+        return $this->routeStopRepository->updateExpress($routeId, $routeStopId, $payload);
     }
 
     // $payload = ['stop_id','stop_order','distance_from_origin_km']

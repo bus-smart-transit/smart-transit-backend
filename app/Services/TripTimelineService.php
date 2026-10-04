@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Repositories\RouteRepository;
+use App\Support\BusLabel;
+use App\Support\ServiceType;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
 use Illuminate\Support\Carbon;
@@ -47,6 +49,8 @@ class TripTimelineService
         $routeId = (int) $trip->fleetRoute->route_id;
         $route = $this->routeRepository->findById($routeId);
         $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $service = ServiceType::normalize($trip->service_type);
+        $express = $service === ServiceType::EXPRESS;
         $stopping = config('timeline.stopping_types');
 
         $routeStops = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction)->values();
@@ -61,6 +65,9 @@ class TripTimelineService
         if ($alightingId !== null && $hasPin) {
             throw ValidationException::withMessages(['alighting_stop_id' => ['Choose either a stop or a custom drop-off, not both.']]);
         }
+        if ($express && $hasPin) {
+            throw ValidationException::withMessages(['dropoff_lat' => ['A custom drop-off is not available on an express trip.']]);
+        }
         if (($alightingId !== null || $hasPin) && $boardingId === null) {
             throw ValidationException::withMessages(['boarding_stop_id' => ['Choose where you board first.']]);
         }
@@ -73,8 +80,8 @@ class TripTimelineService
             if (! isset($indexById[$stopId])) {
                 throw ValidationException::withMessages([$field => ['That stop is not on this trip\'s route.']]);
             }
-            if (! in_array($routeStops[$indexById[$stopId]]->stop_type ?? 'stop', $stopping, true)) {
-                throw ValidationException::withMessages([$field => ['Buses do not stop at that point.']]);
+            if (! ServiceType::isServed($service, $routeStops[$indexById[$stopId]])) {
+                throw ValidationException::withMessages([$field => [$express ? 'This express trip does not stop there.' : 'Buses do not stop at that point.']]);
             }
         }
         if ($boardingId !== null && $alightingId !== null && $indexById[$alightingId] <= $indexById[$boardingId]) {
@@ -87,18 +94,18 @@ class TripTimelineService
         }
 
         $base = $this->scheduledStart($trip, $timezone);
-        $live = $this->liveProgress($trip, $routeStops, $base);
+        $live = $this->liveProgress($trip, $routeStops, $base, $service);
         $tripOver = in_array($trip->status, ['completed'], true);
         $etaAvailable = $trip->status !== 'cancelled' && $base !== null;
 
         $rows = [];
         foreach ($routeStops as $index => $routeStop) {
-            $eta = $etaAvailable ? $this->etaFor($base, $routeStop->scheduled_offset_min, $live['delay_minutes'], $live['after_index'], $index) : null;
+            $eta = $etaAvailable ? $this->etaFor($base, ServiceType::offsetMinutes($service, $routeStop), $live['delay_minutes'], $live['after_index'], $index) : null;
             $rows[] = [
                 'stop_id' => (int) $routeStop->stop_id,
                 'name' => $routeStop->stop->stop_name,
                 'municipality' => $routeStop->stop->municipality,
-                'type' => $routeStop->stop_type ?? 'stop',
+                'type' => ServiceType::effectiveStopType($service, $routeStop),
                 'sequence' => (int) $routeStop->stop_order,
                 'distance_km' => round((float) $routeStop->distance_from_origin_km, 2),
                 'eta' => $eta?->toIso8601String(),
@@ -162,13 +169,14 @@ class TripTimelineService
                 'departure_time' => $base?->format('H:i'),
                 'status' => $trip->status,
                 'leg_direction' => $direction,
+                'service_type' => $service,
                 'route_id' => $routeId,
                 'route_name' => $route?->route_name,
                 'timezone' => $timezone,
             ],
             'bus' => [
                 'fleet_id' => (int) $trip->fleetRoute->fleet_id,
-                'plate_number' => $trip->fleetRoute->fleet?->plate_number,
+                'label' => BusLabel::for($trip->fleetRoute->fleet),
                 // fleets.fleet_type is public/private ownership, not a comfort class such
                 // as "Aircon"; no class field exists, so none is reported.
                 'fleet_type' => $trip->fleetRoute->fleet?->fleet_type,
@@ -177,7 +185,7 @@ class TripTimelineService
             'header' => [
                 'from' => $first->stop->stop_name,
                 'bound_for' => $last->stop->stop_name,
-                'via' => $this->viaNames($routeStops),
+                'via' => $this->viaNames($routeStops, $service),
                 'duration_minutes' => $journey['duration_minutes'] ?? null,
                 'stops_between' => $journey['stops_between'] ?? null,
                 'distance_km' => $journey['distance_km'] ?? null,
@@ -187,8 +195,10 @@ class TripTimelineService
                 'alighting_stop_id' => $alightingId,
                 'custom_dropoff' => $custom !== null,
             ],
-            'allow_custom_dropoff' => (bool) ($route?->allow_custom_dropoff),
-            'custom_dropoff_availability' => $this->customDropoffService->availability($routeId, $direction, $boardingId),
+            'allow_custom_dropoff' => ! $express && (bool) ($route?->allow_custom_dropoff),
+            'custom_dropoff_availability' => $express
+                ? ['available' => false, 'reason' => 'Custom drop-off is not available on an express trip.']
+                : $this->customDropoffService->availability($routeId, $direction, $boardingId),
             'fare' => $fare,
             'collapse_min_stops' => (int) config('timeline.collapse_min_stops'),
             'refresh' => [
@@ -217,7 +227,7 @@ class TripTimelineService
      *
      * @return array{applied: bool, delay_minutes: float, after_index: int}
      */
-    private function liveProgress($trip, $routeStops, ?Carbon $base): array
+    private function liveProgress($trip, $routeStops, ?Carbon $base, string $service = ServiceType::REGULAR): array
     {
         $none = ['applied' => false, 'delay_minutes' => 0.0, 'after_index' => -1];
         if (! in_array($trip->status, ['departed', 'in-progress', 'completed'], true) || ! $trip->last_acknowledged_stop_id) {
@@ -230,7 +240,7 @@ class TripTimelineService
         }
 
         $result = ['applied' => false, 'delay_minutes' => 0.0, 'after_index' => (int) $ackIndex];
-        $offset = $routeStops[$ackIndex]->scheduled_offset_min;
+        $offset = ServiceType::offsetMinutes($service, $routeStops[$ackIndex]);
         if ($base === null || $offset === null || ! $trip->last_acknowledged_at) {
             return $result;
         }
@@ -345,10 +355,10 @@ class TripTimelineService
     }
 
     /** Major (`stop`-type) intermediate stops of the leg, capped in config. */
-    private function viaNames($routeStops): array
+    private function viaNames($routeStops, string $service = ServiceType::REGULAR): array
     {
         return $routeStops->slice(1, max(0, $routeStops->count() - 2))
-            ->filter(fn ($s) => ($s->stop_type ?? 'stop') === 'stop')
+            ->filter(fn ($s) => ServiceType::effectiveStopType($service, $s) === 'stop')
             ->take((int) config('timeline.via_max'))
             ->map(fn ($s) => $s->stop->stop_name)
             ->values()
@@ -358,6 +368,11 @@ class TripTimelineService
     /** @return array{amount: float, distance_km: float, seat_type: string}|array{error: string}|null */
     private function fareFor($trip, $routeStops, array $rows, ?int $boardingId, ?int $alightingId, ?array $custom, string $seatType): ?array
     {
+        if (ServiceType::isExpress($trip->service_type)) {
+            // Stage 1: no express fare rule exists. Never fall back to the regular fare.
+            return ['error' => 'Fare unavailable', 'unavailable' => true];
+        }
+
         try {
             if ($custom !== null) {
                 $boarding = $routeStops->firstWhere('stop_id', $boardingId);

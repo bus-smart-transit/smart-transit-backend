@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
+use App\Support\BusLabel;
+use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -64,7 +66,7 @@ class TripResolverService
         $items = array_map(function ($candidate) use ($seatType, &$fares) {
             $trip = $candidate['trip'];
             // The fare depends on the fleet's rule and the journey, not on the individual trip.
-            $key = $trip->fleetRoute->fleet_id.'|'.$candidate['origin']['stop_id'].'|'.$candidate['destination']['stop_id'];
+            $key = $trip->fleetRoute->fleet_id.'|'.$candidate['origin']['stop_id'].'|'.$candidate['destination']['stop_id'].'|'.ServiceType::normalize($trip->service_type);
             $fares[$key] ??= $this->fareFor($trip, $candidate['origin']['stop_id'], $candidate['destination']['stop_id'], $seatType);
 
             return $this->present($candidate) + ['fare' => $fares[$key]];
@@ -139,6 +141,10 @@ class TripResolverService
 
     private function fareFor(Trip $trip, int $originId, int $destinationId, string $seatType): ?float
     {
+        if (ServiceType::isExpress($trip->service_type)) {
+            return null; // "Fare unavailable": no regular-fare fallback and no surcharge
+        }
+
         try {
             return (float) $this->fareRuleService->getQuote([
                 'route_id' => (int) $trip->fleetRoute->route_id,
@@ -190,6 +196,10 @@ class TripResolverService
         $best = null;
         foreach ($trips as $trip) {
             $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $target, $timezone);
+            // Book Now / Book Later pick only a bookable trip; an express trip has no fare yet.
+            if ($candidate && ServiceType::isExpress($trip->service_type)) {
+                continue;
+            }
             if ($candidate && ($best === null || $candidate['boards_at']->lt($best['boards_at']))) {
                 $best = $candidate;
             }
@@ -245,8 +255,11 @@ class TripResolverService
             'origin' => $best['origin'] ?? null,
             'destination' => $best['destination'] ?? null,
             'route_name' => $best['trip']->fleetRoute->route?->route_name,
-            'plate_number' => $best['trip']->fleetRoute->fleet?->plate_number,
+            'bus_label' => BusLabel::for($best['trip']->fleetRoute->fleet),
             'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
+            'service_type' => ServiceType::normalize($best['trip']->service_type),
+            // Stage 1: express has no fare rule yet, so it is listed but cannot be booked.
+            'bookable' => ! ServiceType::isExpress($best['trip']->service_type),
             'seats_left' => $best['seats_left'],
         ];
     }
@@ -289,8 +302,9 @@ class TripResolverService
 
         $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
         $stops = $this->routeStopRepository->getOrderedStopsForDirection((int) $fleetRoute->route_id, $direction)->values();
-        $stopping = config('timeline.stopping_types');
-        $isStopping = fn ($index) => in_array($stops[$index]->stop_type ?? 'stop', $stopping, true);
+        $service = ServiceType::normalize($trip->service_type);
+        // On an express trip a stop it does not serve is a pass-through for that trip.
+        $isStopping = fn ($index) => ServiceType::isServed($service, $stops[$index]);
         $stoppingIndexes = $stops->keys()->filter($isStopping)->values();
 
         $originIndex = $originId === null ? $stoppingIndexes->first() : $stops->search(fn ($s) => (int) $s->stop_id === $originId);
@@ -306,8 +320,8 @@ class TripResolverService
             return null;
         }
 
-        $offset = $stops[$originIndex]->scheduled_offset_min;
-        $destinationOffset = $stops[$destinationIndex]->scheduled_offset_min;
+        $offset = ServiceType::offsetMinutes($service, $stops[$originIndex]);
+        $destinationOffset = ServiceType::offsetMinutes($service, $stops[$destinationIndex]);
         $start = Carbon::parse($trip->trip_date->toDateString().' '.$time, $timezone);
         $boardsAt = $start->copy()->addMinutes((int) ($offset ?? 0));
         if ($boardsAt->lt($target)) {

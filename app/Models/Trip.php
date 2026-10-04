@@ -63,6 +63,7 @@ class Trip extends Model
         'departure_time',
         'trip_type',
         'leg_direction',
+        'service_type', // regular | express (Batch 28)
         'return_departure_time',
         'status',
         'dispatch_decision',

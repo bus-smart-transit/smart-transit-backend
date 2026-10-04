@@ -37,4 +37,9 @@ return [
     // morning/afternoon in application logic, so a third type can be added
     // here without a code change.
     'block_types' => ['morning', 'afternoon'],
+
+    // Batch 28: how far back (days) the Driver / Chauffeur assignment cards reach, so an unfinished
+    // block from earlier this week is not hidden, and how many block cards the Operator tab loads.
+    'card_history_days' => (int) env('SHIFT_BLOCK_CARD_HISTORY_DAYS', 7),
+    'operator_card_limit' => (int) env('SHIFT_BLOCK_OPERATOR_CARD_LIMIT', 60),
 ];

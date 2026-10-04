@@ -330,6 +330,12 @@ class TripService
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
 
+        if ($trip->shift_block_id) {
+            throw ValidationException::withMessages([
+                'trip' => ['This trip is a leg of a shift block. Accept the whole shift block instead.'],
+            ]);
+        }
+
         if (! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
             throw ValidationException::withMessages([
                 'status' => ['This trip has already departed and can no longer be accepted.'],

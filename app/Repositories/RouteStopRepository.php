@@ -35,8 +35,10 @@ class RouteStopRepository
         $totalKm = (float) $stops->max('distance_from_origin_km');
         $hasOffsets = $stops->contains(fn ($s) => $s->getAttribute('scheduled_offset_min') !== null);
         $totalOffset = $hasOffsets ? (int) $stops->max('scheduled_offset_min') : null;
+        $hasExpressOffsets = $stops->contains(fn ($s) => $s->getAttribute('express_offset_min') !== null);
+        $totalExpressOffset = $hasExpressOffsets ? (int) $stops->max('express_offset_min') : null;
 
-        return $stops->reverse()->values()->map(function ($routeStop, $index) use ($totalKm, $totalOffset) {
+        return $stops->reverse()->values()->map(function ($routeStop, $index) use ($totalKm, $totalOffset, $totalExpressOffset) {
             $copy = $routeStop->replicate();
             $copy->id = $routeStop->id;
             $copy->setRelation('stop', $routeStop->stop);
@@ -44,6 +46,9 @@ class RouteStopRepository
             $copy->distance_from_origin_km = round($totalKm - (float) $routeStop->distance_from_origin_km, 3);
             if ($totalOffset !== null && $routeStop->getAttribute('scheduled_offset_min') !== null) {
                 $copy->scheduled_offset_min = $totalOffset - (int) $routeStop->scheduled_offset_min;
+            }
+            if ($totalExpressOffset !== null && $routeStop->getAttribute('express_offset_min') !== null) {
+                $copy->express_offset_min = $totalExpressOffset - (int) $routeStop->express_offset_min;
             }
 
             return $copy;
@@ -69,6 +74,24 @@ class RouteStopRepository
     public function routeIdsForStop(int $stopId): array
     {
         return RouteStop::where('stop_id', $stopId)->distinct()->pluck('route_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /** @param  array{served_by_express?: bool, express_offset_min?: int|null}  $payload */
+    public function updateExpress(int $routeId, int $routeStopId, array $payload): bool
+    {
+        $routeStop = RouteStop::where('route_id', $routeId)->where('id', $routeStopId)->first();
+        if (! $routeStop) {
+            return false;
+        }
+        if (array_key_exists('served_by_express', $payload)) {
+            $routeStop->served_by_express = (bool) $payload['served_by_express'];
+        }
+        if (array_key_exists('express_offset_min', $payload)) {
+            $routeStop->express_offset_min = $payload['express_offset_min'];
+        }
+        $routeStop->save();
+
+        return true;
     }
 
     public function updateStopType(int $routeId, int $routeStopId, string $stopType): bool

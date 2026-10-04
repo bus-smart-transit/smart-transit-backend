@@ -10,6 +10,8 @@ use App\Repositories\FleetRouteRepository;
 use App\Repositories\ShiftBlockRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
+use App\Support\Notifications\NotificationLink;
+use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -35,6 +37,7 @@ class ShiftBlockService
         private FleetRouteRepository $fleetRouteRepository,
         private FleetLocationRepository $fleetLocationRepository,
         private FcmService $fcmService,
+        private ShiftBlockAssignmentService $assignments,
     ) {}
 
     /**
@@ -128,6 +131,7 @@ class ShiftBlockService
                 'departure_time' => $time,
                 'trip_type' => 'one_way',
                 'leg_direction' => $this->expectedLegDirectionFromIndex($index),
+                'service_type' => ServiceType::normalize($payload['service_type'] ?? null),
                 'status' => 'scheduled',
                 'driver_id' => $payload['driver_id'],
                 'conductor_id' => $payload['conductor_id'],
@@ -139,12 +143,13 @@ class ShiftBlockService
         }
 
         $routeName = $fleetRoute->route?->route_name ?? 'a shift block';
+        $this->assignments->ensureForBlock($block);
         if ($driver->user) {
             $this->fcmService->sendToUser(
                 $driver->user,
                 'New Shift Block Assignment',
                 "You've been assigned to a {$payload['block_type']} shift block on {$routeName} on {$scheduledDate}.",
-                ['type' => 'shift_block_assigned', 'shift_block_id' => $block->shift_block_id],
+                NotificationLink::blockAssignedData('driver', (int) $block->shift_block_id),
             );
         }
         if ($conductor->user) {
@@ -152,7 +157,7 @@ class ShiftBlockService
                 $conductor->user,
                 'New Shift Block Assignment',
                 "You've been assigned to a {$payload['block_type']} shift block on {$routeName} on {$scheduledDate}.",
-                ['type' => 'shift_block_assigned', 'shift_block_id' => $block->shift_block_id],
+                NotificationLink::blockAssignedData('conductor', (int) $block->shift_block_id),
             );
         }
 
@@ -233,7 +238,32 @@ class ShiftBlockService
 
         if ($update) {
             $this->shiftBlockRepository->update($blockId, $update);
-            Trip::where('shift_block_id', $blockId)->update(array_intersect_key($update, array_flip(['driver_id', 'conductor_id'])));
+            // A replacement must accept for themselves: the previous person's acceptance never carries over.
+            $legUpdate = array_intersect_key($update, array_flip(['driver_id', 'conductor_id']));
+            if (isset($legUpdate['driver_id'])) {
+                $legUpdate['driver_accepted_at'] = null;
+            }
+            if (isset($legUpdate['conductor_id'])) {
+                $legUpdate['conductor_accepted_at'] = null;
+            }
+            Trip::where('shift_block_id', $blockId)->update($legUpdate);
+
+            $this->assignments->ensureForBlock($this->findById($blockId));
+            $routeName = $block->legs->first()?->fleetRoute?->route?->route_name ?? 'a shift block';
+            foreach (['driver', 'conductor'] as $role) {
+                if (! isset($update[$role.'_id'])) {
+                    continue;
+                }
+                $assignee = $this->staffRepository->findById($update[$role.'_id']);
+                if ($assignee?->user) {
+                    $this->fcmService->sendToUser(
+                        $assignee->user,
+                        'New Shift Block Assignment',
+                        "You've been assigned to a {$block->block_type} shift block on {$routeName} on {$block->scheduled_date->format('Y-m-d')}.",
+                        NotificationLink::blockAssignedData($role, $blockId),
+                    );
+                }
+            }
         }
 
         return $this->findById($blockId);

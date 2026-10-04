@@ -213,6 +213,8 @@ class FleetLocationRepository
                 fl.accuracy_m,
                 fl.recorded_at,
                 f.plate_number,
+                f.bus_company_name,
+                f.body_no,
                 f.fleet_type,
                 t.status AS trip_status,
                 t.leg_direction,
@@ -243,7 +245,9 @@ class FleetLocationRepository
                     fl.location,
                     ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
                 ) AS distance_meters,
-                f.plate_number
+                f.plate_number,
+                f.bus_company_name,
+                f.body_no
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id
             LEFT JOIN trips t ON t.trip_id = fl.trip_id
