@@ -11,6 +11,7 @@ class FleetPairingService
 {
     public function __construct(
         private FleetDailyPinRepository $pinRepository,
+        private LegProgressionService $legs,
     ) {}
 
     // ── Token generation ────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ class FleetPairingService
         $payload = $this->encodePayload([
             'uid'  => $userId,
             'role' => $role,
-            'tid'  => $tripId,
+            'tid'  => $this->legs->pairingScopeTripId($tripId), // a block's first leg stands for every leg
             'fid'  => $fleetId,
             'date' => Carbon::today()->toDateString(),
             'exp'  => Carbon::now()->endOfDay()->timestamp,
@@ -135,7 +136,7 @@ class FleetPairingService
         }
 
         // 7. Trip must match
-        if ((int) ($payload['tid'] ?? 0) !== $scannerTripId) {
+        if ((int) ($payload['tid'] ?? 0) !== $this->legs->pairingScopeTripId($scannerTripId)) {
             $this->rejectWith('token', 'Wrong trip. You and your partner are not on the same trip assignment.');
         }
 

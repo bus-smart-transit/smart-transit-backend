@@ -152,6 +152,8 @@ class TripResolverService
                 'origin_stop_id' => $originId,
                 'destination_stop_id' => $destinationId,
                 'seat_type' => $seatType,
+                'leg_direction' => $trip->leg_direction,
+                'on' => $trip->trip_date?->toDateString(),
             ]);
         } catch (\Throwable) {
             return null; // shown as "fare unavailable"; never guessed

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\FleetDailyPin;
+use App\Models\Trip;
 use App\Repositories\FleetDailyPinRepository;
 use App\Repositories\StaffRepository;
 use Illuminate\Support\Carbon;
@@ -13,6 +14,7 @@ class FleetDailyPinService
     public function __construct(
         private FleetDailyPinRepository $pinRepository,
         private StaffRepository $staffRepository,
+        private LegProgressionService $legs,
     ) {}
 
     /**
@@ -50,7 +52,9 @@ class FleetDailyPinService
         }
 
         return $this->pinRepository->create([
-            'trip_id'       => $tripId,
+            // A block's pin is made once, on its first leg, and serves every leg of that day.
+            'trip_id'       => $this->legs->pairingScopeTripId($tripId),
+            'shift_block_id' => Trip::where('trip_id', $tripId)->value('shift_block_id'),
             'driver_id'     => $driverId,
             'conductor_id'  => $conductorId,
             'pin_code'      => $this->generateCode(),

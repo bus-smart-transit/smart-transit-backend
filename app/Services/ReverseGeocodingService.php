@@ -6,8 +6,15 @@ use Illuminate\Support\Facades\Http;
 
 class ReverseGeocodingService
 {
+    public function __construct(private NominatimThrottle $throttle) {}
+
     public function resolvePlaceName(float $lat, float $lng): ?string
     {
+        // Same shared 1 request/second gate as the address search (Nominatim policy); no turn, no label.
+        if (! $this->throttle->acquire()) {
+            return null;
+        }
+
         try {
             $response = Http::timeout(5)
                 ->acceptJson()

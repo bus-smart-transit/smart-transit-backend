@@ -23,6 +23,8 @@ class DriverShiftController extends Controller
             'open_shift' => $this->formatShift($status['open_shift']),
             'latest_shift' => $this->formatShift($status['latest_shift']),
             'has_open_shift' => (bool) $status['has_open_shift'],
+            'is_block_shift' => (bool) $status['is_block_shift'],
+            'end_blocked_reason' => $status['end_blocked_reason'],
         ], 'Driver shift status retrieved');
     }
 
@@ -38,11 +40,23 @@ class DriverShiftController extends Controller
         ], 'Driver shift started');
     }
 
-    // B5: End Shift belongs to the Chauffeur (conductor). A driver ends a
-    // trip (PATCH trips/{id}/complete), which also closes the driver's shift log.
+    // B5: End Shift belongs to the Chauffeur for a standalone trip: a driver ends the trip
+    // (PATCH trips/{id}/complete), which also closes the driver's shift log.
+    // Batch 27 Part 2: on a shift block the driver's log stays open across the legs and the driver
+    // ends the shift here, once every leg is completed or cancelled.
     public function end(Request $request)
     {
-        return $this->error('Only the Chauffeur can end a shift. Drivers end the trip instead.', 403);
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+
+        $open = $this->driverShiftService->getStatusForDriver($companyUser->company_user_id)['open_shift'];
+        if (! $open?->trip?->shift_block_id) {
+            return $this->error('Only the Chauffeur can end a shift. Drivers end the trip instead.', 403);
+        }
+
+        $shift = $this->driverShiftService->endShiftForDriver($companyUser->company_user_id);
+
+        return $this->success(['shift' => $this->formatShift($shift)], 'Driver shift ended');
     }
 
     private function formatShift(?object $shift): ?array

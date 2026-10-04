@@ -6,6 +6,7 @@ use App\Models\Ticket;
 use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\TripCapacity;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 
@@ -46,9 +47,13 @@ class OccupancyService
         $standingPercentage = $standingCapacity > 0 ? ($standingBoarded / $standingCapacity) * 100 : 0;
         $totalPercentage = $totalCapacity > 0 ? ($totalBoarded / $totalCapacity) * 100 : 0;
 
-        $capacityStatus = $this->getCapacityStatus($totalPercentage);
+        // Batch 27 Part 2, Task 5: capacity, occupied and "full" come from the ONE definition the sale block
+        // uses (tickets sold). Boarded counts stay for the manifest and never decide a sale.
+        $summary = TripCapacity::summary($trip, ['seated' => $seatedBoarded, 'standing' => $standingBoarded]);
+        $capacityStatus = $this->getCapacityStatus($summary['utilization_percentage']);
 
         return [
+            'capacity_summary' => $summary,
             'trip_id' => $tripId,
             'trip_status' => $trip->status,
             'fleet_id' => $fleet->fleet_id,
@@ -64,15 +69,11 @@ class OccupancyService
                 'standing' => $standingBoarded,
             ],
             'utilization' => [
-                'total_percentage' => round($totalPercentage, 2),
-                'seated_percentage' => round($seatedPercentage, 2),
-                'standing_percentage' => round($standingPercentage, 2),
+                'total_percentage' => $summary['utilization_percentage'],
+                'seated_percentage' => $seatedCapacity > 0 ? round($summary['sold']['seated'] / $seatedCapacity * 100, 2) : 0,
+                'standing_percentage' => $standingCapacity > 0 ? round($summary['sold']['standing'] / $standingCapacity * 100, 2) : 0,
             ],
-            'available_seats' => [
-                'total' => max(0, $totalCapacity - $totalBoarded),
-                'seated' => max(0, $seatedCapacity - $seatedBoarded),
-                'standing' => max(0, $standingCapacity - $standingBoarded),
-            ],
+            'available_seats' => $summary['remaining'],
             // Flat aliases kept for older frontend consumers.
             'total_capacity' => $totalCapacity,
             'seated_capacity' => $seatedCapacity,
@@ -80,8 +81,8 @@ class OccupancyService
             'current_seated' => $seatedBoarded,
             'current_standing' => $standingBoarded,
             'capacity_status' => $capacityStatus,
-            'is_full' => $totalBoarded >= $totalCapacity,
-            'is_near_capacity' => $totalPercentage >= 80,
+            'is_full' => $summary['is_full'],
+            'is_near_capacity' => $summary['utilization_percentage'] >= 80,
         ];
     }
 

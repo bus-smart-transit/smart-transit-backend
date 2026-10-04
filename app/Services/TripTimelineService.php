@@ -397,6 +397,8 @@ class TripTimelineService
                 'origin_stop_id' => $boardingId,
                 'destination_stop_id' => $alightingId,
                 'seat_type' => $seatType,
+                'leg_direction' => $trip->leg_direction,
+                'on' => $trip->trip_date?->toDateString(),
             ]);
 
             $km = 0.0;

@@ -33,6 +33,50 @@ class CustomDropoffService
      */
     public function evaluate(int $routeId, string $direction, int $boardingStopId, float $lat, float $lng): array
     {
+        return $this->evaluateFrom($routeId, $direction, $boardingStopId, null, $lat, $lng);
+    }
+
+    /**
+     * Position of any point on the route line: snapped point, distance along the leg and
+     * the matching km from the route's first stop (the stored, outbound distances, whichever way
+     * the leg runs; interpolated between the bracketing stops, the same frame the fare uses).
+     * Null when the route has no generated path.
+     *
+     * @return array{snap: array, km_from_origin: float}|null
+     */
+    public function locate(int $routeId, string $direction, float $lat, float $lng): ?array
+    {
+        $snap = $this->routeSnapService->snap($routeId, $lat, $lng, $direction);
+        if (! $snap) {
+            return null;
+        }
+
+        $stops = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction);
+        $along = $this->alongByStop($routeId, $direction, $stops);
+        if (collect($along)->filter(fn ($v) => $v !== null)->isEmpty()) {
+            return null;
+        }
+
+        [$km] = $this->interpolate($stops, $along, $snap['distance_along_route_m']);
+
+        // The ordered stops of a reverse leg carry mirrored distances; callers price with the route's own
+        // (outbound) distances, so convert back.
+        if ($direction === 'reverse') {
+            $totalKm = (float) $this->routeStopRepository->getOrderedStops($routeId)->max('distance_from_origin_km');
+            $km = round($totalKm - $km, 3);
+        }
+
+        return ['snap' => $snap, 'km_from_origin' => $km];
+    }
+
+    /**
+     * Same rules as evaluate(), but the boarding point may be a position along the leg
+     * (metres from the leg start) instead of a stop: used for mid-trip boarding.
+     *
+     * @throws ValidationException
+     */
+    public function evaluateFrom(int $routeId, string $direction, ?int $boardingStopId, ?float $boardingAlongM, float $lat, float $lng): array
+    {
         $cfg = config('timeline.custom_dropoff');
 
         $route = $this->routeRepository->findById($routeId);
@@ -54,16 +98,9 @@ class CustomDropoffService
         }
 
         $stops = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction);
-        $along = [];
-        foreach ($stops as $routeStop) {
-            $point = $routeStop->snapped_latitude !== null
-                ? [(float) $routeStop->snapped_latitude, (float) $routeStop->snapped_longitude]
-                : [(float) $routeStop->stop->latitude, (float) $routeStop->stop->longitude];
-            $stopSnap = $this->routeSnapService->snap($routeId, $point[0], $point[1], $direction);
-            $along[$routeStop->stop_id] = $stopSnap['distance_along_route_m'] ?? null;
-        }
+        $along = $this->alongByStop($routeId, $direction, $stops);
 
-        $boardingAlong = $along[$boardingStopId] ?? null;
+        $boardingAlong = $boardingAlongM ?? ($boardingStopId !== null ? ($along[$boardingStopId] ?? null) : null);
         if ($boardingAlong === null) {
             $this->fail('The boarding stop is not on this trip\'s route.');
         }
@@ -93,6 +130,25 @@ class CustomDropoffService
             'km_from_origin' => $km,
             'offset_min' => $offset,
         ];
+    }
+
+    /**
+     * Position (metres along the leg) of every stop of the leg, keyed by stop id.
+     *
+     * @return array<int, float|null>
+     */
+    private function alongByStop(int $routeId, string $direction, $stops): array
+    {
+        $along = [];
+        foreach ($stops as $routeStop) {
+            $point = $routeStop->snapped_latitude !== null
+                ? [(float) $routeStop->snapped_latitude, (float) $routeStop->snapped_longitude]
+                : [(float) $routeStop->stop->latitude, (float) $routeStop->stop->longitude];
+            $stopSnap = $this->routeSnapService->snap($routeId, $point[0], $point[1], $direction);
+            $along[$routeStop->stop_id] = $stopSnap['distance_along_route_m'] ?? null;
+        }
+
+        return $along;
     }
 
     /**

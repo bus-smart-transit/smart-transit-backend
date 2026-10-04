@@ -39,6 +39,7 @@ class FleetDailyPin extends Model
 
     protected $fillable = [
         'trip_id',
+        'shift_block_id',
         'driver_id',
         'conductor_id',
         'pin_code',

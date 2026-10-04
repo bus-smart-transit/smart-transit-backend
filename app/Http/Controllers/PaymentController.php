@@ -98,7 +98,8 @@ class PaymentController extends Controller
             return $this->error('Your active shift is assigned to a different trip.', 422);
         }
 
-        if ((int) ($openShift->trip_id ?? 0) !== (int) ($activeTrip->trip_id ?? 0)) {
+        // Batch 27 Part 2: one shift covers every leg of its block, so compare shifts, not trip ids.
+        if (! app(\App\Services\LegProgressionService::class)->sameShift($openShift->trip ?? $openShift, $activeTrip)) {
             return $this->error('Your active shift is assigned to a different trip.', 422);
         }
 

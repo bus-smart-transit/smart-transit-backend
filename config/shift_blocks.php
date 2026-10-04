@@ -42,4 +42,9 @@ return [
     // block from earlier this week is not hidden, and how many block cards the Operator tab loads.
     'card_history_days' => (int) env('SHIFT_BLOCK_CARD_HISTORY_DAYS', 7),
     'operator_card_limit' => (int) env('SHIFT_BLOCK_OPERATOR_CARD_LIMIT', 60),
+
+    // Batch 27 Part 2: from the second leg on, the bus must be at that leg's origin terminal before the
+    // leg can start (the Location Match Rule applied per leg). Leave on; the switch exists for dev machines
+    // with no GPS feed.
+    'leg_location_rule_enabled' => filter_var(env('SHIFT_BLOCK_LEG_LOCATION_RULE', true), FILTER_VALIDATE_BOOLEAN),
 ];

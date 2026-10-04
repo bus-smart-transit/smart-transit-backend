@@ -218,6 +218,84 @@ class TicketController extends Controller
     }
 
     /**
+     * Chauffeur: where is the bus right now, as a boarding point on this trip's route?
+     * GET /conductor/trips/current/boarding-point
+     *
+     * Auth + conductor role + completed pairing (route group), the caller's own open shift and
+     * current trip (never an id from the request), throttled, and audited. Takes no coordinates:
+     * the position is the bus's own latest accepted fix. When it is not reliable the state says
+     * why and the Chauffeur picks the boarding stop instead; no destinations are offered then.
+     */
+    public function boardingPoint(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $guard = $this->assertConductorShiftForCurrentTrip($request);
+        if ($guard !== null) {
+            return $guard;
+        }
+
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (! $trip || ! in_array($trip->status, ['boarding', 'departed', 'in-progress'], true)) {
+            return $this->error('Boarding between stops is available once the trip is boarding or under way.', 422);
+        }
+
+        $resolved = app(\App\Services\MidTripBoardingService::class)->resolve($trip);
+
+        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $routeId = (int) $trip->fleetRoute->route_id;
+        $destinations = [];
+        $dropoff = ['available' => false, 'reason' => null];
+
+        if ($resolved['state'] === \App\Services\MidTripBoardingService::STATE_GOOD) {
+            $boardingKm = (float) $resolved['boarding_point']['distance_from_origin_km'];
+            // Stored (outbound) distances, travelled in the leg's order: the same frame the sale prices in.
+            $stops = app(\App\Repositories\RouteStopRepository::class)->getOrderedStops($routeId);
+            if ($direction === 'reverse') {
+                $stops = $stops->reverse()->values();
+            }
+            foreach ($stops as $routeStop) {
+                if (! \App\Support\ServiceType::isServed($trip->service_type, $routeStop)) {
+                    continue;
+                }
+                $ahead = \App\Support\LegDistance::alongLegKm($boardingKm, (float) $routeStop->distance_from_origin_km, $direction);
+                if ($ahead <= 0) {
+                    continue;
+                }
+                $destinations[] = [
+                    'stop_id' => (int) $routeStop->stop_id,
+                    'stop_name' => $routeStop->stop?->stop_name,
+                    'distance_km' => round($ahead, 2),
+                ];
+            }
+
+            $route = $trip->fleetRoute->route;
+            $dropoff = ($route?->allow_custom_dropoff && ! \App\Support\ServiceType::isExpress($trip->service_type))
+                ? ['available' => true, 'reason' => null]
+                : ['available' => false, 'reason' => null];
+        }
+
+        \App\Services\AuditLogger::log('boarding_point.resolved', 'Trip', (int) $trip->trip_id, [
+            'state' => $resolved['state'],
+            'age_seconds' => $resolved['age_seconds'],
+            'accuracy_m' => $resolved['accuracy_m'],
+        ]);
+
+        return $this->success(array_merge($resolved, [
+            'trip_id' => (int) $trip->trip_id,
+            'leg_direction' => $direction,
+            'service_type' => $trip->service_type,
+            'destinations' => $destinations,
+            'custom_dropoff' => $dropoff,
+            // Tells the client what to do when the state is not good.
+            'fallback' => $resolved['state'] === \App\Services\MidTripBoardingService::STATE_GOOD ? null : 'manual_boarding_stop',
+        ]), 'Boarding point resolved.');
+    }
+
+    /**
      * Conductor & Driver: Trip earnings summary for current active trip.
      * GET /conductor/trips/current/earnings
      * GET /driver/trips/current/earnings
@@ -286,7 +364,7 @@ class TicketController extends Controller
             return $this->error('No active trip found.', 404);
         }
 
-        if ((int) ($openShift->trip_id ?? 0) !== (int) ($activeTrip->trip_id ?? 0)) {
+        if (! app(\App\Services\LegProgressionService::class)->sameShift($openShift->trip ?? $openShift, $activeTrip)) {
             return $this->error('Your active shift is assigned to a different trip.', 422);
         }
 

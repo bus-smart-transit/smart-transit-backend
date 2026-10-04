@@ -20,6 +20,9 @@ return [
     // Appended to free-text stop geocoding queries.
     'geocode_hint' => env('GEOCODE_REGION_HINT', 'Davao Region Philippines'),
 
+    // ISO 3166-1 alpha-2 codes (comma separated) the address search is limited to.
+    'country_codes' => env('REGION_COUNTRY_CODES', 'ph'),
+
     // Region view used when no route or trip is in context.
     'center' => [
         'lat' => (float) env('REGION_CENTER_LAT', 6.9),

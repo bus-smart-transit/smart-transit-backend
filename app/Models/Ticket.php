@@ -76,6 +76,8 @@ class Ticket extends Model
         'destination_lat',
         'destination_lng',
         'destination_label',
+        'boarding_distance_m',
+        'alighting_distance_m',
         'tracking_token_hash',
         'tracking_token_enc',
     ];

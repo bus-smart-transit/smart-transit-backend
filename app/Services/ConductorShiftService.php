@@ -12,6 +12,7 @@ class ConductorShiftService
         private ConductorShiftLogRepository $conductorShiftLogRepository,
         private TripService $tripService,
         private TripRepository $tripRepository,
+        private LegProgressionService $legs,
     ) {}
 
     public function getStatusForConductor(int $conductorCompanyUserId): array
@@ -35,22 +36,8 @@ class ConductorShiftService
      */
     private function endBlockedReason(object $openShift): ?string
     {
-        $tripStatus = strtolower((string) ($openShift->trip?->status ?? ''));
-        if (in_array($tripStatus, ['boarding', 'departed', 'in-progress'], true)) {
-            return 'Cannot end shift while your assigned trip is still boarding or in transit. Complete the trip first.';
-        }
-
-        // B5: End Shift closes the whole shift block, so every leg must be
-        // completed or cancelled first.
-        $blockId = $openShift->trip?->shift_block_id;
-        if ($blockId) {
-            $unfinished = $this->tripRepository->countUnfinishedLegs((int) $blockId);
-            if ($unfinished > 0) {
-                return "Cannot end shift: {$unfinished} leg(s) of your shift block are not completed or cancelled yet.";
-            }
-        }
-
-        return null;
+        // Batch 27 Part 2: one block-aware rule (a block needs every leg completed or cancelled).
+        return $this->legs->endBlockedReason($openShift->trip);
     }
 
     public function startShiftForConductor(int $conductorCompanyUserId, string $startSource = 'dashboard'): object
@@ -64,7 +51,8 @@ class ConductorShiftService
 
         $existingOpen = $this->conductorShiftLogRepository->findOpenByConductor($conductorCompanyUserId);
         if ($existingOpen) {
-            if ((int) $existingOpen->trip_id === (int) $trip->trip_id) {
+            // Batch 27 Part 2: the same shift covers every leg of one block.
+            if ($this->legs->sameShift($existingOpen->trip, $trip)) {
                 return $existingOpen;
             }
 
@@ -72,8 +60,7 @@ class ConductorShiftService
             // for the full explanation — self-heal a shift left open for a
             // trip that has since completed/cancelled instead of permanently
             // blocking every later shift start.
-            $staleTripStatus = strtolower((string) ($existingOpen->trip?->status ?? ''));
-            if (in_array($staleTripStatus, ['completed', 'cancelled'], true)) {
+            if ($this->legs->isShiftStale($existingOpen->trip)) {
                 $this->conductorShiftLogRepository->markEnded($existingOpen, 'auto_closed_stale');
             } else {
                 throw ValidationException::withMessages([

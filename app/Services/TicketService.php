@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Ticket;
 use App\Repositories\FareRuleRepository;
 use App\Support\BusLabel;
+use App\Support\LegDistance;
 use App\Support\ServiceType;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
@@ -28,18 +29,28 @@ class TicketService
         private ReverseGeocodingService $reverseGeocodingService,
         private CustomDropoffService $customDropoffService,
         private TicketTrackingService $trackingService,
+        private MidTripBoardingService $midTripBoardingService,
     ) {}
 
     /**
      * $item is one of two shapes:
      *   stop-based:   ['trip_id','seat_type','origin_stop_id','destination_stop_id']
      *   custom drop-off: ['trip_id','seat_type','origin_stop_id','destination_lat','destination_lng'(,'destination_label')]
+     *   Chauffeur mid-trip boarding (cash only): ['trip_id','seat_type','boarding_mode' => 'gps',
+     *       'destination_stop_id' | 'destination_lat'+'destination_lng'(,'destination_label')]. No origin: the server
+     *       resolves the boarding point from the bus's own position (never from the request).
+     * `channel` => 'onsite' is set by the cash checkout on the server, never read from a request: it is what allows
+     * a Chauffeur to sell while the bus is already moving.
      */
     public function reserveAndPrice(array $item): array
     {
         $trip = $this->tripRepository->findById($item['trip_id']);
+        $onsite = ($item['channel'] ?? null) === 'onsite';
+        $sellable = $onsite
+            ? ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress']
+            : ['scheduled', 'delayed', 'boarding'];
 
-        if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
+        if (! $trip || ! in_array($trip->status, $sellable, true)) {
             throw ValidationException::withMessages([
                 'trip' => ['This trip is not accepting tickets.'],
             ]);
@@ -69,7 +80,9 @@ class TicketService
             ]);
         }
 
-        if (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
+        if ($onsite && ($item['boarding_mode'] ?? null) === 'gps') {
+            $reserved = $this->priceFromBoardingPoint($trip, $item);
+        } elseif (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
             $reserved = $this->priceByStops($trip, $item);
         } elseif (isset($item['origin_stop_id'], $item['destination_lat'], $item['destination_lng'])) {
             $reserved = $this->priceByCustomDropoff($trip, $item);
@@ -105,22 +118,6 @@ class TicketService
         return $reservedTemplate;
     }
 
-    /** @param  array<int, \App\Models\RouteStop>  $routeStops */
-    private function assertExpressServes(object $trip, array $routeStops): void
-    {
-        if (! ServiceType::isExpress($trip->service_type)) {
-            return;
-        }
-
-        foreach ($routeStops as $routeStop) {
-            if (! ServiceType::isServed($trip->service_type, $routeStop)) {
-                throw ValidationException::withMessages([
-                    'stop' => ['This express trip does not stop at one of the chosen stops.'],
-                ]);
-            }
-        }
-    }
-
     /** Stage 1 (Batch 28): an express trip has no fare rule, and there is no fallback to the regular fare. */
     private function assertFareAvailableForService(object $trip): void
     {
@@ -134,7 +131,13 @@ class TicketService
     /**
      * Computed on the fly — no fare_matrix table. The distance between two
      * known stops on a known route is exact (no interpolation needed), so
-     * this is just a subtraction plus the shared fare formula.
+     * this is a subtraction plus the shared fare formula.
+     *
+     * Batch 27 Part 2 (Tasks 2 and 4): the server no longer trusts the two stop ids.
+     * Both must be stopping points for this trip's service (a pass-through is refused), the
+     * destination must be AHEAD of the boarding stop in the leg's direction (a backwards or
+     * zero-length ticket is a 422), the distance is measured along the leg, and the ticket stores
+     * the two points it was priced between.
      */
     private function priceByStops(object $trip, array $item): array
     {
@@ -153,20 +156,16 @@ class TicketService
             ]);
         }
 
-        $distanceKm = abs($destinationRouteStop->distance_from_origin_km - $originRouteStop->distance_from_origin_km);
+        $this->assertStopsServed($trip, $originRouteStop, $destinationRouteStop);
 
-        // Batch 28: on an express trip only stops it serves can be boarded or alighted at
-        // (checked first, so a tampered stop id is refused for what it is), then the Stage 1
-        // rule: express has no fare yet, so nothing is priced or sold for it.
-        $this->assertExpressServes($trip, [$originRouteStop, $destinationRouteStop]);
+        $boardingKm = (float) $originRouteStop->distance_from_origin_km;
+        $distanceKm = $this->assertAheadAndMeasure($trip, $boardingKm, $destinationRouteStop);
+
+        // Batch 28 Stage 1: express has no fare yet, so nothing is priced or sold for it
+        // (checked after the stop and direction checks, so a tampered payload is refused for what it is).
         $this->assertFareAvailableForService($trip);
 
-        $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $item['seat_type'])
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $item['seat_type']);
-
-        if (! $rule) {
-            throw new \RuntimeException('No fare configured for this fleet and seat type.');
-        }
+        $rule = $this->ruleFor($trip, $item['seat_type']);
 
         return [
             'fleet_route_id' => $trip->fleet_route_id,
@@ -174,9 +173,176 @@ class TicketService
             'seat_type' => $item['seat_type'],
             'fare_rule_id' => $rule->fare_rule_id,
             'distance_km' => $distanceKm,
-            'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm),
+            'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
             'origin_stop_id' => $item['origin_stop_id'],
             'destination_stop_id' => $item['destination_stop_id'],
+            'boarding_distance_m' => $this->routeStopMeters($originRouteStop),
+            'alighting_distance_m' => $this->routeStopMeters($destinationRouteStop),
+        ];
+    }
+
+    /** Both stops must be places this trip's bus stops at: pass-through points never are (Task 2). */
+    private function assertStopsServed(object $trip, \App\Models\RouteStop $origin, \App\Models\RouteStop $destination): void
+    {
+        foreach (['origin' => $origin, 'destination' => $destination] as $field => $routeStop) {
+            if (! ServiceType::isServed($trip->service_type, $routeStop)) {
+                $name = $routeStop->stop?->stop_name ?? 'that point';
+                throw ValidationException::withMessages([
+                    $field => [ServiceType::isExpress($trip->service_type)
+                        ? "This express trip does not stop at {$name}."
+                        : "Buses do not stop at {$name}. Choose a stop."],
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Distance along the leg from the boarding point to a destination stop. A destination behind or at the
+     * boarding point (for this leg's direction) is refused (Task 2).
+     */
+    private function assertAheadAndMeasure(object $trip, float $boardingKm, \App\Models\RouteStop $destination): float
+    {
+        $km = LegDistance::alongLegKm($boardingKm, (float) $destination->distance_from_origin_km, $trip->leg_direction);
+        if ($km <= 0) {
+            throw ValidationException::withMessages([
+                'destination' => ['The destination must be ahead of your boarding point for this trip\'s direction.'],
+            ]);
+        }
+
+        return $km;
+    }
+
+    /** The fare rule in force on the trip's date (Manila), for this fleet and seat type. */
+    private function ruleFor(object $trip, string $seatType): \App\Models\FareRule
+    {
+        $on = $trip->trip_date?->toDateString();
+        $rule = $this->fareRuleRepository->getActiveRule($trip->fleetRoute->fleet_id, $seatType, $on)
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($trip->fleetRoute->route_id, $seatType, $on);
+
+        if (! $rule) {
+            throw new \RuntimeException('No fare configured for this fleet and seat type.');
+        }
+
+        return $rule;
+    }
+
+    private function routeStopMeters(\App\Models\RouteStop $routeStop): int
+    {
+        return $routeStop->distance_from_origin_m !== null
+            ? (int) $routeStop->distance_from_origin_m
+            : LegDistance::toMeters((float) $routeStop->distance_from_origin_km);
+    }
+
+
+    /**
+     * Task 6: Chauffeur cash sale to someone boarding between stops. The boarding point is the
+     * bus's own latest accepted position snapped to the route (MidTripBoardingService); the
+     * request carries only the destination. A weak, old, imprecise or off-route position is a
+     * 422 that tells the Chauffeur to pick the boarding stop instead: no guessing, no fallback fare.
+     * The destination must be ahead in the leg's direction; the fare uses the same shared formula
+     * and the ticket stores the snapped boarding point plus the distance snapshot (origin_stop_id null).
+     */
+    private function priceFromBoardingPoint(object $trip, array $item): array
+    {
+        $resolved = $this->midTripBoardingService->resolve($trip);
+        if ($resolved['state'] !== MidTripBoardingService::STATE_GOOD) {
+            throw ValidationException::withMessages([
+                'boarding' => [($resolved['message'] ?? 'The bus position is not reliable.').' Choose the boarding stop instead.'],
+            ]);
+        }
+
+        $point = $resolved['boarding_point'];
+        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $routeId = (int) $trip->fleetRoute->route_id;
+        $boardingKm = (float) $point['distance_from_origin_km'];
+
+        $base = [
+            'fleet_route_id' => $trip->fleet_route_id,
+            'trip_id' => $trip->trip_id,
+            'seat_type' => $item['seat_type'],
+            'origin_stop_id' => null,
+            'origin_lat' => $point['latitude'],
+            'origin_lng' => $point['longitude'],
+            'boarding_distance_m' => $point['distance_from_origin_m'],
+        ];
+
+        if (isset($item['destination_stop_id'])) {
+            $destination = $this->routeStopRepository->findByRouteAndStop($routeId, (int) $item['destination_stop_id']);
+            if (! $destination) {
+                throw ValidationException::withMessages([
+                    'stop' => ['The destination is not on this trip\'s route.'],
+                ]);
+            }
+
+            if (! ServiceType::isServed($trip->service_type, $destination)) {
+                $name = $destination->stop?->stop_name ?? 'that point';
+                throw ValidationException::withMessages([
+                    'destination' => [ServiceType::isExpress($trip->service_type)
+                        ? "This express trip does not stop at {$name}."
+                        : "Buses do not stop at {$name}. Choose a stop."],
+                ]);
+            }
+
+            $distanceKm = $this->assertAheadAndMeasure($trip, $boardingKm, $destination);
+            $this->assertFareAvailableForService($trip);
+            $rule = $this->ruleFor($trip, $item['seat_type']);
+
+            return $base + [
+                'fare_rule_id' => $rule->fare_rule_id,
+                'distance_km' => $distanceKm,
+                'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
+                'destination_stop_id' => (int) $item['destination_stop_id'],
+                'alighting_distance_m' => $this->routeStopMeters($destination),
+            ];
+        }
+
+        if (! isset($item['destination_lat'], $item['destination_lng'])) {
+            throw ValidationException::withMessages([
+                'destination' => ['Choose where the passenger gets off.'],
+            ]);
+        }
+
+        if (ServiceType::isExpress($trip->service_type)) {
+            throw ValidationException::withMessages([
+                'destination' => ['A custom drop-off is not available on an express trip.'],
+            ]);
+        }
+
+        $dropoff = $this->customDropoffService->evaluateFrom(
+            $routeId,
+            $direction,
+            null,
+            (float) $point['distance_along_leg_m'],
+            (float) $item['destination_lat'],
+            (float) $item['destination_lng'],
+        );
+
+        $quote = $this->fareRuleService->getQuoteForTripFromCoordinates(
+            (int) $trip->fleetRoute->fleet_id,
+            $routeId,
+            [
+                'origin_lat' => $point['latitude'],
+                'origin_lng' => $point['longitude'],
+                'destination_lat' => $dropoff['snapped_latitude'],
+                'destination_lng' => $dropoff['snapped_longitude'],
+                'seat_type' => $item['seat_type'],
+                'on' => $trip->trip_date?->toDateString(),
+            ]
+        );
+
+        $label = trim(strip_tags((string) ($item['destination_label'] ?? '')));
+
+        return $base + [
+            'fare_rule_id' => $quote['fare_rule_id'],
+            'distance_km' => $quote['distance_km'],
+            'amount' => $quote['amount'],
+            'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
+            'destination_lat' => $dropoff['snapped_latitude'],
+            'destination_lng' => $dropoff['snapped_longitude'],
+            'destination_label' => mb_substr($label, 0, 255) ?: $this->reverseGeocodingService->resolvePlaceName(
+                $dropoff['snapped_latitude'],
+                $dropoff['snapped_longitude'],
+            ) ?? 'Custom drop-off',
         ];
     }
 
@@ -223,6 +389,7 @@ class TicketService
                 'destination_lat' => $dropoff['snapped_latitude'],
                 'destination_lng' => $dropoff['snapped_longitude'],
                 'seat_type' => $item['seat_type'],
+                'on' => $trip->trip_date?->toDateString(),
             ]
         );
 
@@ -235,6 +402,8 @@ class TicketService
             'fare_rule_id' => $quote['fare_rule_id'],
             'distance_km' => $quote['distance_km'],
             'amount' => $quote['amount'],
+            'boarding_distance_m' => $quote['boarding_distance_m'] ?? null,
+            'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
             'origin_stop_id' => (int) $item['origin_stop_id'],
             // Snapped point, so the ticket and the driver's requested stop show the
             // place the bus will actually stop.
@@ -274,6 +443,8 @@ class TicketService
             'destination_lat' => $reserved['destination_lat'] ?? null,
             'destination_lng' => $reserved['destination_lng'] ?? null,
             'destination_label' => $reserved['destination_label'] ?? null,
+            'boarding_distance_m' => $reserved['boarding_distance_m'] ?? null,
+            'alighting_distance_m' => $reserved['alighting_distance_m'] ?? null,
         ]);
 
         if ($passengerId) {

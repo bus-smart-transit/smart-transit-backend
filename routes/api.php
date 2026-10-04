@@ -308,6 +308,7 @@ Route::prefix('conductor')
             Route::get('trips/current/occupancy/by-stop', [TicketController::class, 'occupancyByStop']);
             Route::get('trips/current/passengers', [TicketController::class, 'currentPassengers']);
             Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
+            Route::get('trips/current/boarding-point', [TicketController::class, 'boardingPoint'])->middleware('throttle:30,1');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
         });
 

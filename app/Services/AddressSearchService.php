@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Http;
  */
 class AddressSearchService
 {
-    public function __construct(private RegionService $regionService) {}
+    public function __construct(private RegionService $regionService, private NominatimThrottle $throttle) {}
 
     /** @return array<int, array{label: string, latitude: float, longitude: float}>|null null when the provider is unavailable */
     public function search(string $query): ?array
@@ -22,6 +22,11 @@ class AddressSearchService
         $box = config('region.bbox');
 
         return Cache::remember('address-search:'.md5($normalized.'|'.json_encode($box)), now()->addMinutes((int) $cfg['cache_minutes']), function () use ($normalized, $cfg, $box) {
+            // Shared 1 request/second gate (Nominatim policy). Too long a queue: report unavailable, don't send.
+            if (! $this->throttle->acquire()) {
+                return null;
+            }
+
             try {
                 $response = Http::timeout(5)
                     ->acceptJson()
@@ -31,6 +36,7 @@ class AddressSearchService
                         'format' => 'json',
                         'limit' => (int) $cfg['limit'],
                         'bounded' => 1,
+                        'countrycodes' => (string) config('region.country_codes'),
                         'viewbox' => "{$box['min_lng']},{$box['max_lat']},{$box['max_lng']},{$box['min_lat']}",
                     ]);
             } catch (\Throwable) {

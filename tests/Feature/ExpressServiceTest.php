@@ -184,7 +184,7 @@ it('refuses to sell an express ticket, and refuses a tampered stop for what it i
         $thrown = $e;
     }
     expect($thrown)->not->toBeNull();
-    expect($thrown->errors())->toHaveKey('stop');
+    expect($thrown->errors())->toHaveKey('destination');
     expect($express->fresh()->current_seated_capacity)->toBe(0); // nothing was reserved
 
     // The same journey on a regular trip is sold at the regular fare.

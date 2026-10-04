@@ -312,7 +312,46 @@ class TripRepository
         ]) > 0;
     }
 
+    /**
+     * Batch 27 Part 2: for a shift block the "current trip" of a staff member is the block's current leg:
+     * the first leg that is not completed or cancelled, in travel order. It no longer depends on which
+     * leg an old shift log happened to be opened on.
+     */
+    private function currentLegOf(?Trip $trip): ?Trip
+    {
+        if (! $trip || ! $trip->shift_block_id) {
+            return $trip;
+        }
+
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('shift_block_id', $trip->shift_block_id)
+            ->whereNotIn('status', ['completed', 'cancelled'])
+            ->orderBy('departure_time')
+            ->orderBy('trip_id')
+            ->first() ?? $trip;
+    }
+
     public function findTodayByDriver(int $driverCompanyUserId): ?Trip
+    {
+        return $this->currentLegOf($this->rawFindTodayByDriver($driverCompanyUserId));
+    }
+
+    public function findTodayByConductor(int $conductorCompanyUserId): ?Trip
+    {
+        return $this->currentLegOf($this->rawFindTodayByConductor($conductorCompanyUserId));
+    }
+
+    public function findCurrentOrUpcomingByDriver(int $driverCompanyUserId): ?Trip
+    {
+        return $this->currentLegOf($this->rawFindCurrentOrUpcomingByDriver($driverCompanyUserId));
+    }
+
+    public function findCurrentOrUpcomingByConductor(int $conductorCompanyUserId): ?Trip
+    {
+        return $this->currentLegOf($this->rawFindCurrentOrUpcomingByConductor($conductorCompanyUserId));
+    }
+
+    private function rawFindTodayByDriver(int $driverCompanyUserId): ?Trip
     {
         $this->markOverdueScheduledAsDelayed();
 
@@ -326,7 +365,7 @@ class TripRepository
             ->first();
     }
 
-    public function findTodayByConductor(int $conductorCompanyUserId): ?Trip
+    private function rawFindTodayByConductor(int $conductorCompanyUserId): ?Trip
     {
         $this->markOverdueScheduledAsDelayed();
 
@@ -340,7 +379,7 @@ class TripRepository
             ->first();
     }
 
-    public function findCurrentOrUpcomingByDriver(int $driverCompanyUserId): ?Trip
+    private function rawFindCurrentOrUpcomingByDriver(int $driverCompanyUserId): ?Trip
     {
         $this->markOverdueScheduledAsDelayed();
 
@@ -355,7 +394,7 @@ class TripRepository
             ->first();
     }
 
-    public function findCurrentOrUpcomingByConductor(int $conductorCompanyUserId): ?Trip
+    private function rawFindCurrentOrUpcomingByConductor(int $conductorCompanyUserId): ?Trip
     {
         $this->markOverdueScheduledAsDelayed();
 

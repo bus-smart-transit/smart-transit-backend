@@ -43,9 +43,21 @@ class FareRule extends Model
         'fleet_id',
         'base_fare',
         'fare_per_km',
+        'base_distance_km',
+        'effective_from',
+        'effective_to',
         'status',
         'seat_type',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'base_distance_km' => 'decimal:3',
+            'effective_from' => 'date:Y-m-d',
+            'effective_to' => 'date:Y-m-d',
+        ];
+    }
 
     /**
      * Get the fleet that owns this record.

@@ -18,4 +18,13 @@ return [
     'home_preview_limit' => (int) env('BOOKING_HOME_PREVIEW_LIMIT', 5),
     'trips_per_page' => (int) env('BOOKING_TRIPS_PER_PAGE', 10),
     'trips_max_per_page' => (int) env('BOOKING_TRIPS_MAX_PER_PAGE', 50),
+
+    // Batch 27 Part 2, Task 6: when the Chauffeur sells a ticket to someone boarding between stops, the server
+    // uses the bus's own latest accepted position. A fix older than this, or less accurate than this, is not
+    // good enough: the Chauffeur picks the boarding stop instead and nothing is guessed. (The position upload
+    // already refuses fixes worse than 100 m.)
+    'boarding_gps' => [
+        'max_age_seconds' => (int) env('BOARDING_GPS_MAX_AGE_SECONDS', 90),
+        'max_accuracy_m' => (float) env('BOARDING_GPS_MAX_ACCURACY_M', 50),
+    ],
 ];

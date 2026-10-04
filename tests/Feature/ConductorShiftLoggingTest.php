@@ -261,7 +261,14 @@ test('End Shift needs every leg of the shift block completed or cancelled, not j
     $this->actingAs($conductor)->getJson('/api/conductor/shift/status')
         ->assertJsonPath('data.has_open_shift', true);
 
-    // The log's own trip is finished, but two legs are not: still blocked.
+    // The log's own trip is finished, but a later leg is in transit and another is unfinished: still blocked
+    // (Batch 27 Part 2: the rule looks at every leg of the block, not only the leg the log was opened on).
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/end')
+        ->assertStatus(422)
+        ->assertJsonPath('errors.shift.0', 'Cannot end shift while a leg of your shift block is still boarding or in transit. Complete the trip first.');
+
+    // With nothing in transit the count message applies.
+    $legs[1]->update(['status' => 'scheduled']);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/end')
         ->assertStatus(422)
         ->assertJsonPath('errors.shift.0', 'Cannot end shift: 2 leg(s) of your shift block are not completed or cancelled yet.');

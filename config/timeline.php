@@ -37,5 +37,11 @@ return [
         'limit' => (int) env('ADDRESS_SEARCH_LIMIT', 5),
         'cache_minutes' => (int) env('ADDRESS_SEARCH_CACHE_MIN', 60),
         'min_query_length' => (int) env('ADDRESS_SEARCH_MIN_LENGTH', 3),
+
+        // Nominatim usage policy: at most 1 request per second for the whole application (all users and
+        // workers share one gate, see NominatimThrottle). A caller waits up to max_wait_ms for its turn;
+        // beyond that the search reports itself unavailable. 0 disables the spacing (tests only).
+        'min_interval_ms' => (int) env('NOMINATIM_MIN_INTERVAL_MS', 1000),
+        'max_wait_ms' => (int) env('NOMINATIM_MAX_WAIT_MS', 3000),
     ],
 ];

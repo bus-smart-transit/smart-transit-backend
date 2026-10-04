@@ -3,12 +3,26 @@
 namespace App\Repositories;
 
 use App\Models\FleetDailyPin;
+use App\Models\Trip;
 use Illuminate\Support\Carbon;
 
 class FleetDailyPinRepository
 {
+    /**
+     * Batch 27 Part 2: a leg of a shift block is found through its block, so the pairing and PIN made
+     * once for the block serve every leg that day. A standalone trip (or an older per-leg row) is
+     * found by trip_id as before.
+     */
     public function findTodayByTrip(int $tripId): ?FleetDailyPin
     {
+        $blockId = Trip::where('trip_id', $tripId)->value('shift_block_id');
+        if ($blockId) {
+            $blockPin = FleetDailyPin::where('shift_block_id', $blockId)->whereDate('pin_date', Carbon::today())->first();
+            if ($blockPin) {
+                return $blockPin;
+            }
+        }
+
         return FleetDailyPin::where('trip_id', $tripId)
             ->whereDate('pin_date', Carbon::today())
             ->first();
@@ -49,8 +63,10 @@ class FleetDailyPinRepository
      */
     public function deleteTodayByTrip(int $tripId): bool
     {
-        return FleetDailyPin::where('trip_id', $tripId)
-            ->whereDate('pin_date', Carbon::today())
-            ->delete() > 0;
+        $blockId = Trip::where('trip_id', $tripId)->value('shift_block_id');
+        $query = FleetDailyPin::whereDate('pin_date', Carbon::today());
+        $blockId ? $query->where('shift_block_id', $blockId) : $query->where('trip_id', $tripId);
+
+        return $query->delete() > 0;
     }
 }

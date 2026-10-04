@@ -364,6 +364,8 @@ class PaymentService
 
             foreach ($payload['items'] as $item) {
                 $passengerId = $item['passenger_id'] ?? null;
+                // Set here, never read from the request: only the cash flow may sell while the bus is moving.
+                $item['channel'] = 'onsite';
                 $ticket = $this->ticketService->issueTicket($item, $passengerId, $payment->payment_id);
                 $total += $ticket->amount;
                 $tickets[] = $ticket;

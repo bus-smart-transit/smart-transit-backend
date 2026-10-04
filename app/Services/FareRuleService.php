@@ -6,6 +6,8 @@ use App\Repositories\StopRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\FleetRouteRepository;
 use App\Repositories\RouteRepository;
+use App\Support\LegDistance;
+use Illuminate\Validation\ValidationException;
 
 class FareRuleService
 {
@@ -35,15 +37,27 @@ class FareRuleService
         }
 
         $distanceKm = abs($destinationRouteStop->distance_from_origin_km - $originRouteStop->distance_from_origin_km);
+        if (isset($payload['leg_direction'])) {
+            // Batch 27 Part 2: along the leg, and refuse a destination that is not ahead.
+            $distanceKm = LegDistance::alongLegKm(
+                (float) $originRouteStop->distance_from_origin_km,
+                (float) $destinationRouteStop->distance_from_origin_km,
+                $payload['leg_direction'],
+            );
+            if ($distanceKm <= 0) {
+                throw new \RuntimeException('The destination is not ahead of the boarding stop for this direction.');
+            }
+        }
 
-        $rule = $this->fareRuleRepository->getActiveRule($payload['fleet_id'], $payload['seat_type'])
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($payload['route_id'], $payload['seat_type']);
+        $on = $payload['on'] ?? null;
+        $rule = $this->fareRuleRepository->getActiveRule($payload['fleet_id'], $payload['seat_type'], $on)
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($payload['route_id'], $payload['seat_type'], $on);
 
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
         }
 
-        return $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm);
+        return $this->fareCalculationService->priceWithRule($rule, $distanceKm);
     }
 
     // Snap-to-stop GPS quote for a known route/fleet.
@@ -114,7 +128,7 @@ class FareRuleService
                 'bus_label' => BusLabel::for($fleet),
                 'fleet_type' => $fleet->fleet_type,
                 'seat_type' => $payload['seat_type'],
-                'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $tripDistanceKm),
+                'amount' => $this->fareCalculationService->priceWithRule($rule, $tripDistanceKm),
             ];
         }
 
@@ -151,16 +165,18 @@ class FareRuleService
             throw new \RuntimeException('Pickup and drop-off resolved to the same point on the route.');
         }
 
-        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $payload['seat_type'])
-            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $payload['seat_type']);
+        $rule = $this->fareRuleRepository->getActiveRule($fleetId, $payload['seat_type'], $payload['on'] ?? null)
+            ?? $this->fareRuleRepository->getActiveRuleForRoute($routeId, $payload['seat_type'], $payload['on'] ?? null);
         if (!$rule) {
             throw new \RuntimeException('No fare configured for this fleet and seat type.');
         }
 
         return [
-            'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $tripDistanceKm),
+            'amount' => $this->fareCalculationService->priceWithRule($rule, $tripDistanceKm),
             'distance_km' => round($tripDistanceKm, 2),
             'fare_rule_id' => $rule->fare_rule_id,
+            'boarding_distance_m' => LegDistance::toMeters((float) $match['origin']['distance_from_origin_km']),
+            'alighting_distance_m' => LegDistance::toMeters((float) $match['destination']['distance_from_origin_km']),
         ];
     }
 
@@ -201,7 +217,7 @@ class FareRuleService
                     'destination_stop_id' => $destination->stop_id,
                     'destination_stop_name' => $destination->stop->stop_name,
                     'distance_km' => round($distanceKm, 2),
-                    'amount' => $this->fareCalculationService->computeFare($rule->base_fare, $rule->fare_per_km, $distanceKm),
+                    'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
                 ];
             }
         }
@@ -217,6 +233,18 @@ class FareRuleService
 
     public function createFareRule(array $payload): object
     {
+        // Two rules of one fleet and seat type may not be in force on the same day.
+        if ($this->fareRuleRepository->overlappingRuleExists(
+            (int) $payload['fleet_id'],
+            (string) $payload['seat_type'],
+            $payload['effective_from'] ?? null,
+            $payload['effective_to'] ?? null,
+        )) {
+            throw ValidationException::withMessages([
+                'effective_from' => ['Another active fare rule for this fleet and seat type is in force on those dates. Set its end date first.'],
+            ]);
+        }
+
         return $this->fareRuleRepository->create(array_merge($payload, ['status' => 'active']));
     }
 }

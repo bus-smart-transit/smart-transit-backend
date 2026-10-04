@@ -8,6 +8,7 @@ use App\Repositories\StaffRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Support\Notifications\NotificationLink;
+use App\Support\TripCapacity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -22,6 +23,7 @@ class TripService
         private ConductorShiftLogRepository $conductorShiftLogRepository,
         private TicketRepository $ticketRepository,
         private FcmService $fcmService,
+        private LegProgressionService $legs,
     ) {}
 
     /**
@@ -173,18 +175,17 @@ class TripService
     }
 
     /**
-     * B5: the driver's shift log always closes with the trip (End Trip is the
-     * driver's last action). The Chauffeur's log closes with a standalone
-     * trip, but for a shift-block leg it stays open until the Chauffeur
-     * presses End Shift once every leg is finished; a forgotten one is still
-     * auto-closed as stale when the next shift starts (Batch 17 safety net).
+     * Batch 27 Part 2, Task 1: the driver's shift log no longer closes at each End Trip of a shift
+     * block. It stays open across the legs and closes at End Shift (a forgotten one is auto-closed as
+     * stale when the next shift starts, Batch 17 safety net). A standalone trip keeps the old behaviour:
+     * End Trip is the driver's last action and closes the log. The Chauffeur's log follows the same rule
+     * as before: it closes with a standalone trip, and for a block at End Shift.
      */
     private function closeShiftLogsForTrip(int $tripId): void
     {
-        $this->driverShiftLogRepository->endOpenForTrip($tripId);
-
         $trip = $this->tripRepository->findById($tripId);
         if (empty($trip?->shift_block_id)) {
+            $this->driverShiftLogRepository->endOpenForTrip($tripId);
             $this->conductorShiftLogRepository->endOpenForTrip($tripId);
         }
     }
@@ -607,9 +608,7 @@ class TripService
             $seatedDelta = $seatType === 'seated' ? $count : 0;
             $standingDelta = $seatType === 'standing' ? $count : 0;
 
-            $wouldExceed = $seatType === 'seated'
-                ? $trip->current_seated_capacity + $count > $fleet->seated_capacity
-                : $trip->current_standing_capacity + $count > $fleet->standing_capacity;
+            $wouldExceed = TripCapacity::wouldExceed($trip, $seatType, $count);
 
             if ($wouldExceed) {
                 throw ValidationException::withMessages(['capacity' => ['This trip is full.']]);
@@ -681,8 +680,17 @@ class TripService
         }
 
         $status = strtolower((string) ($trip->status ?? ''));
-        if (in_array($status, ['completed', 'cancelled'], true)) {
+        if (in_array($status, ['completed', 'cancelled'], true) && ! $trip->shift_block_id) {
             return null;
+        }
+
+        // Batch 27 Part 2: for a block, the current trip is the block's current leg, whatever leg the
+        // shift log was opened on; null once every leg is completed or cancelled.
+        if ($trip->shift_block_id) {
+            $trip = $this->legs->currentLeg((int) $trip->shift_block_id);
+            if (! $trip) {
+                return null;
+            }
         }
 
         return $trip->loadMissing(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user']);
@@ -698,8 +706,15 @@ class TripService
         }
 
         $status = strtolower((string) ($trip->status ?? ''));
-        if (in_array($status, ['completed', 'cancelled'], true)) {
+        if (in_array($status, ['completed', 'cancelled'], true) && ! $trip->shift_block_id) {
             return null;
+        }
+
+        if ($trip->shift_block_id) {
+            $trip = $this->legs->currentLeg((int) $trip->shift_block_id);
+            if (! $trip) {
+                return null;
+            }
         }
 
         // Batch 27, Task 2: the stops must come with the trip. The Chauffeur's
