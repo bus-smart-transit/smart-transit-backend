@@ -3,11 +3,24 @@
 namespace App\Providers;
 
 use App\Support\Database\RlsContext;
+use App\Support\RateLimiting\ToggleableRateLimiter;
+use Illuminate\Cache\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
-    public function register(): void {}
+    public function register(): void
+    {
+        // Laravel's CacheServiceProvider is deferred and (re)binds the limiter
+        // when it loads, so a plain singleton() here would be overwritten.
+        // extend() runs after that binding and swaps in a limiter that honours
+        // RATE_LIMITING_ENABLED (see ToggleableRateLimiter).
+        $this->app->extend(RateLimiter::class, function ($original, $app) {
+            return new ToggleableRateLimiter($app->make('cache')->driver(
+                $app['config']->get('cache.limiter')
+            ));
+        });
+    }
 
     public function boot(): void
     {
@@ -17,6 +30,22 @@ class AppServiceProvider extends ServiceProvider
 
         $this->guardStepUpBypassIsDevOnly();
         $this->guardStaffOtpBypassIsDevOnly();
+        $this->guardRateLimitingOffIsDevOnly();
+    }
+
+    /**
+     * Same fail-fast pattern as the other dev switches: rate limiting may be
+     * turned off only when APP_ENV=local. Anywhere else the app refuses to boot.
+     */
+    private function guardRateLimitingOffIsDevOnly(): void
+    {
+        if (! config('app.rate_limiting_enabled', true) && ! $this->app->environment('local', 'testing')) {
+            throw new \RuntimeException(
+                'RATE_LIMITING_ENABLED is false outside a local environment (APP_ENV='
+                    .config('app.env').'). Refusing to boot — rate limiting must be on in '
+                    .'staging/production.'
+            );
+        }
     }
 
     /**

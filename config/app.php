@@ -109,6 +109,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Rate Limiting Switch (LOCAL/DEV ONLY when set to false)
+    |--------------------------------------------------------------------------
+    |
+    | Default true = every route throttle and login/OTP/tracking limiter is
+    | enforced. RATE_LIMITING_ENABLED=false switches ALL of them off (see
+    | App\Support\RateLimiting\ToggleableRateLimiter) so the app can be tested
+    | without lockouts. AppServiceProvider refuses to boot with it off unless
+    | APP_ENV is "local" (or "testing"). Set it back to true to re-apply.
+    |
+    */
+
+    'rate_limiting_enabled' => (bool) env('RATE_LIMITING_ENABLED', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |
