@@ -103,7 +103,7 @@ class ShiftBlockController extends Controller
             return $denied;
         }
 
-        $cancelled = $this->shiftBlockService->cancelBlock($shiftBlockId);
+        $cancelled = $this->shiftBlockService->cancelBlock($shiftBlockId, $request->user());
 
         AuditLogger::log('shift_block.cancel', 'ShiftBlock', $shiftBlockId);
 

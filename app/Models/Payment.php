@@ -65,6 +65,7 @@ class Payment extends Model
         'guest_email',
         'gateway_reference',
         'payment_intent_id',
+        'gateway_payment_id',
         'items_payload',
         'hold_expires_at',
     ];

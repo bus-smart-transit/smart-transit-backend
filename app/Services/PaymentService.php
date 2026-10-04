@@ -27,6 +27,7 @@ class PaymentService
         private TripRepository $tripRepository,
         private PassengerRepository $passengerRepository,
         private FcmService $fcmService,
+        private TripCancellationService $tripCancellations,
     ) {}
 
     /**
@@ -425,6 +426,10 @@ class PaymentService
             // failure affect the payment/ticket transaction above, which
             // has already committed by this point.
             $this->notifyOperatorsOfPayment($payment);
+
+            // Batch 28 Stage 3, item 6: a payment that was still pending when the operator cancelled the trip is confirmed
+            // late; its tickets must not be valid for a trip that will not run, so they join those awaiting a choice.
+            $this->tripCancellations->flagTicketsOfCancelledTrips($payment->fresh());
         });
     }
 

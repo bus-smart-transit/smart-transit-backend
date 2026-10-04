@@ -29,6 +29,7 @@ class TripResolverService
         private RouteStopRepository $routeStopRepository,
         private FareRuleService $fareRuleService,
         private FareRuleResolver $fareRuleResolver,
+        private RouteDurationFactorService $durationFactors,
     ) {}
 
     /**
@@ -369,6 +370,14 @@ class TripResolverService
             'bus_label' => BusLabel::for($best['trip']->fleetRoute->fleet),
             'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
             'service_type' => ServiceType::normalize($best['trip']->service_type),
+            // Batch 28 Stage 3, item 8: how the bus runs (a block of several legs is a "Round-trip run"; deliberately not worded
+            // like a passenger's roundtrip booking) and, on an express, which stops it serves ("Non-stop" when only terminals).
+            'run_pattern' => \App\Support\TripRunInfo::runPattern(
+                $best['trip']->trip_type,
+                $best['trip']->shift_block_id ? (int) $best['trip']->shift_block_id : null,
+                $best['trip']->shift_block_id ? Trip::where('shift_block_id', $best['trip']->shift_block_id)->count() : null,
+            ),
+            'service' => $best['service_info'] ?? null,
             // Bookable only where a fare rule prices this trip (an express trip needs an express rule); otherwise it is
             // listed with "Fare unavailable" and cannot be booked.
             'bookable' => $this->hasFare($best['trip'], $seatType),
@@ -432,8 +441,10 @@ class TripResolverService
             return null;
         }
 
-        $offset = ServiceType::offsetMinutes($service, $stops[$originIndex]);
-        $destinationOffset = ServiceType::offsetMinutes($service, $stops[$destinationIndex]);
+        // Batch 28 Stage 3, item 7: the leg's peak-hour factor scales the offsets (1.0 when no window matches).
+        $factor = $this->durationFactors->factorForTrip($trip);
+        $offset = $this->durationFactors->scale(ServiceType::offsetMinutes($service, $stops[$originIndex]), $factor);
+        $destinationOffset = $this->durationFactors->scale(ServiceType::offsetMinutes($service, $stops[$destinationIndex]), $factor);
         $start = Carbon::parse($trip->trip_date->toDateString().' '.$time, $timezone);
         $boardsAt = $start->copy()->addMinutes((int) ($offset ?? 0));
         if ($boardsAt->lt($target)) {
@@ -457,6 +468,7 @@ class TripResolverService
 
         return [
             'trip' => $trip, 'boards_at' => $boardsAt, 'has_offset' => $offset !== null, 'seats_left' => $seatsLeft, 'arrives_at' => $arrivesAt, 'duration_min' => $duration,
+            'service_info' => \App\Support\TripRunInfo::service($service, $stops),
             'origin' => $this->stopSummary($stops[$originIndex]),
             'destination' => $this->stopSummary($stops[$destinationIndex]),
         ];
@@ -470,5 +482,79 @@ class TripResolverService
             'stop_code' => $routeStop->stop?->stop_code,
             'name' => $routeStop->stop?->stop_name,
         ];
+    }
+    /**
+     * Batch 28 Stage 3, item 6: the later departures a ticket of an operator-cancelled trip can be rebooked onto.
+     * Same route, direction, service type and vehicle class; the ticket's own boarding and alighting stops (a ticket
+     * bought at a snapped boarding point or a custom drop-off has no stop to rebook between: refund only); room for
+     * its seat type; leaving after the cancelled trip left that stop. Rebooking costs nothing extra, so no fare rule
+     * is required of the new trip. Earliest first, at most $limit.
+     *
+     * Capacity: a rebooked ticket takes one place on the new trip's counters (tickets sold), exactly like any sale;
+     * the cancelled trip's counters are left as they were (the trip no longer runs).
+     *
+     * @return array<int, array>
+     */
+    public function rebookOptions(\App\Models\Ticket $ticket, int $limit): array
+    {
+        $original = $ticket->trip;
+        if (! $original || ! $ticket->origin_stop_id || ! $ticket->destination_stop_id) {
+            return [];
+        }
+        $original->loadMissing('fleetRoute.fleet');
+
+        $timezone = config('app.timezone', 'Asia/Manila');
+        $now = Carbon::now($timezone);
+        $routeId = (int) $original->fleetRoute->route_id;
+        $direction = $original->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $service = ServiceType::normalize($original->service_type);
+        $class = \App\Support\VehicleClass::normalize($original->fleetRoute->fleet?->vehicle_class);
+        $seatType = (string) ($ticket->seat_type ?: 'seated');
+        $originId = (int) $ticket->origin_stop_id;
+        $destinationId = (int) $ticket->destination_stop_id;
+
+        // When the cancelled trip was due at the boarding stop: later than that, and not in the past.
+        $stops = $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction)->values();
+        $originStop = $stops->first(fn ($s) => (int) $s->stop_id === $originId);
+        $time = $original->departure_time ?: $original->fleetRoute->start_time;
+        if (! $originStop || ! $time) {
+            return [];
+        }
+        $originalBoardsAt = Carbon::parse($original->trip_date->toDateString().' '.$time, $timezone)
+            ->addMinutes((int) (ServiceType::offsetMinutes($service, $originStop) ?? 0));
+        $target = $originalBoardsAt->copy()->addMinute();
+        if ($target->lt($now)) {
+            $target = $now->copy();
+        }
+        $until = $target->copy()->startOfDay()->addDays((int) config('refunds.rebook.search_days'));
+
+        $candidates = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
+            ->where('trip_id', '!=', $original->trip_id)
+            ->whereDate('trip_date', '>=', $target->toDateString())
+            ->whereDate('trip_date', '<=', $until->toDateString())
+            ->whereHas('fleetRoute', fn ($q) => $q->where('route_id', $routeId))
+            ->get();
+
+        $found = [];
+        foreach ($candidates as $candidate) {
+            if (ServiceType::normalize($candidate->service_type) !== $service
+                || ($candidate->leg_direction === 'reverse' ? 'reverse' : 'outbound') !== $direction
+                || \App\Support\VehicleClass::normalize($candidate->fleetRoute->fleet?->vehicle_class) !== $class) {
+                continue;
+            }
+            // The booking rule for standing places: only on the day itself.
+            if ($seatType === 'standing' && $candidate->trip_date->toDateString() > $now->toDateString()) {
+                continue;
+            }
+            $evaluated = $this->evaluate($candidate, $originId, $destinationId, $seatType, $target, $timezone);
+            if ($evaluated) {
+                $found[] = $evaluated;
+            }
+        }
+
+        usort($found, fn ($a, $b) => $a['boards_at']->getTimestamp() <=> $b['boards_at']->getTimestamp());
+
+        return array_map(fn ($candidate) => $this->present($candidate, $seatType), array_slice($found, 0, max(1, $limit)));
     }
 }

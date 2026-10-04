@@ -31,6 +31,7 @@ class TripTimelineService
         private RouteStopRepository $routeStopRepository,
         private CustomDropoffService $customDropoffService,
         private FareRuleService $fareRuleService,
+        private RouteDurationFactorService $durationFactors,
     ) {}
 
     /**
@@ -94,13 +95,15 @@ class TripTimelineService
         }
 
         $base = $this->scheduledStart($trip, $timezone);
-        $live = $this->liveProgress($trip, $routeStops, $base, $service);
+        // Batch 28 Stage 3, item 7: a configured peak-hour window scales every offset (1.0 when no window matches).
+        $factor = $this->durationFactors->factorForTrip($trip);
+        $live = $this->liveProgress($trip, $routeStops, $base, $service, $factor);
         $tripOver = in_array($trip->status, ['completed'], true);
         $etaAvailable = $trip->status !== 'cancelled' && $base !== null;
 
         $rows = [];
         foreach ($routeStops as $index => $routeStop) {
-            $eta = $etaAvailable ? $this->etaFor($base, ServiceType::offsetMinutes($service, $routeStop), $live['delay_minutes'], $live['after_index'], $index) : null;
+            $eta = $etaAvailable ? $this->etaFor($base, $this->durationFactors->scale(ServiceType::offsetMinutes($service, $routeStop), $factor), $live['delay_minutes'], $live['after_index'], $index) : null;
             $rows[] = [
                 'stop_id' => (int) $routeStop->stop_id,
                 'name' => $routeStop->stop->stop_name,
@@ -120,7 +123,7 @@ class TripTimelineService
         $customRow = null;
         if ($custom !== null) {
             $eta = $etaAvailable && $custom['offset_min'] !== null
-                ? $base->copy()->addMinutes((int) round($custom['offset_min'] + ($live['applied'] ? $live['delay_minutes'] : 0)))
+                ? $base->copy()->addMinutes((int) round($custom['offset_min'] * $factor + ($live['applied'] ? $live['delay_minutes'] : 0)))
                 : null;
             $customRow = [
                 'stop_id' => null,
@@ -170,6 +173,13 @@ class TripTimelineService
                 'status' => $trip->status,
                 'leg_direction' => $direction,
                 'service_type' => $service,
+                'service' => \App\Support\TripRunInfo::service($service, $routeStops),
+                'run_pattern' => \App\Support\TripRunInfo::runPattern(
+                    $trip->trip_type,
+                    $trip->shift_block_id ? (int) $trip->shift_block_id : null,
+                    $trip->shift_block_id ? \App\Models\Trip::where('shift_block_id', $trip->shift_block_id)->count() : null,
+                ),
+                'duration_factor' => $factor,
                 'route_id' => $routeId,
                 'route_name' => $route?->route_name,
                 'timezone' => $timezone,
@@ -228,7 +238,7 @@ class TripTimelineService
      *
      * @return array{applied: bool, delay_minutes: float, after_index: int}
      */
-    private function liveProgress($trip, $routeStops, ?Carbon $base, string $service = ServiceType::REGULAR): array
+    private function liveProgress($trip, $routeStops, ?Carbon $base, string $service = ServiceType::REGULAR, float $factor = 1.0): array
     {
         $none = ['applied' => false, 'delay_minutes' => 0.0, 'after_index' => -1];
         if (! in_array($trip->status, ['departed', 'in-progress', 'completed'], true) || ! $trip->last_acknowledged_stop_id) {
@@ -241,7 +251,7 @@ class TripTimelineService
         }
 
         $result = ['applied' => false, 'delay_minutes' => 0.0, 'after_index' => (int) $ackIndex];
-        $offset = ServiceType::offsetMinutes($service, $routeStops[$ackIndex]);
+        $offset = $this->durationFactors->scale(ServiceType::offsetMinutes($service, $routeStops[$ackIndex]), $factor);
         if ($base === null || $offset === null || ! $trip->last_acknowledged_at) {
             return $result;
         }

@@ -137,7 +137,7 @@ it('recomputes badges, duration, stop count, distance, fare and journey rows for
     expect($data['header']['duration_minutes'])->toBe(45);
     expect($data['header']['stops_between'])->toBe(1); // Stop D; pass-through Stop C is not a stop
     expect($data['header']['distance_km'])->toEqual(30);
-    expect($data['fare']['amount'])->toEqual(85.5); // 15 + 30 * 2.35
+    expect($data['fare']['amount'])->toEqual(86); // 15 + 30 * 2.35 = 85.5, to the whole peso
 
     $byName = collect($data['stops'])->keyBy('name');
     expect($byName['Stop B']['is_boarding'])->toBeTrue();

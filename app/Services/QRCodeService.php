@@ -43,6 +43,7 @@ class QRCodeService
             'amount' => $ticket->amount,
             'bus_label' => BusLabel::for($ticket->trip?->fleetRoute?->fleet),
             'service_type' => ServiceType::normalize($ticket->trip?->service_type),
+            'run_info' => $ticket->trip ? \App\Support\TripRunInfo::forTrip($ticket->trip) : null,
             // Manila wall-clock values (as stored) for the saved ticket image.
             'trip_date' => $ticket->trip?->trip_date?->toDateString(),
             'departure_time' => $this->departureTime($ticket),

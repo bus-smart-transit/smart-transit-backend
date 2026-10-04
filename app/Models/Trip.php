@@ -79,6 +79,7 @@ class Trip extends Model
         'conductor_accepted_at',
         'delay_notified_at',
         'shift_block_id',
+        'duration_factor',
     ];
 
     /**

@@ -101,8 +101,8 @@ it('prices an ordinary and an aircon bus differently on the same distance', func
     $aircon = fkTrip(fkFleet($operator, $route, 'aircon'), $operator);
 
     // B -> D is 20 km: 5 km base, 15 km beyond it.
-    expect(fkPrice($ordinary, $stops, 'B', 'D')['amount'])->toBe(39.5);   // 11 + 15 x 1.90
-    expect(fkPrice($aircon, $stops, 'B', 'D')['amount'])->toBe(46.75);    // 13 + 15 x 2.25
+    expect(fkPrice($ordinary, $stops, 'B', 'D')['amount'])->toBe(40.0);   // 11 + 15 x 1.90
+    expect(fkPrice($aircon, $stops, 'B', 'D')['amount'])->toBe(47.0);    // 13 + 15 x 2.25
 });
 
 it('keeps an old fleet-level rule exactly as it was and gives new rows the defaults', function () {
@@ -125,7 +125,7 @@ it('uses the base fare up to the base distance and per km beyond it', function (
 
     expect($fares->priceWithRule($rule, 4.0))->toBe(11.0);
     expect($fares->priceWithRule($rule, 5.0))->toBe(11.0);
-    expect($fares->priceWithRule($rule, 8.0))->toBe(16.7); // 11 + 3 x 1.90
+    expect($fares->priceWithRule($rule, 8.0))->toBe(17.0); // 11 + 3 x 1.90
 });
 
 it('prices regular and express separately and sells express only where an express rule exists', function () {
@@ -137,12 +137,12 @@ it('prices regular and express separately and sells express only where an expres
 
     // No express rule yet: refused as "Fare unavailable", with no borrowing from the regular rule.
     expect(fn () => fkPrice($express, $stops, 'B', 'D'))->toThrow(ValidationException::class, 'Fare unavailable');
-    expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(46.75);
+    expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(47.0);
 
     // Once an express rule exists for the class, the same trip is priced from it (its own base, base distance and rate).
     fkRule('aircon', 'express', 20.00, 3.00, ['base_distance_km' => 10]);
     expect(fkPrice($express, $stops, 'B', 'D')['amount'])->toBe(50.0); // 20 + (20 - 10) x 3
-    expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(46.75); // regular untouched
+    expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(47.0); // regular untouched
 });
 
 it('never falls back across class or service type, and a fleet with no class and no override has no fare', function () {
@@ -178,7 +178,8 @@ it('looks up a fleet override first, then the route rule, then the any-route rul
 it('rounds once at the end, nearest (half up) or ceiling, to the configured step', function () {
     $fares = app(FareCalculationService::class);
 
-    // Centavos (the default step): x.xx5 goes up under nearest; ceiling lifts any remainder.
+    // Centavos (set here: the system default is the whole peso since Batch 28 Stage 3): x.xx5 goes up under nearest; ceiling lifts any remainder.
+    config(['fares.rounding_increment' => '0.01']);
     expect($fares->computeFare(0, 0.005, 1.0, null, 'nearest'))->toBe(0.01);
     expect($fares->computeFare(0, 0.005, 0.4, null, 'nearest'))->toBe(0.0);
     expect($fares->computeFare(0, 0.005, 0.4, null, 'ceiling'))->toBe(0.01);
@@ -219,7 +220,7 @@ it('prices the even (reverse) leg and a custom drop-off from the class rule', fu
 
     // Reverse leg: D -> B travels back 20 km.
     $reverse = fkTrip($fleet, $operator, 'regular', 'reverse');
-    expect(fkPrice($reverse, $stops, 'D', 'B')['amount'])->toBe(46.75);
+    expect(fkPrice($reverse, $stops, 'D', 'B')['amount'])->toBe(47.0);
 
     // Custom drop-off from B to a pin about 14 km on (7.1 -> 7.225): 13 + (km - 5) x 2.25 from the same rule.
     $outbound = fkTrip($fleet, $operator, 'regular', 'outbound', '10:00');
@@ -256,7 +257,7 @@ it('shows the fleet class and ownership type on the timeline header and "Fare un
 
     $data = test()->getJson("/api/trips/{$trip->trip_id}/timeline?$q")->assertSuccessful()->json('data');
     expect($data['bus']['class'])->toBe('aircon')->and($data['bus']['class_label'])->toBe('Aircon');
-    expect($data['fare']['amount'])->toEqual(46.75);
+    expect($data['fare']['amount'])->toEqual(47.0);
 
     $none = fkTrip(fkFleet($operator, $route, null), $operator, 'regular', 'outbound', '11:00');
     $nodata = test()->getJson("/api/trips/{$none->trip_id}/timeline?$q")->assertSuccessful()->json('data');

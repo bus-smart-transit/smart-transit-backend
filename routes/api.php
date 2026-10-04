@@ -20,6 +20,8 @@ use App\Http\Controllers\RouteController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
+use App\Http\Controllers\TicketResolutionController;
+use App\Http\Controllers\RouteDurationFactorController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripAssignmentRequestController;
@@ -122,6 +124,10 @@ Route::prefix('passengers')
         // an explicit, audited 422 for every ticket (one-way or either leg of a roundtrip), never a silent 404.
         Route::post('tickets/{ticketUuid}/cancel', [TicketController::class, 'refuseCancellation'])->middleware('throttle:20,1');
         Route::post('tickets/{ticketUuid}/refund', [TicketController::class, 'refuseCancellation'])->middleware('throttle:20,1');
+        // Batch 28 Stage 3, item 6: the ONE exception. A ticket of a trip the OPERATOR cancelled (status trip_cancelled) can be
+        // rebooked onto a later departure or refunded. The server works out every amount; the passenger only chooses.
+        Route::get('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'show'])->middleware('throttle:60,1');
+        Route::post('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'choose'])->middleware('throttle:20,1');
         Route::get('dashboard-summary', [PassengerController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
@@ -183,7 +189,19 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
         Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
-
+        Route::patch('trips/{tripId}/cancel', [TripController::class, 'cancel'])->middleware('throttle:20,1');
+        // Batch 28 Stage 3, item 6: staff-assisted rebook/refund (acts for the passenger, recorded with the actor).
+        Route::get('ticket-resolutions', [TicketResolutionController::class, 'queue']);
+        Route::get('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffShow'])->middleware('throttle:60,1');
+        Route::post('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffChoose'])->middleware('throttle:30,1');
+        Route::post('ticket-resolutions/{resolutionId}/cash', [TicketResolutionController::class, 'recordCash'])->middleware('throttle:30,1');
+        Route::post('ticket-resolutions/{resolutionId}/review', [TicketResolutionController::class, 'review'])->middleware('throttle:30,1');
+        // Batch 28 Stage 3, item 7: peak-hour duration windows ("configured", never measured) and the read-only report.
+        Route::get('duration-factors', [RouteDurationFactorController::class, 'index']);
+        Route::post('duration-factors', [RouteDurationFactorController::class, 'store'])->middleware('throttle:30,1');
+        Route::put('duration-factors/{id}', [RouteDurationFactorController::class, 'update'])->middleware('throttle:30,1');
+        Route::delete('duration-factors/{id}', [RouteDurationFactorController::class, 'destroy'])->middleware('throttle:30,1');
+        Route::get('duration-report', [RouteDurationFactorController::class, 'report'])->middleware('throttle:20,1');
         // Batch 24 (C6): driver/Chauffeur requests to be released ("For Approval")
         Route::get('trip-requests', [TripAssignmentRequestController::class, 'index']);
         Route::get('assignments', [AssignmentController::class, 'operatorBlocks']);
@@ -193,6 +211,8 @@ Route::prefix('operator')
         // Batch 18: Shift Block Hand-off System
         Route::get('shift-blocks', [ShiftBlockController::class, 'index']);
         Route::post('shift-blocks', [ShiftBlockController::class, 'store']);
+        // Batch 28 Stage 3, item 7: suggested leg times (previous leg's expected end + the turnaround buffer); the operator may override.
+        Route::get('shift-blocks/plan-legs', [RouteDurationFactorController::class, 'planLegs'])->middleware('throttle:30,1');
         Route::get('shift-blocks/pending-review', [ShiftBlockController::class, 'pendingReview']);
         Route::get('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'show']);
         Route::patch('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'update']);
@@ -376,7 +396,19 @@ Route::prefix('admin')
         Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
         Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
         Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
-
+        Route::patch('trips/{tripId}/cancel', [TripController::class, 'cancel'])->middleware('throttle:20,1');
+        // Batch 28 Stage 3, item 6: staff-assisted rebook/refund (acts for the passenger, recorded with the actor).
+        Route::get('ticket-resolutions', [TicketResolutionController::class, 'queue']);
+        Route::get('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffShow'])->middleware('throttle:60,1');
+        Route::post('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffChoose'])->middleware('throttle:30,1');
+        Route::post('ticket-resolutions/{resolutionId}/cash', [TicketResolutionController::class, 'recordCash'])->middleware('throttle:30,1');
+        Route::post('ticket-resolutions/{resolutionId}/review', [TicketResolutionController::class, 'review'])->middleware('throttle:30,1');
+        // Batch 28 Stage 3, item 7: peak-hour duration windows ("configured", never measured) and the read-only report.
+        Route::get('duration-factors', [RouteDurationFactorController::class, 'index']);
+        Route::post('duration-factors', [RouteDurationFactorController::class, 'store'])->middleware('throttle:30,1');
+        Route::put('duration-factors/{id}', [RouteDurationFactorController::class, 'update'])->middleware('throttle:30,1');
+        Route::delete('duration-factors/{id}', [RouteDurationFactorController::class, 'destroy'])->middleware('throttle:30,1');
+        Route::get('duration-report', [RouteDurationFactorController::class, 'report'])->middleware('throttle:20,1');
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);
         Route::get('fleets/{fleetId}/reports/revenue-by-route', [ReportingController::class, 'revenueByRoute']);

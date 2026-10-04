@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\PaymentService;
 use App\Services\PayMongoService;
+use App\Services\TicketResolutionService;
 use App\Support\Database\RlsContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -13,6 +14,7 @@ class PayMongoController extends Controller
     public function __construct(
         private PayMongoService $payMongoService,
         private PaymentService $paymentService,
+        private TicketResolutionService $ticketResolutions,
     ) {}
 
     public function handle(Request $request)
@@ -33,6 +35,7 @@ class PayMongoController extends Controller
                 'checkout_session.payment.paid' => $this->handleCheckoutPaid($event),
                 'payment.paid' => $this->handlePaymentPaid($event),
                 'payment.failed' => $this->handlePaymentFailed($event),
+                'refund.succeeded', 'refund.failed', 'refund.updated' => $this->handleRefund($event),
                 default => Log::info('Unhandled PayMongo event type', ['type' => $event->type]),
             };
         });
@@ -97,12 +100,27 @@ class PayMongoController extends Controller
             return;
         }
 
+        // A refund needs PayMongo's own payment id (pay_...); the paid event carries it.
+        $gatewayPaymentId = $resource['attributes']['payments'][0]['id'] ?? null;
+        if (is_string($gatewayPaymentId) && $gatewayPaymentId !== '' && empty($payment->gateway_payment_id)) {
+            $payment->forceFill(['gateway_payment_id' => $gatewayPaymentId])->save();
+        }
+
         $this->paymentService->finalizeOnlinePayment($payment);
 
         Log::info('Payment confirmed via webhook, tickets issued.', [
             'payment_id' => $payment->payment_id,
             'session_id' => $sessionId,
         ]);
+    }
+
+    /**
+     * Batch 28 Stage 3, item 6: the signed refund event is the only thing that settles a gateway refund (never the
+     * client, never the refund request's own answer). Idempotent: see TicketResolutionService::handleGatewayRefund().
+     */
+    private function handleRefund(object $event): void
+    {
+        $this->ticketResolutions->handleGatewayRefund($this->resourceToArray($event->resource));
     }
 
     private function handlePaymentPaid(object $event): void

@@ -130,8 +130,8 @@ it('resolves both legs, each with its own trip, bus label and fare, and says the
     expect($data['outbound']['trip_id'])->toBe($f['outTrip']->trip_id)->and($data['outbound']['bus_label'])->toBe('Co A - 101')->and($data['outbound']['journey_leg'])->toBe('outbound');
     expect($data['return']['trip_id'])->toBe($f['backTrip']->trip_id)->and($data['return']['bus_label'])->toBe('Co B - 202')->and($data['return']['journey_leg'])->toBe('return');
     expect($data['return']['bus_label'])->not->toBe($data['outbound']['bus_label']); // the return bus is not assumed to be the outbound bus
-    // B -> D is 20 km each way: 13 + 15 x 2.25 = 46.75 per leg.
-    expect([$data['outbound']['fare'], $data['return']['fare'], $data['total_fare']])->toEqual([46.75, 46.75, 93.5]);
+    // B -> D is 20 km each way: 13 + 15 x 2.25 = 46.75, 47 per leg at the whole peso.
+    expect([$data['outbound']['fare'], $data['return']['fare'], $data['total_fare']])->toEqual([47.0, 47.0, 94.0]);
     expect($data['return_defaults'])->toBe(['origin_stop_id' => $f['stops']['D']->stop_id, 'destination_stop_id' => $f['stops']['B']->stop_id]);
     expect($data['cancellation_notice'])->toContain('cannot be cancelled or refunded');
     // Resolving holds and charges nothing.
@@ -187,7 +187,7 @@ it('makes one payment and two tickets, confirmed together by the webhook, and re
     expect(Payment::count())->toBe(1)->and(count($payment->items_payload))->toBe(2);
     expect($f['outTrip']->fresh()->total_occupancy)->toBe(1)->and($f['backTrip']->fresh()->total_occupancy)->toBe(1);
     expect(Ticket::count())->toBe(0);
-    expect((float) $payment->amount)->toBe(93.5);
+    expect((float) $payment->amount)->toBe(94.0);
 
     rtPaidWebhook($this, $payment)->assertOk();
     rtPaidWebhook($this, $payment)->assertOk(); // redelivery
@@ -198,7 +198,7 @@ it('makes one payment and two tickets, confirmed together by the webhook, and re
     expect([$out->trip_id, $back->trip_id])->toBe([$f['outTrip']->trip_id, $f['backTrip']->trip_id]);
     expect([$out->origin_stop_id, $out->destination_stop_id])->toBe([$f['stops']['B']->stop_id, $f['stops']['D']->stop_id]);
     expect([$back->origin_stop_id, $back->destination_stop_id])->toBe([$f['stops']['D']->stop_id, $f['stops']['B']->stop_id]);
-    expect([(float) $out->amount, (float) $back->amount])->toBe([46.75, 46.75]);
+    expect([(float) $out->amount, (float) $back->amount])->toBe([47.0, 47.0]);
     expect($out->fare_rule_id)->not->toBeNull()->and($back->fare_rule_id)->not->toBeNull()->and($out->rounding_mode)->toBe('nearest');
     expect($out->ticket_uuid)->not->toBe($back->ticket_uuid);
     expect($out->passenger_id)->toBe($pax->passenger_id)->and($back->passenger_id)->toBe($pax->passenger_id);

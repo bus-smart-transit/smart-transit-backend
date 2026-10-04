@@ -24,7 +24,9 @@ return [
     'rounding_modes' => ['nearest', 'ceiling'],
     'default_rounding_mode' => 'nearest',
 
-    // The step a fare is rounded to. 0.01 keeps centavos (what every fare used before this setting existed);
-    // set 1 for whole pesos or 0.25 for quarter-peso steps. One setting for the whole system.
-    'rounding_increment' => env('FARE_ROUNDING_INCREMENT', '0.01'),
+    // The step a fare is rounded to. ADVISER DECISION (Batch 28 Stage 3): fares round to the WHOLE PESO, so the
+    // default is 1.00 (nearest stays the default mode; ceiling stays an operator setting per fare rule). Set 0.01
+    // for centavos or 0.25 for quarter-peso steps. One setting for the whole system; tickets already issued keep
+    // the amount they were sold at.
+    'rounding_increment' => env('FARE_ROUNDING_INCREMENT', '1.00'),
 ];

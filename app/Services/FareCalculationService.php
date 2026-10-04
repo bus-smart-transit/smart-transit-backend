@@ -40,6 +40,15 @@ class FareCalculationService
         return $this->round($raw, $roundingMode)->toFloat();
     }
 
+    /**
+     * Batch 28 Stage 3 (item 6): the same single rounding step, for an amount that is not a fare formula result,
+     * e.g. a refund (ticket fare minus the fare of the ridden portion). Whole pesos while the increment is 1.
+     */
+    public function roundAmount(float $amount, ?string $roundingMode = null): float
+    {
+        return $this->round($this->decimal($amount), $roundingMode)->toFloat();
+    }
+
     /** The one entry point pricing paths use: the rule carries its own base distance and rounding mode. */
     public function priceWithRule(FareRule $rule, float $distanceKm): float
     {

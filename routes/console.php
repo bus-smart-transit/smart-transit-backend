@@ -20,3 +20,13 @@ Schedule::command('trips:notify-delayed')->everyMinute()->withoutOverlapping();
 // Nightly fleet reports: generate daily_summary, financial, occupancy_trends, revenue_by_route for all fleets.
 // Runs at 01:00 AM every day, covering the previous calendar day.
 Schedule::command('reports:generate')->dailyAt('01:00')->withoutOverlapping();
+
+// Batch 28 Stage 3, item 6: a partial Maya refund must wait for the next Manila midnight (the provider takes only a full
+// refund on the day of the payment); this sends the ones whose time has come.
+Schedule::command('refunds:release-deferred')->everyFifteenMinutes()->withoutOverlapping();
+
+// Batch 28 Stage 3, item 9: bus position history is kept 30 days (config/retention.php). The daily deletion is only
+// scheduled once LOCATION_HISTORY_PRUNE_SCHEDULE=true, after `fleet:prune-location-history --dry-run` has been checked.
+if (config('retention.location_history_schedule_enabled')) {
+    Schedule::command('fleet:prune-location-history')->dailyAt('03:00')->withoutOverlapping();
+}

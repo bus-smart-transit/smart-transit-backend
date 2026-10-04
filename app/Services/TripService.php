@@ -24,6 +24,8 @@ class TripService
         private TicketRepository $ticketRepository,
         private FcmService $fcmService,
         private LegProgressionService $legs,
+        private TripCancellationService $cancellations,
+        private RouteDurationFactorService $durationFactors,
     ) {}
 
     /**
@@ -133,6 +135,7 @@ class TripService
     public function startBoarding(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'boarding');
+        $this->durationFactors->freezeFor($tripId); // the leg keeps the factor it started with
 
         return $this->tripRepository->findById($tripId);
     }
@@ -157,6 +160,7 @@ class TripService
         }
 
         $this->tripRepository->updateStatus($tripId, 'departed');
+        $this->durationFactors->freezeFor($tripId);
 
         return $this->tripRepository->findById($tripId);
     }
@@ -205,7 +209,7 @@ class TripService
      * Returns [Trip $updatedTrip, string $previousStatus] so the caller can
      * audit-log the transition.
      */
-    public function overrideStatus(int $tripId, string $newStatus, string $requestingRole): array
+    public function overrideStatus(int $tripId, string $newStatus, string $requestingRole, ?object $actor = null, ?string $reason = null): array
     {
         $trip = $this->tripRepository->findById($tripId);
 
@@ -234,11 +238,38 @@ class TripService
             $this->closeShiftLogsForTrip($tripId);
         }
 
-        // Notifications audit follow-up: passengers who already paid for a
-        // now-cancelled trip previously got no notification at all.
+        // Batch 28 Stage 3, item 6: the paid, unused tickets of a cancelled trip are marked "awaiting choice"
+        // (rebook or refund) and their passengers are told.
         if ($newStatus === 'cancelled') {
-            $this->notifyPassengersOfCancellation($trip);
+            $this->cancellations->record($this->tripRepository->findById($tripId), $previousStatus, $actor, $reason);
         }
+
+        return [$this->tripRepository->findById($tripId), $previousStatus];
+    }
+
+    /**
+     * Batch 28 Stage 3, item 6: an Operator (or Admin) cancels one trip. Allowed from any state that has not ended,
+     * including after departure; the stage (before or during the trip) decides what a refund is worth. Every paid,
+     * unused ticket becomes "trip cancelled, awaiting choice" and its passenger is told (TripCancellationService).
+     *
+     * @return array{0: object, 1: string} [the cancelled trip, its previous status]
+     *
+     * @throws ValidationException
+     */
+    public function cancelTrip(int $tripId, ?object $actor, ?string $reason = null): array
+    {
+        $trip = $this->tripRepository->findById($tripId);
+        if (! $trip) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+        if (in_array($trip->status, ['completed', 'cancelled'], true)) {
+            throw ValidationException::withMessages(['trip' => ['A completed or already cancelled trip cannot be cancelled.']]);
+        }
+
+        $previousStatus = $trip->status;
+        $this->tripRepository->updateStatus($tripId, 'cancelled');
+        $this->closeShiftLogsForTrip($tripId);
+        $this->cancellations->record($this->tripRepository->findById($tripId), $previousStatus, $actor, $reason);
 
         return [$this->tripRepository->findById($tripId), $previousStatus];
     }
@@ -301,24 +332,6 @@ class TripService
         }
     }
 
-    private function notifyPassengersOfCancellation(object $trip): void
-    {
-        $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
-        $passengers = $this->ticketRepository->findActivePassengersForTrip($trip->trip_id);
-
-        foreach ($passengers as $passenger) {
-            if (! $passenger->user) {
-                continue;
-            }
-
-            $this->fcmService->sendToUser(
-                $passenger->user,
-                'Trip Cancelled',
-                "{$routeName} on {$trip->trip_date} has been cancelled. Please contact support for a refund or rebooking.",
-                ['type' => 'trip_cancelled', 'trip_id' => $trip->trip_id],
-            );
-        }
-    }
 
     /**
      * Notifications audit follow-up (auto-delay item): notifies passengers

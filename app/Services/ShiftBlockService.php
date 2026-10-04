@@ -38,6 +38,7 @@ class ShiftBlockService
         private FleetLocationRepository $fleetLocationRepository,
         private FcmService $fcmService,
         private ShiftBlockAssignmentService $assignments,
+        private TripCancellationService $cancellations,
     ) {}
 
     /**
@@ -279,7 +280,7 @@ class ShiftBlockService
     /**
      * Dispatcher-only: cancel a shift block that hasn't started yet.
      */
-    public function cancelBlock(int $blockId): ShiftBlock
+    public function cancelBlock(int $blockId, ?object $actor = null): ShiftBlock
     {
         $block = $this->findById($blockId);
         if ($block->status !== 'scheduled') {
@@ -287,7 +288,15 @@ class ShiftBlockService
         }
 
         $this->shiftBlockRepository->updateStatus($blockId, 'cancelled');
+        $legs = Trip::where('shift_block_id', $blockId)->get();
         Trip::where('shift_block_id', $blockId)->update(['status' => 'cancelled']);
+
+        // Batch 28 Stage 3, item 6: a cancelled block cancels every leg, and each leg's paid tickets await a choice.
+        foreach ($legs as $leg) {
+            if ($leg->status !== 'cancelled') {
+                $this->cancellations->record(Trip::find($leg->trip_id), (string) $leg->status, $actor, 'Shift block cancelled');
+            }
+        }
 
         return $this->findById($blockId);
     }

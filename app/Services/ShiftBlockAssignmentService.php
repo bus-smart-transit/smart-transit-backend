@@ -219,6 +219,9 @@ class ShiftBlockAssignmentService
             'status' => $status,
             'block_type' => $block?->block_type,
             'service_type' => ServiceType::normalize($first?->service_type),
+            // Batch 28 Stage 3, item 8: a block of several legs is a "Round-trip run"; the service says which stops an express serves.
+            'run_pattern' => \App\Support\TripRunInfo::runPattern($first?->trip_type, $block?->shift_block_id ? (int) $block->shift_block_id : null, $block ? $ordered->count() : null),
+            'service' => $first ? \App\Support\TripRunInfo::forTrip($first)['service'] : null,
             'plate_number' => ($block?->fleet ?? $first?->fleetRoute?->fleet)?->plate_number,
             'role' => $role,
             'assignment_status' => $record?->status,

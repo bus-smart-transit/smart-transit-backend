@@ -155,7 +155,7 @@ it('charges the base fare up to the base distance and per km beyond it; no base 
     expect($fares->priceWithRule($withBase, 3.0))->toBe(15.0);
     expect($fares->priceWithRule($withBase, 5.0))->toBe(15.0);
     expect($fares->priceWithRule($withBase, 8.0))->toBe(21.0); // 15 + (8 - 5) * 2
-    expect($fares->priceWithRule($withBase, 8.333))->toBe(21.67); // rounded to centavos as before
+    expect($fares->priceWithRule($withBase, 8.333))->toBe(22.0); // 21.667 rounds to the whole peso (adviser decision, Batch 28 Stage 3)
 });
 
 it('prices a ticket with the base distance of the rule and stores the snapshot', function () {

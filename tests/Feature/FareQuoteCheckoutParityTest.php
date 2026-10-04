@@ -128,7 +128,7 @@ test('stop-based browse-time quote matches checkout-time computed price', functi
     ]);
 
     // Expected: round(15 + 13.7 * 2.35, 2) = round(47.195, 2) = 47.2
-    expect($browseTimeQuote)->toBe(47.2);
+    expect($browseTimeQuote)->toBe(47.0); // 47.195 to the whole peso
     expect((float) $reserved['amount'])->toBe($browseTimeQuote);
 });
 

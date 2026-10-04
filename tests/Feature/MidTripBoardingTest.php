@@ -143,7 +143,7 @@ it('sells a ticket priced from the snapped boarding point and stores the snapsho
     expect($ticket->destination_stop_id)->toBe($stops['Stop D']->stop_id);
     expect((float) $ticket->origin_lat)->toEqualWithDelta(7.135, 0.0001);
     expect((float) $ticket->distance_km)->toEqualWithDelta(15.0, 0.1);
-    expect((float) $ticket->amount)->toEqualWithDelta(15 + 15 * 2.35, 0.3);
+    expect((float) $ticket->amount)->toEqualWithDelta(15 + 15 * 2.35, 0.51);
     expect($ticket->boarding_distance_m)->toBeBetween(14900, 15100);
     expect($ticket->alighting_distance_m)->toBe(30000);
     expect($ticket->fare_rule_id)->not->toBeNull();
@@ -198,7 +198,7 @@ it('falls back to the boarding stop picker when the position is poor, old, missi
 
     // The manual path still sells, priced from the stop the Chauffeur picked.
     $manual = midSell($this, $conductor, $trip, ['origin_stop_id' => $stops['Stop B']->stop_id, 'destination_stop_id' => $stops['Stop E']->stop_id])->assertSuccessful();
-    expect((float) $manual->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 30 * 2.35, 0.3);
+    expect((float) $manual->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 30 * 2.35, 0.51);
 });
 
 it('measures along the reverse leg and offers the stops ahead in that direction', function () {
@@ -214,7 +214,7 @@ it('measures along the reverse leg and offers the stops ahead in that direction'
     expect($data['destinations'][0]['distance_km'])->toEqualWithDelta(5.0, 0.1);
 
     $ok = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop B']->stop_id])->assertSuccessful();
-    expect((float) $ok->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 5 * 2.35, 0.3);
+    expect((float) $ok->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 5 * 2.35, 0.51);
 
     // A destination behind the bus for this direction is a 422.
     midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])
@@ -378,7 +378,7 @@ it('prices a bus-position sale from the class rule and ignores a tampered fare',
 
     $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id, 'amount' => 1, 'fare_rule_id' => 999])->assertSuccessful();
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect((float) $ticket->amount)->toEqualWithDelta(13 + (15 - 5) * 2.25, 0.2); // 15 km from the bus position, 5 km base
+    expect((float) $ticket->amount)->toEqualWithDelta(13 + (15 - 5) * 2.25, 0.51); // 15 km from the bus position, 5 km base
     expect($ticket->rounding_mode)->toBe('nearest')->and($ticket->fare_rule_id)->not->toBe(999);
 
     // The same bus without a class and without an override: nothing is sold.

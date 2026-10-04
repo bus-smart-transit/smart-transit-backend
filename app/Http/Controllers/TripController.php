@@ -172,6 +172,8 @@ class TripController extends Controller
             $tripId,
             $request->validated('status'),
             $role,
+            $request->user(),
+            $request->input('reason'),
         );
 
         AuditLogger::log('trip.status_override', 'Trip', $tripId, [
@@ -181,6 +183,22 @@ class TripController extends Controller
         ]);
 
         return $this->success($trip, 'Trip status updated');
+    }
+
+    // Operator / Admin (Batch 28 Stage 3, item 6): cancel one trip, before or during it. Every paid, unused ticket becomes
+    // "trip cancelled, awaiting choice" and its passenger is told; nothing is refunded automatically.
+    public function cancel(Request $request, int $tripId)
+    {
+        if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
+            return $denied;
+        }
+
+        $data = $request->validate(['reason' => 'nullable|string|max:255']);
+        [$trip, $previousStatus] = $this->tripService->cancelTrip($tripId, $request->user(), $data['reason'] ?? null);
+
+        AuditLogger::log('trip.cancel', 'Trip', $tripId, ['from' => $previousStatus, 'reason' => $data['reason'] ?? null, 'role' => $request->user()->role ?? null]);
+
+        return $this->success($trip, 'Trip cancelled. Passengers with paid tickets were told and can rebook or ask for a refund.');
     }
 
     // Driver/Chauffeur: ask to be released from an assigned trip. The request
@@ -290,10 +308,10 @@ class TripController extends Controller
         $statusFilter = $request->query('status_filter');
         $resolvedFilter = $statusFilter !== null ? (string) $statusFilter : 'upcoming';
 
-        return $this->success(
-            $this->tripService->getOperatorUpcomingTrips($companyUser->company_user_id, $resolvedFilter),
-            'Upcoming trips retrieved successfully'
-        );
+        $trips = $this->tripService->getOperatorUpcomingTrips($companyUser->company_user_id, $resolvedFilter);
+        \App\Support\TripRunInfo::attach($trips);
+
+        return $this->success($trips, 'Upcoming trips retrieved successfully');
     }
 
     // Driver: current active trip
@@ -307,6 +325,7 @@ class TripController extends Controller
         if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
+        \App\Support\TripRunInfo::attach([$trip]);
 
         return $this->success($trip, 'Current trip retrieved successfully');
     }
@@ -322,6 +341,7 @@ class TripController extends Controller
         if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
+        \App\Support\TripRunInfo::attach([$trip]);
 
         return $this->success($trip, 'Current trip retrieved successfully');
     }
@@ -381,6 +401,7 @@ class TripController extends Controller
         $tripDate = $request->query('trip_date');
 
         $trips = $this->tripService->getAvailableTripsForPassengers($includeStops, is_string($tripDate) ? $tripDate : null);
+        \App\Support\TripRunInfo::attach($trips);
 
         return $this->success($trips, 'Available trips retrieved successfully');
     }

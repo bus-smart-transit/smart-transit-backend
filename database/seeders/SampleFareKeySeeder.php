@@ -12,6 +12,8 @@ use Illuminate\Database\Seeder;
  * value, not a real fare. Not part of DatabaseSeeder: run it by hand with
  *   php artisan db:seed --class=SampleFareKeySeeder
  * It never touches an existing rule, and sets a class only on fleets that have none.
+ * Fares are rounded to a WHOLE PESO by the server (adviser decision, Batch 28 Stage 3: config/fares.php
+ * FARE_ROUNDING_INCREMENT=1.00), so a sample rule never produces centavos; the numbers below are unchanged.
  */
 class SampleFareKeySeeder extends Seeder
 {

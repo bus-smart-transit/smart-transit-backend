@@ -638,9 +638,10 @@ class TicketService
 
     public function getPassengerTickets(int $passengerId): object
     {
-        return $this->ticketRepository
-            ->findByPassenger($passengerId)
-            ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
+        $tickets = $this->ticketRepository->findByPassenger($passengerId);
+        \App\Support\TripRunInfo::attach($tickets->pluck('trip')->filter()->unique('trip_id'));
+
+        return $tickets->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
 
     /**
@@ -783,9 +784,10 @@ class TicketService
 
     public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): object
     {
-        return $this->ticketRepository
-            ->findByTransactionAndEmail($transactionReference, $email, $paymentId)
-            ->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
+        $tickets = $this->ticketRepository->findByTransactionAndEmail($transactionReference, $email, $paymentId);
+        \App\Support\TripRunInfo::attach($tickets->pluck('trip')->filter()->unique('trip_id'));
+
+        return $tickets->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
 
     private function appendValidityWindow(Ticket $ticket): Ticket
@@ -846,6 +848,11 @@ class TicketService
         // Passenger-facing: the bus is identified by its company label, never by the plate.
         $fleet = $ticket->trip?->fleetRoute?->fleet;
         $ticket->setAttribute('bus_label', BusLabel::for($fleet));
+        // Batch 28 Stage 3, item 8: the run pattern ("One-way run" / "Round-trip run") and the service (Regular, Express,
+        // Express - Non-stop with the stops it serves) of this ticket's trip, from data.
+        if ($ticket->trip) {
+            $ticket->setAttribute('run_info', $ticket->trip->getAttribute('run_info') ?? \App\Support\TripRunInfo::forTrip($ticket->trip));
+        }
         $fleet?->makeHidden(['plate_number']);
 
         // Sync so these virtual attributes are never treated as dirty
