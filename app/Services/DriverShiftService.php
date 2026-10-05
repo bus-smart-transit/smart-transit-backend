@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Repositories\DriverShiftLogRepository;
+use App\Support\AssignmentAcceptance;
 use Illuminate\Validation\ValidationException;
 
 class DriverShiftService
@@ -76,6 +77,11 @@ class DriverShiftService
                     'shift' => ['You already have an active shift. End it before starting a new one.'],
                 ]);
             }
+        }
+
+        // Batch 29: the assignment must be accepted before a shift can start.
+        if ($reason = AssignmentAcceptance::blockedReason($trip, 'driver')) {
+            throw ValidationException::withMessages(['shift' => [$reason]]);
         }
 
         return $this->driverShiftLogRepository->create([

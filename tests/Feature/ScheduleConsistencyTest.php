@@ -238,3 +238,67 @@ it('lists the Operator blocks by the derived status filter', function () {
     expect($row['lifecycle_status'])->toBe('completed');
     expect($row['schedule_section'])->toBe('today');
 });
+
+
+it('requires the assignment to be accepted before a shift starts, for the Driver and the Chauffeur', function () {
+    [$block, , $driver, $conductor] = scBlock($this, '2026-10-04');
+
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertUnprocessable()->assertJsonValidationErrors('shift');
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertUnprocessable()->assertJsonValidationErrors('shift');
+    expect($this->actingAs($driver)->postJson('/api/driver/shift/start')->json('errors.shift.0'))->toContain('Accept your assignment first');
+
+    $this->actingAs($driver)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
+    // The Chauffeur's acceptance is their own: the Driver's does not start the Chauffeur's shift.
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertUnprocessable();
+    $this->actingAs($conductor)->patchJson("/api/conductor/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+});
+
+it('issues no pairing key and no PIN until the assignment is accepted', function () {
+    [$block, , $driver, $conductor] = scBlock($this, '2026-10-04');
+
+    $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertUnprocessable()->assertJsonValidationErrors('assignment');
+    $this->actingAs($driver)->getJson('/api/driver/pin')->assertUnprocessable();
+    $this->actingAs($conductor)->getJson('/api/conductor/pairing-token')->assertUnprocessable();
+    $this->actingAs($conductor)->postJson('/api/conductor/pair', ['pin_code' => '123456'])->assertUnprocessable();
+
+    $this->actingAs($driver)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertSuccessful()->assertJsonStructure(['data' => ['token', 'pin_code']]);
+});
+
+it('lets a replacement accept the legs still to run after earlier legs finished, but not once one is under way', function () {
+    [$block, $operator, $driver] = scBlock($this, '2026-10-04');
+    $this->actingAs($driver)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    scLegs($block, ['completed', 'scheduled', 'scheduled', 'scheduled']);
+
+    $replacement = scStaff('driver');
+    $this->actingAs($operator)->patchJson("/api/operator/shift-blocks/{$block->shift_block_id}", ['driver_id' => scCid($replacement)])->assertSuccessful();
+
+    $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertUnprocessable(); // not accepted yet
+    expect(scCard($this, $replacement, $block, 'driver')['can_respond'])->toBeTrue();
+    $this->actingAs($replacement)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertSuccessful();
+
+    // A leg under way: nobody can still accept (or decline) it.
+    scLegs($block, ['completed', 'departed', 'scheduled', 'scheduled']);
+    $other = scStaff('driver');
+    $this->actingAs($operator)->patchJson("/api/operator/shift-blocks/{$block->shift_block_id}", ['driver_id' => scCid($other)])->assertSuccessful();
+    $this->actingAs($other)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertUnprocessable();
+});
+
+it('does not keep a person busy for a day because of a block whose every leg was cancelled', function () {
+    [$block, $operator, $driver, $conductor, $fleetRoute] = scBlock($this, '2026-10-06');
+    $payload = [
+        'fleet_route_id' => $fleetRoute->fleet_route_id, 'driver_id' => scCid($driver), 'conductor_id' => scCid($conductor),
+        'block_type' => config('shift_blocks.block_types')[0], 'scheduled_date' => '2026-10-06', 'leg_departure_times' => ['06:00', '09:00', '12:00', '15:00'],
+    ];
+
+    // A second block the same day is refused while the first has live legs...
+    $this->actingAs($operator)->postJson('/api/operator/shift-blocks', $payload)->assertUnprocessable();
+
+    // ...but not once every leg of the first was cancelled one by one (its stored status is still "scheduled").
+    scLegs($block, ['cancelled', 'cancelled', 'cancelled', 'cancelled']);
+    expect($block->fresh()->status)->toBe('scheduled');
+    $this->actingAs($operator)->postJson('/api/operator/shift-blocks', $payload)->assertSuccessful();
+});

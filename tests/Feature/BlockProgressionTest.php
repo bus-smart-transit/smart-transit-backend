@@ -64,6 +64,8 @@ function bpBlock($test, int $legs = 4, string $date = '2026-10-04', ?array $crew
         'block_type' => 'morning', 'scheduled_date' => $date, 'leg_departure_times' => $times,
     ])->assertSuccessful()->json('data.shift_block_id');
 
+    // Batch 29: a shift starts and a pairing key is issued only after the assignment is accepted.
+    Trip::where('shift_block_id', $blockId)->update(['driver_accepted_at' => now(), 'conductor_accepted_at' => now()]);
     $block = ShiftBlock::find($blockId);
     $tripLegs = Trip::where('shift_block_id', $blockId)->orderBy('departure_time')->get();
 
@@ -289,6 +291,9 @@ it('resets pairing for the incoming driver when the Operator replaces the driver
     $this->actingAs($crew['operator'])->patchJson("/api/operator/shift-blocks/{$block->shift_block_id}", ['driver_id' => bpCid($replacement)])->assertSuccessful();
 
     // The old pairing does not carry over to the new person; the block's pin row is the one that is re-made.
+    // Neither does the old acceptance: the replacement must accept for themselves before starting.
+    $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertUnprocessable();
+    $this->actingAs($replacement)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
     $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertSuccessful();
     $token = $this->actingAs($replacement)->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
     expect(FleetDailyPin::where('shift_block_id', $block->shift_block_id)->count())->toBe(1);
@@ -306,7 +311,7 @@ it('keeps a standalone trip as before: End Trip closes the driver shift, and a d
     $route = Route::create(['route_name' => 'Solo', 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create(['company_user_id' => bpCid($operator), 'plate_number' => 'SO-'.fake()->unique()->numerify('###'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active']);
     $fr = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '05:00', 'end_time' => '22:00', 'status' => 'active']);
-    $trip = Trip::create(['fleet_route_id' => $fr->fleet_route_id, 'company_user_id' => bpCid($operator), 'trip_date' => '2026-10-04', 'departure_time' => '08:00', 'trip_type' => 'one_way', 'leg_direction' => 'outbound', 'status' => 'scheduled', 'driver_id' => bpCid($driver), 'conductor_id' => bpCid($conductor), 'current_seated_capacity' => 0, 'current_standing_capacity' => 0, 'total_occupancy' => 0]);
+    $trip = Trip::create(['fleet_route_id' => $fr->fleet_route_id, 'company_user_id' => bpCid($operator), 'trip_date' => '2026-10-04', 'departure_time' => '08:00', 'trip_type' => 'one_way', 'leg_direction' => 'outbound', 'status' => 'scheduled', 'driver_id' => bpCid($driver), 'conductor_id' => bpCid($conductor), 'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), 'current_seated_capacity' => 0, 'current_standing_capacity' => 0, 'total_occupancy' => 0]);
 
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();

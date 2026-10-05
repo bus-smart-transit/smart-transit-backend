@@ -69,6 +69,11 @@ class ConductorShiftService
             }
         }
 
+        // Batch 29: the assignment must be accepted before a shift can start.
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'conductor')) {
+            throw ValidationException::withMessages(['shift' => [$reason]]);
+        }
+
         return $this->conductorShiftLogRepository->create([
             'conductor_company_user_id' => $conductorCompanyUserId,
             'trip_id' => $trip->trip_id,

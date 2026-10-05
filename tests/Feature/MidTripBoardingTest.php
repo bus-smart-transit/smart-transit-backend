@@ -76,6 +76,7 @@ function midFixture(string $direction = 'outbound', string $service = 'regular',
         'company_user_id' => $operator->companyProfile->company_user_id,
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'trip_date' => now('Asia/Manila')->toDateString(),
         'departure_time' => '08:00',
         'trip_type' => 'one_way',

@@ -76,6 +76,11 @@ class FleetPairingController extends Controller
             return $this->error('No assigned trip was found. Contact your operator.', 404);
         }
 
+        // Batch 29: no pairing key until the assignment is accepted.
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, $role)) {
+            return $this->error($reason, 422, ['assignment' => [$reason]]);
+        }
+
         $fleetId = (int) ($trip->fleetRoute?->fleet_id ?? 0);
         if (!$fleetId) {
             return $this->error('Fleet not assigned to this trip. Contact your operator.', 422);
@@ -119,6 +124,10 @@ class FleetPairingController extends Controller
 
         if (!$trip) {
             return $this->error('No assigned trip was found.', 404);
+        }
+
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, $role)) {
+            return $this->error($reason, 422, ['assignment' => [$reason]]);
         }
 
         $fleetId = (int) ($trip->fleetRoute?->fleet_id ?? 0);

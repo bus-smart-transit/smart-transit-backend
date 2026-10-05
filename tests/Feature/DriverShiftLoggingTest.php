@@ -70,6 +70,7 @@ function makeAssignedDriverTrip(User $driver, string $status = 'scheduled'): Tri
         'trip_date' => now()->toDateString(),
         'status' => $status,
         'driver_id' => $driver->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
         'total_occupancy' => 0,
@@ -144,6 +145,7 @@ test('driver current trip prefers the open shift trip when another same-day trip
     FleetDailyPin::create([
         'trip_id' => $tripA->trip_id,
         'driver_id' => $driver->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'pin_code' => '123456',
         'pin_date' => now()->toDateString(),
         'driver_verified_at' => now(),
@@ -157,6 +159,7 @@ test('driver current trip prefers the open shift trip when another same-day trip
         'trip_date' => now()->toDateString(),
         'status' => 'boarding',
         'driver_id' => $driver->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
         'total_occupancy' => 0,

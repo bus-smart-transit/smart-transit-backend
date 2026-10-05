@@ -179,6 +179,7 @@ test('End Shift is refused until every leg of the shift block is completed or ca
             'driver_id' => $driver->companyProfile->company_user_id,
             'conductor_id' => $conductor->companyProfile->company_user_id,
             'shift_block_id' => $block->shift_block_id,
+            'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: accepted
         ]);
     }
 
@@ -218,6 +219,7 @@ test('a Chauffeur shift on a shift-block leg stays open when a leg completes', f
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
         'shift_block_id' => $block->shift_block_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: accepted
     ]);
     lgTrip($fleetRoute, $operator, [
         'departure_time' => '08:30',
@@ -225,6 +227,7 @@ test('a Chauffeur shift on a shift-block leg stays open when a leg completes', f
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
         'shift_block_id' => $block->shift_block_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: accepted
     ]);
 
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();

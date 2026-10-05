@@ -41,7 +41,8 @@ class ShiftBlockRepository
     {
         $column = $role === 'driver' ? 'driver_id' : 'conductor_id';
 
-        $query = ShiftBlock::where($column, $companyUserId)
+        $query = ShiftBlock::with('legs')
+            ->where($column, $companyUserId)
             ->whereDate('scheduled_date', $date)
             ->where('status', '!=', 'cancelled');
 
@@ -49,7 +50,9 @@ class ShiftBlockRepository
             $query->where('shift_block_id', '!=', $excludeBlockId);
         }
 
-        return $query->exists();
+        // Batch 29: a block whose every leg was cancelled (one by one) is gone from every card, so it must not keep the
+        // person "busy" that day; the stored status alone only changes when the whole block is cancelled.
+        return $query->get()->contains(fn (ShiftBlock $block) => $block->lifecycle_status !== 'cancelled');
     }
 
     /**

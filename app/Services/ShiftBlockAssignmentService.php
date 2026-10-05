@@ -210,7 +210,11 @@ class ShiftBlockAssignmentService
         $status = ScheduleStatus::forLegs($ordered, $block ? $block->status : $first?->status);
         $today = ScheduleStatus::today();
         $section = ScheduleStatus::section($date, $status, $today);
-        $answerable = $this->isOpen($ordered) && ! ScheduleStatus::isPastDate($date, $today);
+        $notPast = ! ScheduleStatus::isPastDate($date, $today);
+        $answerable = $this->isOpen($ordered) && $notPast;
+        // Batch 29: accepting stays possible for the legs still to run after some legs finished (a replacement mid-block
+        // must accept before starting); declining and releasing keep the stricter rule (nothing started).
+        $acceptable = $this->isAcceptable($ordered) && $notPast;
         $waiting = $record !== null && in_array($record->status, [ShiftBlockAssignment::PENDING, ShiftBlockAssignment::REJECTED], true);
 
         return [
@@ -238,10 +242,10 @@ class ShiftBlockAssignmentService
             'accepted_at' => $record?->accepted_at?->toIso8601String(),
             'reason_code' => $record?->reason_code,
             'reason_text' => $record?->reason_text,
-            'can_respond' => $waiting && $answerable,
+            'can_respond' => $waiting && $acceptable,
             'can_decline' => $record !== null && $record->status === ShiftBlockAssignment::PENDING && $answerable,
             // Why a card that is still "awaiting your response" cannot be answered (shown to the person; never blank).
-            'respond_blocked_reason' => $waiting && ! $answerable ? $this->blockedReason($ordered, $date, $today) : null,
+            'respond_blocked_reason' => $waiting && ! $acceptable ? $this->blockedReason($ordered, $date, $today) : null,
             'section' => $section,
             'is_overdue' => $section === ScheduleStatus::SECTION_OVERDUE,
             'overdue_reason' => $section === ScheduleStatus::SECTION_OVERDUE ? ScheduleStatus::PAST_DATE_MESSAGE : null,
@@ -275,7 +279,15 @@ class ShiftBlockAssignmentService
             return 'This assignment is finished.';
         }
 
-        return 'The first leg has already started, so this can no longer be answered.';
+        return 'A leg has already started, so this can no longer be answered.';
+    }
+
+    /** True while a person can still ACCEPT: the legs still to run (not completed) exist and none has started. */
+    private function isAcceptable(Collection $legs): bool
+    {
+        $toRun = $legs->filter(fn ($leg) => ! in_array($leg->status, ['cancelled', 'completed'], true));
+
+        return $toRun->isNotEmpty() && $toRun->every(fn ($leg) => in_array($leg->status, self::OPEN_STATUSES, true));
     }
 
     /** True while the block can still be answered: live legs exist and none has started. */
@@ -537,8 +549,9 @@ class ShiftBlockAssignmentService
         if (ScheduleStatus::isPastDate($date)) {
             throw ValidationException::withMessages(['status' => [ScheduleStatus::PAST_DATE_MESSAGE]]);
         }
-        if (! $this->isOpen($legs)) {
-            throw ValidationException::withMessages(['status' => ["The first leg has already started, so this can no longer be {$verb}."]]);
+        $open = $verb === 'accepted' ? $this->isAcceptable($legs) : $this->isOpen($legs);
+        if (! $open) {
+            throw ValidationException::withMessages(['status' => ["A leg has already started, so this can no longer be {$verb}."]]);
         }
     }
 

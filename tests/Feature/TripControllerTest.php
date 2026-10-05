@@ -524,6 +524,7 @@ test('driver can depart a trip', function () {
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
         'trip_date' => now()->toDateString(),
+        'driver_accepted_at' => now(), // Batch 29: accepted
         'status' => 'boarding',
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,

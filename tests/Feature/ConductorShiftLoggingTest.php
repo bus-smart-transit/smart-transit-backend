@@ -72,6 +72,7 @@ function makeAssignedConductorTrip(User $conductor, string $status = 'scheduled'
         'trip_date' => now()->toDateString(),
         'status' => $status,
         'conductor_id' => $conductor->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
         'total_occupancy' => 0,
@@ -175,6 +176,7 @@ test('conductor current trip prefers the open shift trip when another same-day t
     FleetDailyPin::create([
         'trip_id' => $tripA->trip_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'pin_code' => '123456',
         'pin_date' => now()->toDateString(),
         'driver_verified_at' => now(),
@@ -188,6 +190,7 @@ test('conductor current trip prefers the open shift trip when another same-day t
         'trip_date' => now()->toDateString(),
         'status' => 'boarding',
         'conductor_id' => $conductor->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
         'total_occupancy' => 0,
@@ -225,6 +228,7 @@ test('End Shift needs every leg of the shift block completed or cancelled, not j
         'fleet_id' => $fleetRoute->fleet_id,
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'company_user_id' => $operator->companyProfile->company_user_id,
         'block_type' => 'morning',
         'status' => 'in_progress',
@@ -242,6 +246,7 @@ test('End Shift needs every leg of the shift block completed or cancelled, not j
             'status' => 'scheduled',
             'driver_id' => $driver->companyProfile->company_user_id,
             'conductor_id' => $conductor->companyProfile->company_user_id,
+            'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
             'shift_block_id' => $block->shift_block_id,
             'current_seated_capacity' => 0,
             'current_standing_capacity' => 0,

@@ -44,6 +44,7 @@ it('returns the pairing token for the client to draw itself, and no third-party 
         'fleet_route_id' => $fleetRoute->fleet_route_id,
         'company_user_id' => $operator->companyProfile->company_user_id,
         'driver_id' => $driver->companyProfile->company_user_id,
+        'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
         'trip_date' => now('Asia/Manila')->toDateString(),
         'departure_time' => '08:00',
         'status' => 'scheduled',

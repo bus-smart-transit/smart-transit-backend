@@ -154,6 +154,11 @@ class FleetDailyPinController extends Controller
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
         }
 
+        // Batch 29: no PIN until the assignment is accepted.
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'driver')) {
+            abort(422, $reason);
+        }
+
         return $trip;
     }
 
@@ -163,6 +168,10 @@ class FleetDailyPinController extends Controller
 
         if (!$trip) {
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
+        }
+
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'conductor')) {
+            abort(422, $reason);
         }
 
         return $trip;
