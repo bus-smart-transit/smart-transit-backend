@@ -74,6 +74,11 @@ class TripAssignmentRequestService
             ]);
         }
 
+        // Batch 29, issue 3: a date that has passed (Manila) can no longer be answered.
+        if (\App\Support\ScheduleStatus::isPastDate($trip->trip_date?->toDateString())) {
+            throw ValidationException::withMessages(['status' => [\App\Support\ScheduleStatus::PAST_DATE_MESSAGE]]);
+        }
+
         $assignedId = $role === 'driver' ? $trip->driver_id : $trip->conductor_id;
         if ((int) $assignedId !== $staffCompanyUserId) {
             throw ValidationException::withMessages([

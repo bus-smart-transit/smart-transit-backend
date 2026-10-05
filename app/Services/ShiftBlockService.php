@@ -177,7 +177,19 @@ class ShiftBlockService
 
     public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null)
     {
-        return $this->shiftBlockRepository->listForOperator($operatorCompanyUserId, $statusFilter);
+        // Batch 29: the filter works on the same derived status the cards show, not on the stored workflow column.
+        $blocks = $this->shiftBlockRepository->listForOperator($operatorCompanyUserId, null);
+        $groups = [
+            'scheduled' => ['scheduled', 'delayed'],
+            'in_progress' => ['boarding', 'departed', 'in-progress'],
+            'completed' => ['completed'],
+            'cancelled' => ['cancelled'],
+        ];
+        if ($statusFilter && isset($groups[$statusFilter])) {
+            $blocks = $blocks->filter(fn (ShiftBlock $block) => in_array($block->lifecycle_status, $groups[$statusFilter], true))->values();
+        }
+
+        return $blocks;
     }
 
     public function listPendingReview(int $operatorCompanyUserId)
@@ -283,13 +295,16 @@ class ShiftBlockService
     public function cancelBlock(int $blockId, ?object $actor = null): ShiftBlock
     {
         $block = $this->findById($blockId);
-        if ($block->status !== 'scheduled') {
-            throw ValidationException::withMessages(['status' => ['Only a scheduled shift block can be cancelled.']]);
+        // Batch 29: the stored column stays "scheduled" while legs run, so it cannot be the only guard. A block with a leg
+        // that is under way or finished is cancelled leg by leg (the trip cancel), never wholesale: that used to overwrite
+        // a completed leg as "cancelled".
+        if ($block->status !== 'scheduled' || ! in_array($block->lifecycle_status, ['scheduled', 'delayed', 'boarding'], true)) {
+            throw ValidationException::withMessages(['status' => ['Only a shift block whose legs have not started can be cancelled. Cancel the remaining legs one by one.']]);
         }
 
         $this->shiftBlockRepository->updateStatus($blockId, 'cancelled');
         $legs = Trip::where('shift_block_id', $blockId)->get();
-        Trip::where('shift_block_id', $blockId)->update(['status' => 'cancelled']);
+        Trip::where('shift_block_id', $blockId)->whereIn('status', ['scheduled', 'delayed', 'boarding'])->update(['status' => 'cancelled']);
 
         // Batch 28 Stage 3, item 6: a cancelled block cancels every leg, and each leg's paid tickets await a choice.
         foreach ($legs as $leg) {
@@ -449,7 +464,7 @@ class ShiftBlockService
         }
 
         $newStart = Carbon::parse($scheduledDate.' '.$firstLegTime);
-        $lastEnd = Carbon::parse($lastBlock->updated_at);
+        $lastEnd = Carbon::parse($this->shiftBlockRepository->blockEndedAt($lastBlock));
         $thresholdHours = (int) config('shift_blocks.rest_threshold_hours');
 
         if ($lastEnd->diffInHours($newStart, false) < $thresholdHours) {

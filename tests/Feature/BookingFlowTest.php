@@ -237,6 +237,7 @@ it('tells the date picker today in Manila and the booking window', function () u
     expect($meta)->toBe([
         'today' => '2026-10-04',
         'max_advance_days' => (int) config('booking.max_advance_days'),
+        'last_bookable_date' => Carbon::parse('2026-10-04')->addDays((int) config('booking.max_advance_days'))->toDateString(),
         'home_preview_limit' => (int) config('booking.home_preview_limit'),
         'trips_per_page' => (int) config('booking.trips_per_page'),
     ]);
@@ -372,4 +373,51 @@ it('validates the trips search: stops, date window, paging', function () use ($e
     $get(['per_page' => 500])->assertStatus(422)->assertJsonValidationErrors(['per_page']);
     $get(['page' => 0])->assertStatus(422)->assertJsonValidationErrors(['page']);
     $get([])->assertSuccessful();
+});
+
+// Batch 29, issue 4: ONE booking window, from one config value, used by the client picker and every server check.
+it('returns the booking window from one place, and a config change moves it', function () use ($eastWest) {
+    bkRoute($eastWest);
+
+    $window = $this->getJson('/api/booking/window')->assertSuccessful()->json('data');
+    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03']);
+
+    $meta = $this->getJson('/api/booking/stops')->assertSuccessful()->json('data.meta');
+    expect($meta['last_bookable_date'])->toBe('2026-11-03');
+
+    config(['booking.max_advance_days' => 45]);
+    $changed = $this->getJson('/api/booking/window')->assertSuccessful()->json('data');
+    expect($changed['max_advance_days'])->toBe(45);
+    expect($changed['last_bookable_date'])->toBe('2026-11-18');
+    expect($this->getJson('/api/booking/stops')->json('data.meta.last_bookable_date'))->toBe('2026-11-18');
+});
+
+it('accepts the last bookable day, rejects the day after, and follows a config change', function () use ($eastWest) {
+    [, $stops] = bkRoute($eastWest);
+    $q = ['mode' => 'later', 'origin_stop_id' => $stops['E2']->stop_id, 'destination_stop_id' => $stops['E4']->stop_id, 'time' => '09:00'];
+    $resolve = fn (string $date) => $this->getJson('/api/booking/resolve?'.http_build_query($q + ['date' => $date]));
+
+    $resolve('2026-11-03')->assertSuccessful(); // today + 30: inclusive
+    $day_after = $resolve('2026-11-04')->assertStatus(422)->assertJsonValidationErrors(['date']);
+    expect($day_after->json('errors.date.0'))->toContain('up to 30 days ahead')->toContain('Nov 3, 2026');
+
+    config(['booking.max_advance_days' => 10]);
+    $resolve('2026-10-14')->assertSuccessful();
+    $resolve('2026-10-15')->assertStatus(422)->assertJsonValidationErrors(['date']);
+});
+
+it('moves the last bookable day with Manila midnight, not UTC', function () use ($eastWest) {
+    [, $stops] = bkRoute($eastWest);
+    $q = ['mode' => 'later', 'origin_stop_id' => $stops['E2']->stop_id, 'destination_stop_id' => $stops['E4']->stop_id, 'time' => '23:00'];
+
+    // 23:30 on the 4th in Manila (15:30 UTC): still the 4th.
+    Carbon::setTestNow(Carbon::parse('2026-10-04 23:30:00', 'Asia/Manila'));
+    expect($this->getJson('/api/booking/window')->json('data.last_bookable_date'))->toBe('2026-11-03');
+
+    // 00:30 on the 5th in Manila is 16:30 UTC on the 4th: the window must already have moved.
+    Carbon::setTestNow(Carbon::parse('2026-10-05 00:30:00', 'Asia/Manila'));
+    expect($this->getJson('/api/booking/window')->json('data.today'))->toBe('2026-10-05');
+    expect($this->getJson('/api/booking/window')->json('data.last_bookable_date'))->toBe('2026-11-04');
+    $this->getJson('/api/booking/resolve?'.http_build_query($q + ['date' => '2026-11-04']))->assertSuccessful();
+    $this->getJson('/api/booking/resolve?'.http_build_query($q + ['date' => '2026-11-05']))->assertStatus(422);
 });

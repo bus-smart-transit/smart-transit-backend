@@ -26,6 +26,9 @@ use Illuminate\Support\Facades\DB;
  *  - When no live leg is left the block becomes completed (if a leg completed) or cancelled.
  *  - An open driver or Chauffeur shift log whose block (or trip) is finished once this runs is closed
  *    with end_source "repair_stale".
+ *  - Batch 29: standalone trips (no block) dated before today follow the same rules: one that is still scheduled,
+ *    delayed or boarding is cancelled unless it has a valid ticket; one that is departed or in-progress is left alone
+ *    and listed (an Operator or Admin must complete or cancel it).
  */
 class RepairStaleShiftState extends Command
 {
@@ -40,6 +43,7 @@ class RepairStaleShiftState extends Command
         $this->info(($apply ? 'APPLYING' : 'DRY RUN (nothing is changed; add --apply to write)')." - Manila today is {$today}");
 
         $legsToCancel = [];
+        $tripsToCancel = [];
         $blockUpdates = [];
         $leftAlone = [];
         $finishedBlocks = [];
@@ -73,6 +77,21 @@ class RepairStaleShiftState extends Command
             }
         }
 
+        // Batch 29: standalone trips left over from earlier days.
+        foreach (Trip::whereNull('shift_block_id')->whereDate('trip_date', '<', $today)->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])->orderBy('trip_date')->orderBy('trip_id')->get() as $trip) {
+            if (in_array($trip->status, ['departed', 'in-progress'], true)) {
+                $leftAlone[] = ["trip {$trip->trip_id} ({$trip->trip_date->toDateString()})", 'under way (departed or in-progress): an Operator or Admin must complete or cancel it'];
+
+                continue;
+            }
+            if (Ticket::where('trip_id', $trip->trip_id)->where('status', 'valid')->exists()) {
+                $leftAlone[] = ["trip {$trip->trip_id} ({$trip->trip_date->toDateString()})", 'has valid tickets: the Operator must decide'];
+
+                continue;
+            }
+            $tripsToCancel[] = [$trip->trip_id, $trip->trip_date->toDateString(), $trip->status];
+        }
+
         // Open shift logs whose shift is finished (or becomes finished by this run).
         $logsToClose = [];
         foreach ([['driver', DriverShiftLog::whereNull('ended_at')->get()], ['conductor', ConductorShiftLog::whereNull('ended_at')->get()]] as [$role, $logs]) {
@@ -83,7 +102,7 @@ class RepairStaleShiftState extends Command
                 }
                 $finished = $trip->shift_block_id
                     ? in_array((int) $trip->shift_block_id, $finishedBlocks, true) || ! Trip::where('shift_block_id', $trip->shift_block_id)->whereNotIn('status', ['completed', 'cancelled'])->exists()
-                    : in_array($trip->status, ['completed', 'cancelled'], true);
+                    : (in_array($trip->status, ['completed', 'cancelled'], true) || in_array((int) $trip->trip_id, array_column($tripsToCancel, 0), true));
                 if ($finished) {
                     $logsToClose[] = [$role, $log->shift_log_id, $log->trip_id];
                 } else {
@@ -93,6 +112,7 @@ class RepairStaleShiftState extends Command
         }
 
         $this->table(['Legs to cancel', 'block', 'was'], $legsToCancel);
+        $this->table(['Standalone trips to cancel', 'date', 'was'], $tripsToCancel);
         $this->table(['Blocks to close', 'was', 'becomes'], $blockUpdates);
         $this->table(['Open shift logs to close', 'log id', 'trip'], $logsToClose);
         $this->table(['Left alone', 'why'], $leftAlone);
@@ -103,8 +123,11 @@ class RepairStaleShiftState extends Command
             return self::SUCCESS;
         }
 
-        DB::transaction(function () use ($legsToCancel, $blockUpdates, $logsToClose) {
+        DB::transaction(function () use ($legsToCancel, $tripsToCancel, $blockUpdates, $logsToClose) {
             foreach ($legsToCancel as [$tripId]) {
+                Trip::where('trip_id', $tripId)->whereIn('status', ['scheduled', 'delayed', 'boarding'])->update(['status' => 'cancelled']);
+            }
+            foreach ($tripsToCancel as [$tripId]) {
                 Trip::where('trip_id', $tripId)->whereIn('status', ['scheduled', 'delayed', 'boarding'])->update(['status' => 'cancelled']);
             }
             foreach ($blockUpdates as [$blockId, , $newStatus]) {
@@ -115,7 +138,7 @@ class RepairStaleShiftState extends Command
                     ->whereNull('ended_at')->update(['ended_at' => now(), 'end_source' => 'repair_stale']);
             }
             AuditLogger::logAs('system', null, 'shift.repair_stale', null, null, [
-                'legs_cancelled' => array_column($legsToCancel, 0),
+                'legs_cancelled' => array_merge(array_column($legsToCancel, 0), array_column($tripsToCancel, 0)),
                 'blocks' => array_column($blockUpdates, 0),
                 'shift_logs_closed' => array_column($logsToClose, 1),
             ]);

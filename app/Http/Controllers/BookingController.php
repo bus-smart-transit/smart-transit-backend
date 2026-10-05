@@ -41,14 +41,21 @@ class BookingController extends Controller
 
         $result = $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null);
         // What the date picker needs: today in Manila and how far ahead a date may be chosen.
-        $result['meta'] = [
-            'today' => Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString(),
-            'max_advance_days' => (int) config('booking.max_advance_days'),
+        $result['meta'] = \App\Support\BookingWindow::describe() + [
             'home_preview_limit' => (int) config('booking.home_preview_limit'),
             'trips_per_page' => (int) config('booking.trips_per_page'),
         ];
 
         return $this->success($result, 'Booking stops retrieved successfully');
+    }
+
+    /**
+     * Batch 29, issue 4: the booking window alone (today, how many days ahead, the last bookable date), the same values
+     * the passenger date pickers get. The Operator's schedule form uses it to warn about a date passengers cannot book yet.
+     */
+    public function window()
+    {
+        return $this->success(\App\Support\BookingWindow::describe(), 'Booking window retrieved successfully');
     }
 
     // Available trips for a Manila date (default today), optionally for one journey, paginated.

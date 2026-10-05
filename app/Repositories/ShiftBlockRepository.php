@@ -61,10 +61,28 @@ class ShiftBlockRepository
     {
         $column = $role === 'driver' ? 'driver_id' : 'conductor_id';
 
-        return ShiftBlock::where($column, $companyUserId)
-            ->where('status', 'completed')
-            ->orderByDesc('updated_at')
+        // Batch 29: a block is completed when its LEGS say so (every leg completed or cancelled, one completed) or when a
+        // hand-off marked it completed. The stored column alone is only set by a hand-off, so blocks that ended normally
+        // were never counted and the Rest Rule could not fire.
+        return ShiftBlock::with('legs')
+            ->where($column, $companyUserId)
+            ->where('status', '!=', 'cancelled')
+            ->orderByDesc('scheduled_date')
+            ->limit(30)
+            ->get()
+            ->filter(fn (ShiftBlock $block) => $block->status === 'completed' || $block->lifecycle_status === 'completed')
+            ->sortByDesc(fn (ShiftBlock $block) => $this->blockEndedAt($block)?->getTimestamp() ?? 0)
             ->first();
+    }
+
+    /** When the block ended: its last completed leg, else the last time the row changed. */
+    public function blockEndedAt(ShiftBlock $block): ?\Illuminate\Support\Carbon
+    {
+        $lastLeg = $block->legs->where('status', 'completed')->max(fn ($leg) => $leg->completed_at?->getTimestamp());
+
+        return $lastLeg
+            ? \Illuminate\Support\Carbon::createFromTimestamp($lastLeg, config('app.timezone', 'Asia/Manila'))
+            : $block->updated_at;
     }
 
     /**
@@ -95,7 +113,7 @@ class ShiftBlockRepository
 
     public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null): Collection
     {
-        $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user'])
+        $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
             ->where('company_user_id', $operatorCompanyUserId)
             ->orderByDesc('scheduled_date');
 

@@ -108,9 +108,9 @@ class BookingLinkService
             throw ValidationException::withMessages(['date' => ['That date has already passed. Pick today or a later date.']]);
         }
 
-        $maxDays = (int) config('booking.max_advance_days');
-        if ($maxDays > 0 && $parsed->gt($today->copy()->addDays($maxDays))) {
-            throw ValidationException::withMessages(['date' => ["Tickets can be booked up to $maxDays days ahead. Pick an earlier date."]]);
+        $last = \App\Support\BookingWindow::lastDate($today);
+        if ($last !== null && $parsed->gt($last)) {
+            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($today).' Pick an earlier date.']]);
         }
 
         return $parsed;

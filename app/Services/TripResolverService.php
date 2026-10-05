@@ -114,7 +114,7 @@ class TripResolverService
     /** The first date after `$date`, inside the booking window, that has an eligible departure. */
     private function nextAvailableDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): ?string
     {
-        $last = $now->copy()->startOfDay()->addDays((int) config('booking.max_advance_days'));
+        $last = \App\Support\BookingWindow::lastDate($now) ?? $now->copy()->startOfDay();
         $first = $date->copy()->startOfDay()->addDay();
         if ($first->gt($last)) {
             return null;
@@ -178,9 +178,9 @@ class TripResolverService
         if ($date->lt($now->copy()->startOfDay())) {
             throw ValidationException::withMessages(['date' => ['That date has already passed (Manila time).']]);
         }
-        $maxDays = (int) config('booking.max_advance_days');
-        if ($maxDays > 0 && $date->gt($now->copy()->startOfDay()->addDays($maxDays))) {
-            throw ValidationException::withMessages(['date' => ["You can book up to $maxDays days ahead."]]);
+        $last = \App\Support\BookingWindow::lastDate($now);
+        if ($last !== null && $date->gt($last)) {
+            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($now)]]);
         }
 
         return $date;
@@ -401,9 +401,9 @@ class TripResolverService
             throw ValidationException::withMessages(['date' => ['Choose a date and time in the future (Manila time).']]);
         }
 
-        $latest = $now->copy()->startOfDay()->addDays((int) config('booking.max_advance_days'))->endOfDay();
-        if ($target->gt($latest)) {
-            throw ValidationException::withMessages(['date' => ['You can book up to '.(int) config('booking.max_advance_days').' days ahead.']]);
+        $latest = \App\Support\BookingWindow::lastDate($now)?->endOfDay();
+        if ($latest !== null && $target->gt($latest)) {
+            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($now)]]);
         }
 
         return $target;

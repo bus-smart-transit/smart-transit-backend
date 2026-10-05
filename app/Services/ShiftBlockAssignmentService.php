@@ -11,6 +11,7 @@ use App\Repositories\FleetDailyPinRepository;
 use App\Repositories\TripAssignmentRequestRepository;
 use App\Repositories\TripNotificationRepository;
 use App\Repositories\TripRepository;
+use App\Support\ScheduleStatus;
 use App\Support\ServiceType;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
@@ -133,6 +134,10 @@ class ShiftBlockAssignmentService
             ->whereDate('scheduled_date', '>=', $since)
             ->get();
         foreach ($blocks as $block) {
+            // Batch 29: what a block IS comes from its legs, not from the stored workflow column.
+            if (ScheduleStatus::forLegs($block->legs, $block->status) === 'cancelled') {
+                continue;
+            }
             $record = $this->reconcile(['shift_block_id' => $block->shift_block_id, 'trip_id' => null], $role, $staffId, $block->legs);
             if ($record) {
                 $cards[] = $this->card($block, null, $block->legs, $record, $role);
@@ -201,7 +206,12 @@ class ShiftBlockAssignmentService
         $route = $first?->fleetRoute?->route;
         $date = $block ? $block->scheduled_date?->toDateString() : $first?->trip_date?->toDateString();
         $time = fn (?Trip $leg) => $leg ? substr((string) ($leg->departure_time ?: $leg->fleetRoute?->start_time), 0, 5) : null;
-        $status = $block ? $block->status : $first?->status;
+        // Batch 29, issue 1: ONE status for every portal, from the leg statuses (never the stored block column).
+        $status = ScheduleStatus::forLegs($ordered, $block ? $block->status : $first?->status);
+        $today = ScheduleStatus::today();
+        $section = ScheduleStatus::section($date, $status, $today);
+        $answerable = $this->isOpen($ordered) && ! ScheduleStatus::isPastDate($date, $today);
+        $waiting = $record !== null && in_array($record->status, [ShiftBlockAssignment::PENDING, ShiftBlockAssignment::REJECTED], true);
 
         return [
             'key' => $block ? 'block-'.$block->shift_block_id : 'trip-'.$trip->trip_id,
@@ -228,10 +238,13 @@ class ShiftBlockAssignmentService
             'accepted_at' => $record?->accepted_at?->toIso8601String(),
             'reason_code' => $record?->reason_code,
             'reason_text' => $record?->reason_text,
-            'can_respond' => $record !== null
-                && in_array($record->status, [ShiftBlockAssignment::PENDING, ShiftBlockAssignment::REJECTED], true)
-                && $this->isOpen($ordered),
-            'can_decline' => $record !== null && $record->status === ShiftBlockAssignment::PENDING && $this->isOpen($ordered),
+            'can_respond' => $waiting && $answerable,
+            'can_decline' => $record !== null && $record->status === ShiftBlockAssignment::PENDING && $answerable,
+            // Why a card that is still "awaiting your response" cannot be answered (shown to the person; never blank).
+            'respond_blocked_reason' => $waiting && ! $answerable ? $this->blockedReason($ordered, $date, $today) : null,
+            'section' => $section,
+            'is_overdue' => $section === ScheduleStatus::SECTION_OVERDUE,
+            'overdue_reason' => $section === ScheduleStatus::SECTION_OVERDUE ? ScheduleStatus::PAST_DATE_MESSAGE : null,
             'legs' => $ordered->map(function (Trip $leg) {
                 $reverse = $leg->leg_direction === 'reverse';
                 $leg_route = $leg->fleetRoute?->route;
@@ -247,6 +260,22 @@ class ShiftBlockAssignmentService
                 ];
             })->all(),
         ];
+    }
+
+    /** The plain reason a pending assignment cannot be answered now. */
+    private function blockedReason(Collection $legs, ?string $date, string $today): string
+    {
+        if ($legs->every(fn ($leg) => $leg->status === 'cancelled')) {
+            return 'This assignment was cancelled.';
+        }
+        if (ScheduleStatus::isPastDate($date, $today)) {
+            return ScheduleStatus::PAST_DATE_MESSAGE;
+        }
+        if ($legs->reject(fn ($leg) => $leg->status === 'cancelled')->every(fn ($leg) => $leg->status === 'completed')) {
+            return 'This assignment is finished.';
+        }
+
+        return 'The first leg has already started, so this can no longer be answered.';
     }
 
     /** True while the block can still be answered: live legs exist and none has started. */
@@ -502,6 +531,11 @@ class ShiftBlockAssignmentService
     {
         if ($legs->every(fn ($leg) => $leg->status === 'cancelled')) {
             throw ValidationException::withMessages(['status' => ['This assignment was cancelled.']]);
+        }
+        // Batch 29, issue 3: a date that has passed (Manila) can no longer be accepted or declined: contact the operator.
+        $date = $legs->map(fn ($leg) => $leg->trip_date?->toDateString())->filter()->min();
+        if (ScheduleStatus::isPastDate($date)) {
+            throw ValidationException::withMessages(['status' => [ScheduleStatus::PAST_DATE_MESSAGE]]);
         }
         if (! $this->isOpen($legs)) {
             throw ValidationException::withMessages(['status' => ["The first leg has already started, so this can no longer be {$verb}."]]);

@@ -94,6 +94,7 @@ Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->
 // Batch 28 Stage 3, item 10: restricted areas and designated drop-off points for a trip (feedback only; the server re-checks).
 Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:60,1');
 Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:60,1');
+Route::get('booking/window', [BookingController::class, 'window'])->middleware('throttle:60,1');
 Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:60,1');
 Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:60,1');
 Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:60,1');

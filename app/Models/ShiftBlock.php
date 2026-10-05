@@ -8,6 +8,9 @@ class ShiftBlock extends Model
 {
     protected $primaryKey = 'shift_block_id';
 
+    // Batch 29: what a block IS (from its legs) and which section it belongs to, next to the stored workflow status.
+    protected $appends = ['lifecycle_status', 'schedule_section'];
+
     protected $fillable = [
         'fleet_id',
         'driver_id',
@@ -47,6 +50,17 @@ class ShiftBlock extends Model
     public function companyUser()
     {
         return $this->belongsTo(StaffUser::class, 'company_user_id', 'company_user_id');
+    }
+
+    /** One status for every portal: from the leg statuses, never the stored workflow column (App\Support\ScheduleStatus). */
+    public function getLifecycleStatusAttribute(): string
+    {
+        return \App\Support\ScheduleStatus::forLegs($this->legs, (string) ($this->attributes['status'] ?? 'scheduled'));
+    }
+
+    public function getScheduleSectionAttribute(): string
+    {
+        return \App\Support\ScheduleStatus::section($this->scheduled_date?->toDateString(), $this->lifecycle_status);
     }
 
     /**

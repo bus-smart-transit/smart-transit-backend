@@ -20,10 +20,10 @@ class OnlineCheckoutRequest extends FormRequest
             // One-way: one booking_date for every item. Roundtrip (Batch 28, item 4): each item carries its own
             // booking_date (outbound and return are different days) and a journey_leg; both dates are future-only and
             // inside the booking window.
-            'booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.now(config('app.timezone'))->addDays((int) config('booking.max_advance_days'))->toDateString()],
+            'booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(\App\Support\BookingWindow::lastDateString() ?? '9999-12-31')],
             'journey_type' => 'nullable|string|in:one_way,roundtrip',
             'items' => 'required|array|min:1',
-            'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.now(config('app.timezone'))->addDays((int) config('booking.max_advance_days'))->toDateString()],
+            'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(\App\Support\BookingWindow::lastDateString() ?? '9999-12-31')],
             'items.*.journey_leg' => 'nullable|string|in:outbound,return',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             'items.*.seat_type' => 'required|string|in:seated,standing',
