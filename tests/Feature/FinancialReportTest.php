@@ -297,7 +297,7 @@ it('exports the daily summary from the same query', function () {
     $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=daily&from=2026-10-04&to=2026-10-05')->assertSuccessful()->getContent();
     $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
 
-    expect($rows[0][0])->toEqual('Date (Manila)');
+    expect($rows[0][0])->toEqual('Date');
     expect($rows[1])->toEqual(['2026-10-04', '100.00', '0.00', '100.00', '1', '0.00', '100.00']);
     expect($rows[2])->toEqual(['2026-10-05', '50.00', '0.00', '50.00', '1', '50.00', '0.00']);
 });

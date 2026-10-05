@@ -176,7 +176,7 @@ class TripResolverService
     {
         $date = Carbon::createFromFormat('!Y-m-d', $value, $timezone);
         if ($date->lt($now->copy()->startOfDay())) {
-            throw ValidationException::withMessages(['date' => ['That date has already passed (Manila time).']]);
+            throw ValidationException::withMessages(['date' => ['That date has already passed.']]);
         }
         $last = \App\Support\BookingWindow::lastDate($now);
         if ($last !== null && $date->gt($last)) {
@@ -398,7 +398,7 @@ class TripResolverService
 
         $target = Carbon::parse($query['date'].' '.$query['time'], $timezone);
         if ($target->lte($now)) {
-            throw ValidationException::withMessages(['date' => ['Choose a date and time in the future (Manila time).']]);
+            throw ValidationException::withMessages(['date' => ['Choose a date and time in the future.']]);
         }
 
         $latest = \App\Support\BookingWindow::lastDate($now)?->endOfDay();

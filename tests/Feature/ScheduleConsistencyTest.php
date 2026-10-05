@@ -302,3 +302,28 @@ it('does not keep a person busy for a day because of a block whose every leg was
     expect($block->fresh()->status)->toBe('scheduled');
     $this->actingAs($operator)->postJson('/api/operator/shift-blocks', $payload)->assertSuccessful();
 });
+
+it('marks a block answerable only while its date is today or later and no leg has started (Operator cards, Batch 30)', function () {
+    // The screenshot case: yesterday's block, one leg completed and the rest cancelled, both staff still "pending".
+    [$done, $operator] = scBlock($this, '2026-10-03');
+    scLegs($done, ['completed', 'cancelled', 'cancelled', 'cancelled']);
+    $card = scCard($this, $operator, $done, 'operator');
+    expect($card['status'])->toBe('completed');
+    expect($card['section'])->toBe('past');
+    expect($card['answerable'])->toBeFalse();
+    expect($card['assignments']['driver']['status'])->toBe('pending');      // the raw assignment row is untouched
+
+    // An earlier day left unfinished is Overdue and cannot be answered either.
+    [$stale, $op2] = scBlock($this, '2026-10-01');
+    expect(scCard($this, $op2, $stale, 'operator')['answerable'])->toBeFalse();
+
+    // Today, nothing started: answerable. One leg started: no longer.
+    [$today, $op3] = scBlock($this, '2026-10-04');
+    expect(scCard($this, $op3, $today, 'operator')['answerable'])->toBeTrue();
+    scLegs($today, ['departed', 'scheduled', 'scheduled', 'scheduled']);
+    expect(scCard($this, $op3, $today, 'operator')['answerable'])->toBeFalse();
+
+    // A later day, nothing started: answerable.
+    [$later, $op4] = scBlock($this, '2026-10-09');
+    expect(scCard($this, $op4, $later, 'operator')['answerable'])->toBeTrue();
+});

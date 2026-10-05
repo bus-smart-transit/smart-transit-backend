@@ -130,7 +130,7 @@ class FinancialReportService
         $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
 
         return $this->csv(
-            ['Transaction ID', 'Ticket ID', 'Paid at (Manila)', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed (Manila)'],
+            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed'],
             $rows->map(fn ($t) => [
                 $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
                 $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
@@ -149,7 +149,7 @@ class FinancialReportService
         $refunds = $this->applyFilters($allRefunds, $filters)->sortBy(fn ($r) => $r['refunded_at']->getTimestamp())->values();
 
         return $this->csv(
-            ['Refund completed (Manila)', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale (Manila)', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date'],
+            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date'],
             $refunds->map(fn ($r) => [
                 $r['refunded_at']->format('Y-m-d H:i:s'), number_format($r['cents'] / 100, 2, '.', ''), $r['refund_method'] === 'cash' ? 'Cash' : 'Back to the original payment',
                 $r['transaction_id'], $r['ticket_id'], $r['sold_at']?->format('Y-m-d H:i:s') ?? '', $this->channelLabel($r['channel'], $r['method']),
@@ -164,7 +164,7 @@ class FinancialReportService
         $report = $this->report($ownerCompanyUserId, $filters);
 
         return $this->csv(
-            ['Date (Manila)', 'Gross (PHP)', 'Refunds (PHP)', 'Net (PHP)', 'Paid tickets', 'Cash (PHP)', 'Online (PHP)'],
+            ['Date', 'Gross (PHP)', 'Refunds (PHP)', 'Net (PHP)', 'Paid tickets', 'Cash (PHP)', 'Online (PHP)'],
             collect($report['daily'])->map(fn ($d) => [
                 $d['date'], number_format($d['gross'], 2, '.', ''), number_format($d['refunds'], 2, '.', ''), number_format($d['net'], 2, '.', ''),
                 $d['tickets'], number_format($d['cash'], 2, '.', ''), number_format($d['online'], 2, '.', ''),

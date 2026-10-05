@@ -244,6 +244,9 @@ class ShiftBlockAssignmentService
             'reason_text' => $record?->reason_text,
             'can_respond' => $waiting && $acceptable,
             'can_decline' => $record !== null && $record->status === ShiftBlockAssignment::PENDING && $answerable,
+            // Batch 30: the block can still be answered (date today or later, no leg started). The Operator's cards show an
+            // assignment state only while this is true; the same rule that gates can_decline, with no person attached.
+            'answerable' => $answerable,
             // Why a card that is still "awaiting your response" cannot be answered (shown to the person; never blank).
             'respond_blocked_reason' => $waiting && ! $acceptable ? $this->blockedReason($ordered, $date, $today) : null,
             'section' => $section,
