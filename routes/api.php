@@ -11,6 +11,7 @@ use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
 use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetPairingController;
+use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
@@ -248,6 +249,10 @@ Route::prefix('operator')
         Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1');
         Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1');
         Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1');
+
+        // Batch 29, cash step 3: the remittance batch of each ended Conductor shift; the Operator confirms it. Operator only.
+        Route::get('remittances', [RemittanceController::class, 'index'])->middleware('throttle:60,1');
+        Route::post('remittances/{id}/confirm', [RemittanceController::class, 'confirm'])->where('id', '[0-9]+')->middleware('throttle:30,1');
 
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);

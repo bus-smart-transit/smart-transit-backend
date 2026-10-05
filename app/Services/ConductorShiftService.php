@@ -86,7 +86,7 @@ class ConductorShiftService
         ])->fresh(['trip.fleetRoute.route', 'fleet']);
     }
 
-    public function endShiftForConductor(int $conductorCompanyUserId, string $endSource = 'dashboard'): object
+    public function endShiftForConductor(int $conductorCompanyUserId, string $endSource = 'dashboard', ?float $closingCash = null): object
     {
         $openShift = $this->conductorShiftLogRepository->findOpenByConductor($conductorCompanyUserId);
         if (!$openShift) {
@@ -100,6 +100,6 @@ class ConductorShiftService
             throw ValidationException::withMessages(['shift' => [$blocked]]);
         }
 
-        return $this->conductorShiftLogRepository->markEnded($openShift, $endSource);
+        return $this->conductorShiftLogRepository->markEnded($openShift, $endSource, $closingCash);
     }
 }

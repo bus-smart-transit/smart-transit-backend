@@ -28,14 +28,21 @@ class ConductorShiftLogRepository
         return ConductorShiftLog::create($payload);
     }
 
-    public function markEnded(ConductorShiftLog $log, string $endSource = 'dashboard'): ConductorShiftLog
+    /**
+     * Ends the shift. Batch 29: every ended shift gets a pending remittance batch, with the closing cash the Conductor
+     * declared when there is one (null for an automatic close: the batch then records that nobody gave a count).
+     */
+    public function markEnded(ConductorShiftLog $log, string $endSource = 'dashboard', ?float $closingCash = null): ConductorShiftLog
     {
         ConductorShiftLog::where('shift_log_id', $log->shift_log_id)->update([
             'ended_at' => now(),
             'end_source' => $endSource,
         ]);
 
-        return $log->fresh(['trip.fleetRoute.route', 'fleet']);
+        $fresh = $log->fresh(['trip.fleetRoute.route', 'fleet']);
+        app(\App\Services\CashRemittanceService::class)->openForShift($fresh, $closingCash);
+
+        return $fresh;
     }
 
     /**
@@ -44,11 +51,20 @@ class ConductorShiftLogRepository
      */
     public function endOpenForTrip(int $tripId, string $endSource = 'trip_status_change'): bool
     {
-        return ConductorShiftLog::where('trip_id', $tripId)
-            ->whereNull('ended_at')
-            ->update([
-                'ended_at' => now(),
-                'end_source' => $endSource,
-            ]) > 0;
+        $open = ConductorShiftLog::where('trip_id', $tripId)->whereNull('ended_at')->get();
+        if ($open->isEmpty()) {
+            return false;
+        }
+
+        ConductorShiftLog::whereIn('shift_log_id', $open->pluck('shift_log_id'))->update([
+            'ended_at' => now(),
+            'end_source' => $endSource,
+        ]);
+        // Batch 29: closed by the trip, not by the Conductor: a pending batch with no declared count.
+        foreach (ConductorShiftLog::whereIn('shift_log_id', $open->pluck('shift_log_id'))->get() as $closed) {
+            app(\App\Services\CashRemittanceService::class)->openForShift($closed, null);
+        }
+
+        return true;
     }
 }

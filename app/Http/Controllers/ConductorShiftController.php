@@ -46,7 +46,10 @@ class ConductorShiftController extends Controller
         $companyUser = $request->user()?->companyProfile;
         if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
-        $shift = $this->conductorShiftService->endShiftForConductor($companyUser->company_user_id);
+        // Batch 29: the cash the Chauffeur counts and hands over (declared before the Operator confirms; optional for older clients).
+        $data = $request->validate(['closing_cash' => ['nullable', 'numeric', 'min:0', 'max:1000000']]);
+
+        $shift = $this->conductorShiftService->endShiftForConductor($companyUser->company_user_id, 'dashboard', isset($data['closing_cash']) ? (float) $data['closing_cash'] : null);
 
         return $this->success([
             'shift' => $this->formatShift($shift),

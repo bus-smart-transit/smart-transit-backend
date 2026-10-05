@@ -181,3 +181,143 @@ it('takes the opening cash at Start Shift, defaults it to 0, and refuses a negat
     $none = $this->actingAs($w2['a'])->postJson('/api/conductor/shift/start')->assertSuccessful()->json('data.shift');
     expect($none['opening_cash'])->toEqual(0);
 });
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Batch 29, cash step 3: the remittance batch of each ended Conductor shift, confirmed by the Operator.
+
+it('opens a pending batch with the declared closing cash when the Chauffeur ends the shift', function () {
+    $w = shiftWorld('completed');
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', null, 100);
+    cashTicket($w, $w['a'], $shift, 80.00);
+
+    $this->actingAs($w['a'])->postJson('/api/conductor/shift/end', ['closing_cash' => 175.5])->assertSuccessful();
+
+    $batch = DB::table('cash_remittances')->first();
+    expect((int) $batch->conductor_shift_log_id)->toBe($shift);
+    expect($batch->status)->toBe('pending');
+    expect($batch->declaration)->toBe('declared');
+    expect((float) $batch->declared_cash)->toEqual(175.5);
+    expect((int) $batch->operator_company_user_id)->toBe(scId($w['operator']));
+    expect((int) $batch->conductor_company_user_id)->toBe(scId($w['a']));
+    expect($batch->confirmed_at)->toBeNull();
+});
+
+it('records that there was no Conductor count when the shift is ended without one, or closed automatically', function () {
+    $w = shiftWorld('completed');
+    shiftLog($w, $w['a'], '2026-10-05 06:00:00', null);
+    $this->actingAs($w['a'])->postJson('/api/conductor/shift/end')->assertSuccessful();
+    $manual = DB::table('cash_remittances')->first();
+    expect($manual->declaration)->toBe('none');
+    expect($manual->declared_cash)->toBeNull();
+
+    // A shift closed by the trip itself (no one pressed End Shift): a pending batch, declaration none.
+    $w2 = shiftWorld('departed');
+    $auto = shiftLog($w2, $w2['a'], '2026-10-05 06:00:00', null);
+    expect(app(\App\Repositories\ConductorShiftLogRepository::class)->endOpenForTrip($w2['trip']->trip_id))->toBeTrue();
+    $batch = DB::table('cash_remittances')->where('conductor_shift_log_id', $auto)->first();
+    expect($batch->status)->toBe('pending');
+    expect($batch->declaration)->toBe('none');
+    expect($batch->declared_cash)->toBeNull();
+});
+
+it('refuses a negative closing cash without ending the shift, and keeps one batch per shift', function () {
+    $w = shiftWorld('completed');
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', null);
+
+    $this->actingAs($w['a'])->postJson('/api/conductor/shift/end', ['closing_cash' => -1])->assertUnprocessable()->assertJsonValidationErrors('closing_cash');
+    $this->actingAs($w['a'])->postJson('/api/conductor/shift/end', ['closing_cash' => 'lots'])->assertUnprocessable()->assertJsonValidationErrors('closing_cash');
+    expect(DB::table('conductor_shift_logs')->where('shift_log_id', $shift)->value('ended_at'))->toBeNull();
+    expect(DB::table('cash_remittances')->count())->toBe(0);
+
+    $log = \App\Models\ConductorShiftLog::find($shift);
+    $service = app(\App\Services\CashRemittanceService::class);
+    $first = $service->openForShift($log, 50.0);
+    $second = $service->openForShift($log, 99.0);
+    expect($second->id)->toBe($first->id);
+    expect((float) $second->declared_cash)->toEqual(50.0); // the first declaration stands
+    expect(DB::table('cash_remittances')->count())->toBe(1);
+});
+
+it('lists an Operator only the batches of their own fleets, and refuses every other role', function () {
+    $w = shiftWorld('completed');
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', '2026-10-05 09:30:00', 100);
+    cashTicket($w, $w['a'], $shift, 60.00);
+    app(\App\Services\CashRemittanceService::class)->openForShift(\App\Models\ConductorShiftLog::find($shift), 150.0);
+
+    $list = $this->actingAs($w['operator'])->getJson('/api/operator/remittances')->assertSuccessful()->json('data');
+    expect($list['data'])->toHaveCount(1);
+    $row = $list['data'][0];
+    expect($row['status'])->toBe('pending');
+    expect($row['declared_cash'])->toEqual(150);
+    expect($row['no_declaration'])->toBeFalse();
+    expect([$row['opening_cash'], $row['cash_sales'], $row['cash_refunds'], $row['expected_cash']])->toEqual([100, 60, 0, 160]);
+    expect($row['shift']['plate_number'])->toBe($w['fleet']->plate_number);
+    expect($row['shift']['route_name'])->toBe('Cash Route');
+
+    $other = scUser('operator');
+    expect($this->actingAs($other)->getJson('/api/operator/remittances?status=all')->json('data.data'))->toBe([]);
+    $this->actingAs($w['a'])->getJson('/api/operator/remittances')->assertForbidden();
+    $this->actingAs(scUser('driver'))->postJson('/api/operator/remittances/1/confirm')->assertForbidden();
+    $this->actingAs(scUser('admin'))->getJson('/api/operator/remittances')->assertForbidden();
+});
+
+it('confirms a pending batch with the counted amount, who confirmed and when, and freezes the expected cash', function () {
+    $w = shiftWorld('completed');
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', '2026-10-05 09:30:00', 100);
+    $t = cashTicket($w, $w['a'], $shift, 60.00);
+    $batch = app(\App\Services\CashRemittanceService::class)->openForShift(\App\Models\ConductorShiftLog::find($shift), 160.0);
+
+    $done = $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$batch->id}/confirm", ['counted_amount' => 158.5, 'note' => 'Counted at the office <b>ok</b>'])->assertSuccessful()->json('data');
+
+    expect($done['status'])->toBe('confirmed');
+    expect($done['confirmed_amount'])->toEqual(158.5);
+    expect($done['confirmed_by_name'])->toBe($w['operator']->companyProfile->name);
+    expect($done['confirmed_at'])->not->toBeNull();
+    expect($done['expected_cash'])->toEqual(160);
+    expect($done['note'])->toBe('Counted at the office ok'); // tags stripped
+    $this->assertDatabaseHas('audit_logs', ['action' => 'remittance.confirmed', 'subject_id' => $batch->id]);
+
+    // A cash refund paid out AFTER the confirmation does not rewrite what was expected then; it is visible as expected_now.
+    $resolution = cashRefund($w, $t, 60.00);
+    $this->actingAs($w['operator'])->postJson("/api/operator/ticket-resolutions/$resolution/cash")->assertSuccessful();
+    $after = collect($this->actingAs($w['operator'])->getJson('/api/operator/remittances?status=confirmed')->json('data.data'))->first();
+    expect($after['expected_cash'])->toEqual(160);
+    expect($after['expected_now'])->toEqual(100);
+
+    // Once decided it cannot be confirmed again.
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$batch->id}/confirm", ['counted_amount' => 1])->assertUnprocessable()->assertJsonValidationErrors('status');
+});
+
+it('lets the Operator accept the declared count, and requires a count when the Chauffeur gave none', function () {
+    $w = shiftWorld('completed');
+    $service = app(\App\Services\CashRemittanceService::class);
+    $declared = $service->openForShift(\App\Models\ConductorShiftLog::find(shiftLog($w, $w['a'], '2026-10-05 06:00:00', '2026-10-05 09:00:00')), 42.0);
+    $none = $service->openForShift(\App\Models\ConductorShiftLog::find(shiftLog($w, $w['a'], '2026-10-05 10:00:00', '2026-10-05 12:00:00')), null);
+
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$declared->id}/confirm")->assertSuccessful()->assertJsonPath('data.confirmed_amount', 42);
+
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$none->id}/confirm")->assertUnprocessable()->assertJsonValidationErrors('counted_amount');
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$none->id}/confirm", ['counted_amount' => -3])->assertUnprocessable()->assertJsonValidationErrors('counted_amount');
+    expect(DB::table('cash_remittances')->where('id', $none->id)->value('status'))->toBe('pending');
+
+    $ok = $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$none->id}/confirm", ['counted_amount' => 0])->assertSuccessful()->json('data');
+    expect($ok['no_declaration'])->toBeTrue();   // still recorded as a batch with no Conductor count
+    expect($ok['declared_cash'])->toBeNull();
+    expect($ok['confirmed_amount'])->toEqual(0);
+});
+
+it('answers 404 for another Operator\'s batch and shows a pending batch the cash as it stands now', function () {
+    $w = shiftWorld('completed');
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', '2026-10-05 09:30:00', 50);
+    $t = cashTicket($w, $w['a'], $shift, 30.00);
+    $batch = app(\App\Services\CashRemittanceService::class)->openForShift(\App\Models\ConductorShiftLog::find($shift), 80.0);
+
+    $this->actingAs(scUser('operator'))->postJson("/api/operator/remittances/{$batch->id}/confirm", ['counted_amount' => 80])->assertNotFound();
+    expect(DB::table('cash_remittances')->where('id', $batch->id)->value('status'))->toBe('pending');
+
+    // A late refund is paid out while the batch is still pending: the expected cash follows it.
+    $this->actingAs($w['operator'])->postJson('/api/operator/ticket-resolutions/'.cashRefund($w, $t, 30.00).'/cash')->assertSuccessful();
+    $row = $this->actingAs($w['operator'])->getJson('/api/operator/remittances')->json('data.data.0');
+    expect([$row['cash_sales'], $row['cash_refunds'], $row['expected_cash']])->toEqual([30, 30, 50]);
+});

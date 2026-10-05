@@ -136,6 +136,10 @@ class RepairStaleShiftState extends Command
             foreach ($logsToClose as [$role, $logId]) {
                 ($role === 'driver' ? DriverShiftLog::class : ConductorShiftLog::class)::where('shift_log_id', $logId)
                     ->whereNull('ended_at')->update(['ended_at' => now(), 'end_source' => 'repair_stale']);
+                if ($role === 'conductor') {
+                    // Batch 29: a Conductor shift closed by the repair is still accounted for: a pending batch, no declared count.
+                    app(\App\Services\CashRemittanceService::class)->openForShift(ConductorShiftLog::findOrFail($logId), null);
+                }
             }
             AuditLogger::logAs('system', null, 'shift.repair_stale', null, null, [
                 'legs_cancelled' => array_merge(array_column($legsToCancel, 0), array_column($tripsToCancel, 0)),
