@@ -246,14 +246,14 @@ Route::prefix('operator')
 
         // Batch 29, Stage 2: the financial page (paid tickets only, refunds separate, Manila days). The Operator is scoped to
         // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
-        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1');
-        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1');
-        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1');
+        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1,fin-summary');
+        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1,fin-log');
+        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1,fin-export');
 
         // Batch 29, cash step 3: the remittance batch of each ended Conductor shift; the Operator confirms it. Operator only.
-        Route::get('remittances', [RemittanceController::class, 'index'])->middleware('throttle:60,1');
-        Route::post('remittances/{id}/confirm', [RemittanceController::class, 'confirm'])->where('id', '[0-9]+')->middleware('throttle:30,1');
-        Route::post('remittances/{id}/resolve', [RemittanceController::class, 'resolve'])->where('id', '[0-9]+')->middleware('throttle:30,1');
+        Route::get('remittances', [RemittanceController::class, 'index'])->middleware('throttle:60,1,remit-list');
+        Route::post('remittances/{id}/confirm', [RemittanceController::class, 'confirm'])->where('id', '[0-9]+')->middleware('throttle:30,1,remit-confirm');
+        Route::post('remittances/{id}/resolve', [RemittanceController::class, 'resolve'])->where('id', '[0-9]+')->middleware('throttle:30,1,remit-resolve');
 
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);
@@ -453,9 +453,9 @@ Route::prefix('admin')
 
         // Batch 29, Stage 2: the financial page (paid tickets only, refunds separate, Manila days). The Operator is scoped to
         // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
-        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1');
-        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1');
-        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1');
+        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1,fin-summary');
+        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1,fin-log');
+        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1,fin-export');
 
         // Audit log viewer — admin only
         Route::get('audit-logs', [ReportingController::class, 'auditLogs']);

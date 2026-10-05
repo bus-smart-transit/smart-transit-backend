@@ -402,3 +402,14 @@ it('keeps the admin endpoints out of reach of every non-admin session', function
     $this->actingAs(fnUser('conductor'))->getJson('/api/admin/financials')->assertForbidden();
     $this->actingAs(fnUser('admin'))->getJson('/api/admin/financials')->assertSuccessful();
 });
+
+it('keeps the export limit separate from the other financial endpoints, so a busy dashboard does not lock the export', function () {
+    $w = fnWorld();
+
+    foreach (range(1, 12) as $i) {
+        fnGet($this, $w['operator'], '', ['from' => '2026-10-05'])->assertSuccessful();
+        fnGet($this, $w['operator'], '/transactions', ['from' => '2026-10-05'])->assertSuccessful();
+    }
+
+    $this->actingAs($w['operator'])->get('/api/operator/financials/export?from=2026-10-05')->assertSuccessful();
+});
