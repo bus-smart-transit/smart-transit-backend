@@ -9,6 +9,7 @@ use App\Http\Controllers\FareRuleController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
+use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
@@ -242,6 +243,12 @@ Route::prefix('operator')
         Route::get('fleets/{fleetId}/reports/daily-summary', [ReportingController::class, 'dailySummary']);
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
 
+        // Batch 29, Stage 2: the financial page (paid tickets only, refunds separate, Manila days). The Operator is scoped to
+        // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
+        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1');
+        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1');
+        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1');
+
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);
 
@@ -437,6 +444,12 @@ Route::prefix('admin')
         Route::get('fleets/{fleetId}/reports/occupancy-trends', [ReportingController::class, 'occupancyTrends']);
         Route::get('fleets/{fleetId}/reports/daily-summary', [ReportingController::class, 'dailySummary']);
         Route::get('fleets/{fleetId}/reports/payment-channels', [ReportingController::class, 'paymentChannels']);
+
+        // Batch 29, Stage 2: the financial page (paid tickets only, refunds separate, Manila days). The Operator is scoped to
+        // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
+        Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1');
+        Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1');
+        Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1');
 
         // Audit log viewer — admin only
         Route::get('audit-logs', [ReportingController::class, 'auditLogs']);
