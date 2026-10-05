@@ -321,3 +321,138 @@ it('answers 404 for another Operator\'s batch and shows a pending batch the cash
     $row = $this->actingAs($w['operator'])->getJson('/api/operator/remittances')->json('data.data.0');
     expect([$row['cash_sales'], $row['cash_refunds'], $row['expected_cash']])->toEqual([30, 30, 50]);
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Batch 29, cash step 4: the tolerance check on confirm, and resolving a flagged batch.
+
+/** An ended shift expecting exactly 160 (opening 100 + one cash sale of 60), with a batch declared at $declared. */
+function remitBatch(array $w, ?float $declared): \App\Models\CashRemittance
+{
+    $shift = shiftLog($w, $w['a'], '2026-10-05 06:00:00', '2026-10-05 09:30:00', 100);
+    cashTicket($w, $w['a'], $shift, 60.00);
+
+    return app(\App\Services\CashRemittanceService::class)->openForShift(\App\Models\ConductorShiftLog::find($shift), $declared);
+}
+
+function confirmBatch($test, array $w, \App\Models\CashRemittance $batch, array $body = [])
+{
+    return $test->actingAs($w['operator'])->postJson("/api/operator/remittances/{$batch->id}/confirm", $body);
+}
+
+it('has a global tolerance of 0 by default, so any declared difference is flagged', function () {
+    expect(config('remittance.tolerance_amount'))->toEqual(0);
+    $w = shiftWorld('completed');
+
+    $matched = confirmBatch($this, $w, remitBatch($w, 160.0), ['counted_amount' => 160])->assertSuccessful()->json('data');
+    expect($matched['status'])->toBe('confirmed');
+    expect($matched['variance'])->toEqual(0);
+    expect($matched['variance_kind'])->toBe('matched');
+    expect($matched['tolerance_applied'])->toEqual(0);
+
+    $short = confirmBatch($this, $w, remitBatch($w, 159.99), ['counted_amount' => 159.99])->assertSuccessful()->json('data');
+    expect($short['status'])->toBe('flagged');
+    expect($short['variance'])->toEqual(-0.01);   // however small
+    expect($short['variance_kind'])->toBe('short');
+    expect($short['flagged_at'])->not->toBeNull();
+
+    $over = confirmBatch($this, $w, remitBatch($w, 170.0))->assertSuccessful()->json('data');
+    expect($over['status'])->toBe('flagged');
+    expect($over['variance'])->toEqual(10);
+    expect($over['variance_kind'])->toBe('over');
+});
+
+it('approves a variance within the configured tolerance, still records it, and flags one beyond it', function () {
+    config(['remittance.tolerance_amount' => 5]);
+    $w = shiftWorld('completed');
+
+    $within = confirmBatch($this, $w, remitBatch($w, 157.0))->assertSuccessful()->json('data');
+    expect($within['status'])->toBe('confirmed');          // approved
+    expect($within['variance'])->toEqual(-3);              // but the small variance stays visible
+    expect($within['tolerance_applied'])->toEqual(5);
+
+    $edge = confirmBatch($this, $w, remitBatch($w, 165.0))->assertSuccessful()->json('data');
+    expect($edge['status'])->toBe('confirmed');            // exactly the tolerance is still approved
+    expect($edge['variance'])->toEqual(5);
+
+    $beyond = confirmBatch($this, $w, remitBatch($w, 154.99))->assertSuccessful()->json('data');
+    expect($beyond['status'])->toBe('flagged');
+    expect($beyond['variance'])->toEqual(-5.01);
+
+    // The value is read from config at confirm time, so changing it moves the line without a schema change.
+    config(['remittance.tolerance_amount' => 20]);
+    expect(confirmBatch($this, $w, remitBatch($w, 145.0))->json('data.status'))->toBe('confirmed');
+    config(['remittance.tolerance_amount' => -3]); // a negative value is treated as 0
+    expect(confirmBatch($this, $w, remitBatch($w, 159.0))->json('data.status'))->toBe('flagged');
+});
+
+it('never flags a batch with no Conductor declaration, and records no variance for it', function () {
+    $w = shiftWorld('completed');
+    $batch = remitBatch($w, null);
+
+    $done = confirmBatch($this, $w, $batch, ['counted_amount' => 9999])->assertSuccessful()->json('data');
+
+    expect($done['status'])->toBe('confirmed');
+    expect($done['no_declaration'])->toBeTrue();
+    expect($done['variance'])->toBeNull();
+    expect($done['variance_kind'])->toBeNull();
+    expect($done['tolerance_applied'])->toBeNull();
+    expect($done['flagged_at'])->toBeNull();
+});
+
+it('shows a pending batch the difference as it stands now, without deciding anything', function () {
+    $w = shiftWorld('completed');
+    $batch = remitBatch($w, 150.0);
+
+    $row = $this->actingAs($w['operator'])->getJson('/api/operator/remittances')->assertSuccessful()->json('data');
+
+    expect($row['data'][0]['status'])->toBe('pending');
+    expect($row['data'][0]['variance'])->toBeNull();       // not decided until it is confirmed
+    expect($row['data'][0]['variance_now'])->toEqual(-10);
+    expect($row['data'][0]['variance_now_kind'])->toBe('short');
+    expect($row['meta']['tolerance_amount'])->toEqual(0);
+});
+
+it('lets the Operator resolve a flagged batch with a required explanation, keeping the flagged variance', function () {
+    $w = shiftWorld('completed');
+    $batch = confirmBatch($this, $w, remitBatch($w, 150.0), ['counted_amount' => 150])->json('data');
+    expect($batch['status'])->toBe('flagged');
+    $id = $batch['id'];
+
+    // The explanation is required, and a blank one does not count.
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/$id/resolve")->assertUnprocessable()->assertJsonValidationErrors('resolution_note');
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/$id/resolve", ['resolution_note' => '   '])->assertUnprocessable();
+    expect(DB::table('cash_remittances')->where('id', $id)->value('status'))->toBe('flagged');
+
+    $done = $this->actingAs($w['operator'])->postJson("/api/operator/remittances/$id/resolve", ['resolution_note' => 'Fare of 10 returned to a passenger, receipt <i>kept</i>'])->assertSuccessful()->json('data');
+
+    expect($done['status'])->toBe('resolved');              // not "confirmed": a resolved batch stays distinct
+    expect($done['variance'])->toEqual(-10);                // the original variance is still there
+    expect($done['variance_kind'])->toBe('short');
+    expect($done['flagged_at'])->toBe($batch['flagged_at']);
+    expect($done['resolution']['note'])->toBe('Fare of 10 returned to a passenger, receipt kept');
+    expect($done['resolution']['resolved_by_name'])->toBe($w['operator']->companyProfile->name);
+    expect($done['resolution']['resolved_at'])->not->toBeNull();
+    expect($done['confirmed_amount'])->toEqual(150);        // what was counted stays too
+    $this->assertDatabaseHas('audit_logs', ['action' => 'remittance.flagged', 'subject_id' => $id]);
+    $this->assertDatabaseHas('audit_logs', ['action' => 'remittance.resolved', 'subject_id' => $id]);
+
+    // It cannot be resolved twice, and the filter finds it under Resolved.
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/$id/resolve", ['resolution_note' => 'again'])->assertUnprocessable()->assertJsonValidationErrors('status');
+    expect(collect($this->actingAs($w['operator'])->getJson('/api/operator/remittances?status=resolved')->json('data.data'))->pluck('id')->all())->toBe([$id]);
+    expect($this->actingAs($w['operator'])->getJson('/api/operator/remittances?status=flagged')->json('data.data'))->toBe([]);
+});
+
+it('resolves only a flagged batch, and only for the Operator who owns it', function () {
+    $w = shiftWorld('completed');
+    $pending = remitBatch($w, 160.0);
+    $clean = confirmBatch($this, $w, remitBatch($w, 160.0))->json('data');
+    $flagged = confirmBatch($this, $w, remitBatch($w, 100.0))->json('data');
+
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$pending->id}/resolve", ['resolution_note' => 'x'])->assertUnprocessable()->assertJsonValidationErrors('status');
+    $this->actingAs($w['operator'])->postJson("/api/operator/remittances/{$clean['id']}/resolve", ['resolution_note' => 'x'])->assertUnprocessable()->assertJsonValidationErrors('status');
+
+    $this->actingAs(scUser('operator'))->postJson("/api/operator/remittances/{$flagged['id']}/resolve", ['resolution_note' => 'not mine'])->assertNotFound();
+    $this->actingAs($w['a'])->postJson("/api/operator/remittances/{$flagged['id']}/resolve", ['resolution_note' => 'x'])->assertForbidden();
+    $this->actingAs(scUser('admin'))->postJson("/api/operator/remittances/{$flagged['id']}/resolve", ['resolution_note' => 'x'])->assertForbidden();
+    expect(DB::table('cash_remittances')->where('id', $flagged['id'])->value('status'))->toBe('flagged');
+});

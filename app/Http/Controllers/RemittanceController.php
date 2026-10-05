@@ -17,11 +17,11 @@ class RemittanceController extends Controller
 
     public function __construct(private CashRemittanceService $remittances) {}
 
-    /** GET /operator/remittances?status=pending|confirmed|flagged|all&page= */
+    /** GET /operator/remittances?status=pending|confirmed|flagged|resolved|all&page= */
     public function index(Request $request)
     {
         $data = $request->validate([
-            'status' => ['nullable', 'in:pending,confirmed,flagged,all'],
+            'status' => ['nullable', 'in:pending,confirmed,flagged,resolved,all'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
@@ -44,6 +44,22 @@ class RemittanceController extends Controller
         }
 
         return $this->success($row, 'Remittance confirmed');
+    }
+
+    /** POST /operator/remittances/{id}/resolve  { resolution_note } (a flagged batch only; the explanation is required) */
+    public function resolve(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'resolution_note' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $row = $this->remittances->resolve($id, $this->ownerId($request), $request->user(), $data['resolution_note']);
+        } catch (ModelNotFoundException) {
+            return $this->error('Remittance not found.', 404);
+        }
+
+        return $this->success($row, 'Remittance resolved');
     }
 
     private function ownerId(Request $request): int
