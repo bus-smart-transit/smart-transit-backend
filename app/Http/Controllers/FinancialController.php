@@ -33,13 +33,17 @@ class FinancialController extends Controller
         return $this->success($this->reports->transactions($owner, $filters), 'Transactions retrieved successfully');
     }
 
-    /** GET /financials/export?type=transactions|daily: the same query as the screen, as CSV. */
+    /** GET /financials/export?type=transactions|daily|refunds: the same query as the screen, as CSV. */
     public function export(FinancialFilterRequest $request)
     {
         [$owner, $filters] = $this->scope($request);
         $type = $request->validated('type') ?? 'transactions';
 
-        $csv = $type === 'daily' ? $this->reports->dailyCsv($owner, $filters) : $this->reports->transactionsCsv($owner, $filters);
+        $csv = match ($type) {
+            'daily' => $this->reports->dailyCsv($owner, $filters),
+            'refunds' => $this->reports->refundsCsv($owner, $filters),
+            default => $this->reports->transactionsCsv($owner, $filters),
+        };
         AuditLogger::log('financials.export', 'Financials', null, ['type' => $type, 'from' => $filters['from'], 'to' => $filters['to']]);
 
         $name = "financial-{$type}-{$filters['from']}".($filters['to'] !== $filters['from'] ? "_to_{$filters['to']}" : '').'.csv';

@@ -55,6 +55,9 @@ class FinancialReportService
             'trip_id' => isset($input['trip_id']) ? (int) $input['trip_id'] : null,
             'payment_method' => $input['payment_method'] ?? null,
             'channel' => $input['channel'] ?? null,
+            // How refunds are dated: by the day the refund COMPLETED (daily cash reconciliation: when the money actually moved,
+            // so a closed day is never rewritten) or by the day of the original SALE (profitability by sale period).
+            'refund_basis' => ($input['refund_basis'] ?? 'completed') === 'sale' ? 'sale' : 'completed',
             'sort' => in_array($input['sort'] ?? 'paid_at', self::SORTS, true) ? ($input['sort'] ?? 'paid_at') : 'paid_at',
             'dir' => ($input['dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc',
             'page' => max(1, (int) ($input['page'] ?? 1)),
@@ -75,7 +78,7 @@ class FinancialReportService
         $refunded = $refunds->sum('cents');
 
         return [
-            'filters' => \Illuminate\Support\Arr::only($filters, ['from', 'to', 'route_id', 'fleet_id', 'trip_id', 'payment_method', 'channel']),
+            'filters' => \Illuminate\Support\Arr::only($filters, ['from', 'to', 'route_id', 'fleet_id', 'trip_id', 'payment_method', 'channel', 'refund_basis']),
             'currency' => 'PHP',
             'kpis' => [
                 'gross' => $this->money($gross),
@@ -127,11 +130,30 @@ class FinancialReportService
         $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
 
         return $this->csv(
-            ['Transaction ID', 'Ticket ID', 'Paid at (Manila)', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status'],
+            ['Transaction ID', 'Ticket ID', 'Paid at (Manila)', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed (Manila)'],
             $rows->map(fn ($t) => [
                 $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
                 $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
-                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'],
+                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '',
+            ])->all(),
+        );
+    }
+
+    /**
+     * The refund lines of the range, each linked to its original sale (transaction and ticket id, sale time). The range
+     * follows the chosen basis: the day the refund completed (cash reconciliation) or the day of the original sale.
+     */
+    public function refundsCsv(?int $ownerCompanyUserId, array $filters): string
+    {
+        [, $allRefunds] = $this->load($ownerCompanyUserId, $filters);
+        $refunds = $this->applyFilters($allRefunds, $filters)->sortBy(fn ($r) => $r['refunded_at']->getTimestamp())->values();
+
+        return $this->csv(
+            ['Refund completed (Manila)', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale (Manila)', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date'],
+            $refunds->map(fn ($r) => [
+                $r['refunded_at']->format('Y-m-d H:i:s'), number_format($r['cents'] / 100, 2, '.', ''), $r['refund_method'] === 'cash' ? 'Cash' : 'Back to the original payment',
+                $r['transaction_id'], $r['ticket_id'], $r['sold_at']?->format('Y-m-d H:i:s') ?? '', $this->channelLabel($r['channel'], $r['method']),
+                $r['plate_number'], $r['route_name'], $r['trip_id'], $r['trip_date'],
             ])->all(),
         );
     }
@@ -210,36 +232,48 @@ class FinancialReportService
 
         $sales = $this->base($owner)
             ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
-            ->leftJoinSub(
-                DB::table('tickets')->select('payment_id', DB::raw('MIN(created_at) as first_ticket_at'))->groupBy('payment_id'),
-                'first_t', 'first_t.payment_id', '=', 'payments.payment_id'
-            )
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
             ->leftJoin('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
             ->where('tickets.status', '!=', 'rebooked')
             // Wide enough for either clock; the exact Manila range is applied in PHP below.
             ->whereBetween('payments.payment_created', [FinancialClock::wallString($start->copy()->subDay()), FinancialClock::wallString($end->copy()->addDay())])
             ->select($this->columns())
-            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount')
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at')
             ->get()
             ->unique('ticket_id')
             ->map(fn ($r) => $this->mapSale($r))
             ->filter(fn ($r) => $r['paid_at'] && $r['paid_at']->between($start, $end, true))
             ->values();
 
-        $refunds = $this->base($owner)
+        $byCompletion = $filters['refund_basis'] !== 'sale';
+        $refundQuery = $this->base($owner)
             ->join('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
+            ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
             ->where('res.resolution', 'refund')
             ->where('res.status', 'succeeded')
-            ->whereNotNull('res.amount')
-            ->whereBetween('res.completed_at', [FinancialClock::utcString($start->copy()->subDay()), FinancialClock::utcString($end->copy()->addDay())])
+            ->whereNotNull('res.amount');
+        if ($byCompletion) {
+            $refundQuery->whereBetween('res.completed_at', [FinancialClock::utcString($start->copy()->subDay()), FinancialClock::utcString($end->copy()->addDay())]);
+        } else {
+            // By sale: the refund follows its original sale, whenever it completed.
+            $refundQuery->whereBetween('payments.payment_created', [FinancialClock::wallString($start->copy()->subDay()), FinancialClock::wallString($end->copy()->addDay())]);
+        }
+        $refunds = $refundQuery
             ->select($this->columns())
-            ->addSelect('res.amount as res_amount', 'res.completed_at as res_completed_at')
+            ->addSelect('res.amount as res_amount', 'res.completed_at as res_completed_at', 'res.method as res_method', 'onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at')
             ->get()
-            ->map(fn ($r) => $this->mapRefund($r))
-            ->filter(fn ($r) => $r['refunded_at'] && $r['refunded_at']->between($start, $end, true))
+            ->map(fn ($r) => $this->mapRefund($r, $byCompletion))
+            ->filter(fn ($r) => $r['at'] && $r['at']->between($start, $end, true))
             ->values();
 
         return [$sales, $refunds];
+    }
+
+    /** The earliest ticket of each payment (when its tickets were minted = when an online payment was confirmed). */
+    private function firstTicketPerPayment(): Builder
+    {
+        return DB::table('tickets')->select('payment_id', DB::raw('MIN(created_at) as first_ticket_at'))->groupBy('payment_id');
     }
 
     /** Tickets of paid, valid payments on the owner's fleets, with the dimensions every figure groups by. */
@@ -318,15 +352,25 @@ class FinancialReportService
             'seat_type' => $r->seat_type,
             'boarded' => $r->boarded_at !== null,
             'paid_at' => $paidAt,
+            'refund_completed_at' => $refundCents > 0 ? FinancialClock::fromUtc($r->res_completed_at) : null,
             'status' => $status,
         ];
     }
 
-    private function mapRefund(object $r): array
+    /** A refund line: dated by its completion or by its original sale, and always linked back to that sale. */
+    private function mapRefund(object $r, bool $byCompletion): array
     {
+        $refundedAt = FinancialClock::fromUtc($r->res_completed_at);
+        $soldAt = FinancialClock::paidAt((string) $r->payment_method, $r->onsite_issued_at, $r->first_ticket_at, $r->payment_created);
+
         return $this->dims($r) + [
             'cents' => (int) round(((float) $r->res_amount) * 100),
-            'refunded_at' => FinancialClock::fromUtc($r->res_completed_at),
+            'refunded_at' => $refundedAt,
+            'sold_at' => $soldAt,
+            'at' => $byCompletion ? $refundedAt : $soldAt,
+            'transaction_id' => (string) $r->transaction_reference,
+            'payment_id' => (int) $r->payment_id,
+            'refund_method' => (string) $r->res_method,
         ];
     }
 
@@ -443,7 +487,7 @@ class FinancialReportService
             $days[$d][$r['method'] === 'cash' ? 'cash_c' : 'online_c'] += $r['cents'];
         }
         foreach ($refunds as $r) {
-            $d = $r['refunded_at']->toDateString();
+            $d = $r['at']->toDateString();
             $days[$d] ??= $blank();
             $days[$d]['refunds_c'] += $r['cents'];
         }
@@ -509,6 +553,7 @@ class FinancialReportService
             'refunded' => $this->money($r['refund_cents']),
             'status' => $r['status'],
             'status_label' => $labels[$r['status']] ?? $r['status'],
+            'refund_completed_at' => $r['refund_completed_at']?->format('Y-m-d H:i:s'),
         ];
     }
 }

@@ -351,3 +351,54 @@ it('rate limits the endpoints, the export hardest', function () {
     }
     $this->actingAs($w['operator'])->get('/api/operator/financials/export')->assertStatus(429);
 });
+
+
+it('dates refunds by completion for cash reconciliation, or by the original sale for profitability', function () {
+    $w = fnWorld();
+    $s = fnSale($w, [100.00], '2026-10-04 20:00:00');                                  // sold on the 4th
+    fnRefund($s['ticket_ids'][0], $w['trip']->trip_id, 100.00, '2026-10-04 16:00:01'); // completed 00:00:01 on the 5th (Manila)
+    $kpi = fn (string $day, string $basis) => fnGet($this, $w['operator'], '', ['from' => $day, 'to' => $day, 'refund_basis' => $basis])->json('data');
+
+    // Completion (the default): the closed 4th is never rewritten; the refund is the 5th's cash-out.
+    expect($kpi('2026-10-04', 'completed')['kpis']['refunds'])->toEqual(0);
+    expect($kpi('2026-10-05', 'completed')['kpis']['refunds'])->toEqual(100);
+    expect(fnGet($this, $w['operator'], '', ['from' => '2026-10-04', 'to' => '2026-10-04'])->json('data.filters.refund_basis'))->toBe('completed');
+
+    // Sale basis: the refund goes back to the 4th, so that day's net is what the sale really earned.
+    $sale4 = $kpi('2026-10-04', 'sale');
+    expect([$sale4['kpis']['gross'], $sale4['kpis']['refunds'], $sale4['kpis']['net']])->toEqual([100, 100, 0]);
+    expect($kpi('2026-10-05', 'sale')['kpis']['refunds'])->toEqual(0);
+    expect(collect($sale4['daily'])->mapWithKeys(fn ($d) => [$d['date'] => $d['refunds']])->all())->toEqual(['2026-10-04' => 100]);
+});
+
+it('exports the refund lines with a link back to the original sale', function () {
+    $w = fnWorld();
+    $s = fnSale($w, [100.00], '2026-10-04 20:00:00');
+    $txn = DB::table('payments')->where('payment_id', $s['payment_id'])->value('transaction_reference');
+    fnRefund($s['ticket_ids'][0], $w['trip']->trip_id, 60.00, '2026-10-05 02:30:00', 'succeeded', 'cash');
+
+    $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=refunds&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+
+    expect($rows)->toHaveCount(2);
+    expect($rows[1][0])->toBe('2026-10-05 10:30:00');   // completed 02:30 UTC = 10:30 Manila
+    expect($rows[1][1])->toBe('60.00');
+    expect($rows[1][2])->toBe('Cash');
+    expect($rows[1][3])->toBe($txn);                    // the original sale
+    expect((int) $rows[1][4])->toBe($s['ticket_ids'][0]);
+    expect($rows[1][5])->toBe('2026-10-04 20:00:00');   // when it was sold
+
+    // By sale basis the same line belongs to the 4th.
+    $byDay4 = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=refunds&refund_basis=sale&from=2026-10-04&to=2026-10-04')->getContent();
+    expect(array_filter(preg_split('/\r?\n/', substr($byDay4, 3))))->toHaveCount(2);
+});
+
+it('keeps the admin endpoints out of reach of every non-admin session', function () {
+    $this->getJson('/api/admin/financials')->assertUnauthorized();
+    $operator = fnUser('operator');
+    $this->actingAs($operator)->getJson('/api/admin/financials')->assertForbidden();
+    $this->actingAs($operator)->get('/api/admin/financials/export')->assertForbidden();
+    $this->actingAs(fnUser('driver'))->getJson('/api/admin/financials/transactions')->assertForbidden();
+    $this->actingAs(fnUser('conductor'))->getJson('/api/admin/financials')->assertForbidden();
+    $this->actingAs(fnUser('admin'))->getJson('/api/admin/financials')->assertSuccessful();
+});

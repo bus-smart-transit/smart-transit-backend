@@ -27,7 +27,8 @@ class FinancialFilterRequest extends FormRequest
             'dir' => ['nullable', Rule::in(['asc', 'desc'])],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:'.(int) config('financial.max_per_page')],
-            'type' => ['nullable', Rule::in(['transactions', 'daily'])],
+            'type' => ['nullable', Rule::in(['transactions', 'daily', 'refunds'])],
+            'refund_basis' => ['nullable', Rule::in(['completed', 'sale'])],
         ];
     }
 }
