@@ -15,7 +15,7 @@ use Illuminate\Http\Request;
  * Batch 28 Stage 3, item 6: rebook or refund for a ticket of a trip the OPERATOR cancelled.
  *
  * The passenger side acts only on the signed-in passenger's own tickets (anyone else's is a 404). The staff side
- * (Operator for the tickets of their own trips, Admin for all) acts for a passenger at the terminal and records who
+ * (Operator for the tickets of their own trips, Admin for all) acts for a passenger and records who
  * did it; a staff action never pays out cash for a digital ticket. The amount is always worked out on the server.
  */
 class TicketResolutionController extends Controller

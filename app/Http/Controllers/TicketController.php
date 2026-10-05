@@ -312,6 +312,13 @@ class TicketController extends Controller
         }
 
         $earnings = $this->ticketService->getTripEarnings($trip->trip_id);
+
+        // Batch 29: a Chauffeur also sees the cash of their open shift (opening + cash sales - cash refunds). The shift's
+        // cash is the Conductor's own, so it is never added for a Driver or an Operator.
+        if (($user->role ?? null) === 'conductor') {
+            $earnings['shift'] = app(\App\Services\ShiftCashService::class)->summaryForOpenShift((int) $user->companyProfile->company_user_id);
+        }
+
         return $this->success($earnings, 'Trip earnings retrieved successfully');
     }
 

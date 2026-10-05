@@ -27,6 +27,7 @@ class TicketResolution extends Model
         'ticket_id', 'trip_cancellation_id', 'resolution', 'status', 'method', 'amount', 'fare_paid', 'ridden_fare', 'basis',
         'actor_user_id', 'actor_role', 'on_behalf', 'note', 'rebooked_ticket_id', 'gateway_payment_id', 'gateway_refund_id',
         'gateway_status', 'failure_reason', 'not_before', 'requested_at', 'completed_at',
+        'conductor_shift_log_id',
     ];
 
     protected function casts(): array

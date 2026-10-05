@@ -32,7 +32,9 @@ class ConductorShiftController extends Controller
         $companyUser = $request->user()?->companyProfile;
         if (!$companyUser) return $this->error('Staff profile not found.', 404);
 
-        $shift = $this->conductorShiftService->startShiftForConductor($companyUser->company_user_id);
+        $data = $request->validate(['opening_cash' => ['nullable', 'numeric', 'min:0', 'max:100000']]);
+
+        $shift = $this->conductorShiftService->startShiftForConductor($companyUser->company_user_id, 'dashboard', (float) ($data['opening_cash'] ?? 0));
 
         return $this->success([
             'shift' => $this->formatShift($shift),
@@ -65,6 +67,7 @@ class ConductorShiftController extends Controller
             'ended_at' => $shift->ended_at,
             'start_source' => $shift->start_source,
             'end_source' => $shift->end_source,
+            'opening_cash' => round((float) $shift->opening_cash, 2),
             'trip_status' => $shift->trip?->status,
             'route_name' => $shift->trip?->fleetRoute?->route?->route_name,
             'fleet_plate_number' => $shift->fleet?->plate_number,

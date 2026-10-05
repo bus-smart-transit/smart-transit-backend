@@ -19,6 +19,7 @@ class ConductorShiftLog extends Model
         'ended_at',
         'start_source',
         'end_source',
+        'opening_cash',
     ];
 
     protected function casts(): array
@@ -27,6 +28,7 @@ class ConductorShiftLog extends Model
             'shift_date' => 'date:Y-m-d',
             'started_at' => 'datetime',
             'ended_at' => 'datetime',
+            'opening_cash' => 'decimal:2',
         ];
     }
 

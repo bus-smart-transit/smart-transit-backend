@@ -40,7 +40,7 @@ class ConductorShiftService
         return $this->legs->endBlockedReason($openShift->trip);
     }
 
-    public function startShiftForConductor(int $conductorCompanyUserId, string $startSource = 'dashboard'): object
+    public function startShiftForConductor(int $conductorCompanyUserId, string $startSource = 'dashboard', float $openingCash = 0.0): object
     {
         $trip = $this->tripService->getTodayAssignedTripForConductor($conductorCompanyUserId);
         if (!$trip) {
@@ -81,6 +81,8 @@ class ConductorShiftService
             'shift_date' => $trip->trip_date,
             'started_at' => now(),
             'start_source' => $startSource,
+            // Batch 29: the cash the Conductor declares to be carrying at the start (default 0); expected cash starts from it.
+            'opening_cash' => round(max(0.0, $openingCash), 2),
         ])->fresh(['trip.fleetRoute.route', 'fleet']);
     }
 

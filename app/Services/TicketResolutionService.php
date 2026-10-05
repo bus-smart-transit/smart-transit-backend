@@ -52,6 +52,7 @@ class TicketResolutionService
         private TicketRepository $tickets,
         private RouteStopRepository $routeStops,
         private FcmService $fcm,
+        private ShiftCashService $shiftCash,
     ) {}
 
     /** What the passenger (or the staff member acting for them) sees for one ticket. @return array<string, mixed> */
@@ -170,7 +171,7 @@ class TicketResolutionService
         return $resolution;
     }
 
-    /** Operator or Admin: the cash refund of a cash ticket has been handed over; record who, when and how much. */
+    /** Operator or Admin: the cash refund of a cash ticket has been handed over to the passenger; record who, when and how much. */
     public function recordCashRefund(TicketResolution $resolution, object $user, string $role, ?string $note): TicketResolution
     {
         return DB::transaction(function () use ($resolution, $user, $role, $note) {
@@ -191,6 +192,8 @@ class TicketResolutionService
                 'actor_role' => $role,
                 'note' => $note !== null ? mb_substr($note, 0, 255) : $locked->note,
                 'completed_at' => Carbon::now('UTC'),
+                // Batch 29: the cash-out belongs to the shift that sold the ticket (set at the request; found now for older rows).
+                'conductor_shift_log_id' => $locked->conductor_shift_log_id ?? $this->shiftCash->shiftIdForTicket((int) $locked->ticket_id),
             ]);
             Ticket::whereKey($locked->ticket_id)->update(['status' => self::REFUNDED]);
             AuditLogger::log('ticket.cash_refund_recorded', 'Ticket', (int) $locked->ticket_id, ['resolution_id' => $locked->id, 'amount' => $locked->amount]);
@@ -596,6 +599,8 @@ class TicketResolutionService
             'resolution' => TicketResolution::REFUND,
             'status' => $quote['needs_review'] ? TicketResolution::NEEDS_REVIEW : TicketResolution::PENDING,
             'method' => $method,
+            // Batch 29: a cash refund reduces the cash of the Conductor shift that SOLD the ticket, however late it is paid out.
+            'conductor_shift_log_id' => $method === TicketResolution::METHOD_CASH ? $this->shiftCash->shiftIdForTicket((int) $ticket->ticket_id) : null,
             'amount' => $quote['amount'],
             'fare_paid' => $quote['fare_paid'],
             'ridden_fare' => $quote['ridden_fare'],

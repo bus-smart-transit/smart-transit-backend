@@ -28,6 +28,7 @@ class PaymentService
         private PassengerRepository $passengerRepository,
         private FcmService $fcmService,
         private TripCancellationService $tripCancellations,
+        private ShiftCashService $shiftCash,
     ) {}
 
     /**
@@ -365,6 +366,8 @@ class PaymentService
             $this->onsitePaymentRepository->create([
                 'payment_id' => $payment->payment_id,
                 'conductor_id' => $conductorCompanyUserId,
+                // Batch 29: the Conductor shift this cash was collected in (a cash sale needs an open shift).
+                'conductor_shift_log_id' => $this->shiftCash->openShiftId($conductorCompanyUserId),
                 // Batch 27: explicit server time in UTC (the stored value is UTC).
                 'issued_at' => $issuedAt->format('Y-m-d H:i:s'),
             ]);

@@ -677,23 +677,37 @@ class TicketService
      */
     public function getTripEarnings(int $tripId): array
     {
-        $tickets = $this->ticketRepository->findPaidTicketsWithPaymentForTrip($tripId);
+        // Batch 29: money = every ticket of a PAID, valid payment at its stored amount (a ticket that expired unused or is
+        // waiting for a refund choice was still paid), minus the refunds that SUCCEEDED. The old figure only summed tickets
+        // that were still valid, boarded or alighted, so a partial refund removed the whole fare and an expired ticket
+        // vanished. A rebooked ticket is counted once, through its replacement.
+        $paid = \Illuminate\Support\Facades\DB::table('tickets')
+            ->join('payments', 'payments.payment_id', '=', 'tickets.payment_id')
+            ->where('tickets.trip_id', $tripId)
+            ->where('payments.status', 'paid')
+            ->where('payments.is_valid', true)
+            ->where('tickets.status', '!=', 'rebooked')
+            ->get(['tickets.amount', 'payments.payment_method']);
 
-        $totalFare = 0.0;
-        $onsiteAmount = 0.0;
-        $onlineAmount = 0.0;
-        $passengerCount = $tickets->count();
+        $isCash = fn ($row) => in_array($row->payment_method, ['cash', 'onsite'], true);
+        $onsiteAmount = (float) $paid->filter($isCash)->sum('amount');
+        $onlineAmount = (float) $paid->reject($isCash)->sum('amount');
+        $totalFare = $onsiteAmount + $onlineAmount;
+        $paidTickets = $paid->count();
 
-        foreach ($tickets as $ticket) {
-            $amount = (float) ($ticket->amount ?? 0);
-            $totalFare += $amount;
-            $method = $ticket->payment?->payment_method ?? 'unknown';
-            if ($method === 'cash' || $method === 'onsite') {
-                $onsiteAmount += $amount;
-            } else {
-                $onlineAmount += $amount;
-            }
-        }
+        // "Passengers" stays the tickets that are still good (valid, boarded, alighted).
+        $passengerCount = $this->ticketRepository->findPaidTicketsWithPaymentForTrip($tripId)->count();
+
+        $refunds = \Illuminate\Support\Facades\DB::table('ticket_resolutions as res')
+            ->join('tickets', 'tickets.ticket_id', '=', 'res.ticket_id')
+            ->join('payments', 'payments.payment_id', '=', 'tickets.payment_id')
+            ->where('tickets.trip_id', $tripId)
+            ->where('res.resolution', 'refund')
+            ->where('res.status', 'succeeded')
+            ->whereNotNull('res.amount')
+            ->get(['res.amount', 'payments.payment_method']);
+        $cashRefunds = (float) $refunds->filter($isCash)->sum('amount');
+        $onlineRefunds = (float) $refunds->reject($isCash)->sum('amount');
 
         return [
             'trip_id' => $tripId,
@@ -701,7 +715,14 @@ class TicketService
             'onsite_amount' => round($onsiteAmount, 2),
             'online_amount' => round($onlineAmount, 2),
             'passenger_count' => $passengerCount,
-            'average_fare' => $passengerCount > 0 ? round($totalFare / $passengerCount, 2) : 0.0,
+            'paid_tickets' => $paidTickets,
+            'average_fare' => $paidTickets > 0 ? round($totalFare / $paidTickets, 2) : 0.0,
+            'onsite_refunds' => round($cashRefunds, 2),
+            'online_refunds' => round($onlineRefunds, 2),
+            'refunded_amount' => round($cashRefunds + $onlineRefunds, 2),
+            'net_total' => round($totalFare - $cashRefunds - $onlineRefunds, 2),
+            'onsite_net' => round($onsiteAmount - $cashRefunds, 2),
+            'online_net' => round($onlineAmount - $onlineRefunds, 2),
         ];
     }
 

@@ -171,3 +171,21 @@ it('refuses a cash sale without an open shift', function () {
     cashSale($this, $conductor, $trip, $stops)->assertStatus(422);
     expect(\App\Models\Ticket::where('trip_id', $trip->trip_id)->count())->toBe(0);
 });
+
+
+it('records the Conductor shift a cash sale was made in, so expected cash starts from the opening cash declared at Start Shift', function () {
+    [$conductor, $trip, $stops] = cashFixture();
+    $shift = $this->actingAs($conductor)->postJson('/api/conductor/shift/start', ['opening_cash' => 120])->assertSuccessful()->json('data.shift');
+
+    cashSale($this, $conductor, $trip, $stops)->assertSuccessful();
+
+    $sale = \Illuminate\Support\Facades\DB::table('onsite_payment')->first();
+    expect((int) $sale->conductor_shift_log_id)->toBe((int) $shift['shift_log_id']);
+    $paid = (float) \Illuminate\Support\Facades\DB::table('payments')->where('payment_id', $sale->payment_id)->value('amount');
+    expect($paid)->toBeGreaterThan(0.0);
+
+    $summary = app(\App\Services\ShiftCashService::class)->summary((int) $shift['shift_log_id']);
+    expect($summary['opening_cash'])->toEqual(120);
+    expect($summary['cash_sales'])->toEqual($paid);
+    expect($summary['expected_cash'])->toEqual(round(120 + $paid, 2));
+});
