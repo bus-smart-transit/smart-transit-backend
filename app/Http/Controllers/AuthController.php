@@ -151,22 +151,21 @@ class AuthController extends Controller
 
     public function forgotPassword(Request $request)
     {
+        // Accounts are stored and logged in with a lower-case email (LoginRequest), so a reset is looked up the same way.
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate(['email' => 'required|email']);
 
-        $status = Password::broker('passengers')->sendResetLink(
+        // Always the same answer, whether or not the email is registered or the mail could be sent (no account probing).
+        Password::broker('passengers')->sendResetLink(
             $request->only('email')
         );
 
-        if ($status === Password::RESET_LINK_SENT) {
-            return $this->success(null, 'Password reset link sent to your email.');
-        }
-
-        // Return a generic message to avoid email enumeration
         return $this->success(null, 'If that email is registered, a reset link has been sent.');
     }
 
     public function resetPassword(Request $request)
     {
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate([
             'token'                 => 'required|string',
             'email'                 => 'required|email',

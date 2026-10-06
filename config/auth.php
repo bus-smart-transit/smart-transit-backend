@@ -99,6 +99,16 @@ return [
             'expire' => 60,
             'throttle' => 60,
         ],
+
+        // The passenger endpoints ask for this broker by name (AuthController). Passengers and staff share the
+        // users table, so it reads the same provider and token table as 'users'; the reset email links to the
+        // passenger or the staff page by the account's role (User::sendPasswordResetNotification).
+        'passengers' => [
+            'provider' => 'users',
+            'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
+            'expire' => 60,
+            'throttle' => 60,
+        ],
     ],
 
     /*

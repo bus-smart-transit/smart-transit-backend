@@ -279,6 +279,8 @@ class StaffAuthController extends Controller
 
     public function forgotPassword(Request $request)
     {
+        // Accounts are stored and logged in with a lower-case email (LoginRequest), so a reset is looked up the same way.
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate(['email' => 'required|email']);
 
         // Always return a generic message to prevent email enumeration.
@@ -289,6 +291,7 @@ class StaffAuthController extends Controller
 
     public function resetPassword(Request $request)
     {
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate([
             'token'                 => 'required|string',
             'email'                 => 'required|email',

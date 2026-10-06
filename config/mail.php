@@ -115,4 +115,17 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Demo redirect
+    |--------------------------------------------------------------------------
+    |
+    | With Resend's free sender, mail can only reach the account owner. When this is set, the password reset
+    | email is sent to this address instead of the account's own (the sign-in code does the same).
+    | Leave it empty in a real deployment.
+    |
+    */
+
+    'intercept_email' => env('MAIL_INTERCEPT_EMAIL'),
+
 ];

@@ -41,12 +41,12 @@ use Illuminate\Support\Facades\Route;
 Route::post('passengers/login', [AuthController::class, 'login']);
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
-Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
-Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:3,15');
+Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
+Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
 Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:5,15');
-Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15');
-Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:3,15');
+Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
+Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
