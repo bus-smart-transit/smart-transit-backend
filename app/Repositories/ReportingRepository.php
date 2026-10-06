@@ -144,7 +144,7 @@ class ReportingRepository
      */
     public function getRouteAdherence(int $fleetId, string $startDate, string $endDate): array
     {
-        $trips = Trip::with(['fleetRoute.route.stops' => fn($q) => $q->orderBy('sequence')])
+        $trips = Trip::with('fleetRoute.route.routeStops.stop')
             ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['departed', 'completed'])
@@ -158,7 +158,8 @@ class ReportingRepository
         $PROXIMITY_METERS = 300; // metres — bus considered "at" a stop if within 300 m
 
         foreach ($trips as $trip) {
-            $stops = $trip->fleetRoute?->route?->stops ?? collect();
+            // Route::routeStops is already ordered by stop_order; a route stop whose stop row is gone is skipped.
+            $stops = ($trip->fleetRoute?->route?->routeStops ?? collect())->pluck('stop')->filter()->values();
             $stopCount = $stops->count();
 
             if ($stopCount === 0) {
