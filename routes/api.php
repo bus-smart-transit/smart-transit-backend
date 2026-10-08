@@ -9,6 +9,7 @@ use App\Http\Controllers\FareRuleController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
+use App\Http\Controllers\TrafficController;
 use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\RemittanceController;
@@ -83,6 +84,9 @@ Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteF
 // Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab).
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware(['auth.optional', 'throttle:90,1']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middleware(['auth.optional', 'throttle:90,1']);
+// Live traffic for one segment (the next stop), asked through the server so the provider key stays secret and
+// answers are shared and counted. Own throttle bucket (the third value) so it never shares a counter with other routes.
+Route::get('traffic/segment', [TrafficController::class, 'segment'])->middleware(['auth.optional', 'throttle:30,1,traffic']);
 // Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')
