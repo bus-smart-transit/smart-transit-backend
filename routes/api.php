@@ -87,6 +87,11 @@ Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middle
 // Live traffic for one segment (the next stop), asked through the server so the provider key stays secret and
 // answers are shared and counted. Own throttle bucket (the third value) so it never shares a counter with other routes.
 Route::get('traffic/segment', [TrafficController::class, 'segment'])->middleware(['auth.optional', 'throttle:30,1,traffic']);
+// Road-congestion map tiles for the driver map only. Signed-in drivers only, own throttle bucket (one map view loads
+// a few dozen tiles, and panning loads more).
+Route::get('traffic/flow/{z}/{x}/{y}.png', [TrafficController::class, 'flowTile'])
+    ->whereNumber(['z', 'x', 'y'])
+    ->middleware(['auth:sanctum', 'role:driver', 'throttle:600,1,traffic-tiles']);
 // Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')

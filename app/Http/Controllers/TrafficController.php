@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\TrafficSegmentRequest;
+use App\Services\TrafficFlowTileService;
 use App\Services\TrafficService;
 use App\Traits\ApiResponse;
 
@@ -24,5 +25,21 @@ class TrafficController extends Controller
         );
 
         return $this->success($answer, $answer['available'] ? 'Traffic retrieved' : 'Traffic unavailable');
+    }
+
+    // Driver only: one road-congestion map tile (a PNG picture). A refusal is a JSON error with a reason, never a blank
+    // or invented tile, so the map can say the congestion layer is unavailable.
+    public function flowTile(TrafficFlowTileService $tiles, int $z, int $x, int $y)
+    {
+        $tile = $tiles->tile($z, $x, $y);
+
+        if (! $tile['ok']) {
+            return $this->error('Congestion tile unavailable', $tile['status'], ['reason' => $tile['reason']]);
+        }
+
+        return response($tile['png'], 200, [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'private, max-age=60',
+        ]);
     }
 }

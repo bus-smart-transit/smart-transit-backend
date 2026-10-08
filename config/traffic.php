@@ -30,4 +30,18 @@ return [
 
     // A segment longer than this (straight line) is refused: the app asks about the next stop, never a whole region.
     'max_distance_km' => (float) env('TRAFFIC_MAX_DISTANCE_KM', 50),
+
+    // Road-congestion map tiles for the driver map (TomTom Traffic Flow, raster). Served through this server for the
+    // same reason as the segment answer: the key stays secret and the picture is shared and counted.
+    'flow_tiles' => [
+        // TomTom's own colouring of speed against free flow (relative0 is the style TomTom recommends).
+        'style' => env('TRAFFIC_FLOW_STYLE', 'relative0'),
+        // Every driver looking at the same tile within this time shares one provider request.
+        'cache_ttl_s' => (int) env('TRAFFIC_FLOW_CACHE_TTL_S', 120),
+        // Provider tile requests this server may make per calendar month, kept under the free allowance.
+        'monthly_budget' => (int) env('TRAFFIC_FLOW_MONTHLY_BUDGET', 150000),
+        // Outside this zoom range a tile is refused (too wide to be useful, or finer than a driver needs).
+        'min_zoom' => (int) env('TRAFFIC_FLOW_MIN_ZOOM', 8),
+        'max_zoom' => (int) env('TRAFFIC_FLOW_MAX_ZOOM', 17),
+    ],
 ];
