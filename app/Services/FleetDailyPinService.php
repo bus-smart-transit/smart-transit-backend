@@ -100,7 +100,7 @@ class FleetDailyPinService
             ]);
         }
 
-        if ($pin->pin_code !== $submittedPin) {
+        if (! hash_equals((string) $pin->pin_code, $submittedPin)) {
             throw ValidationException::withMessages([
                 'pin_code' => ['Incorrect PIN. You may be assigned to the wrong trip.'],
             ]);

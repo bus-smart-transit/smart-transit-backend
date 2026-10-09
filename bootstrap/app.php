@@ -30,10 +30,17 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (ThrottleRequestsException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
+                // Says how long to wait, and no longer claims every limit is about logging in (a map, a scan or a
+                // PIN try that is slowed down is not a "login attempt").
+                $seconds = (int) ($e->getHeaders()['Retry-After'] ?? 0);
+                $wait = $seconds >= 90
+                    ? 'about '.(int) ceil($seconds / 60).' minutes'
+                    : ($seconds > 0 ? $seconds.' seconds' : 'a moment');
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Too many login attempts. Please wait 15 minutes and try again.',
-                ], 429);
+                    'message' => "Too many attempts. Please wait {$wait} and try again.",
+                ], 429, array_intersect_key($e->getHeaders(), ['Retry-After' => true]));
             }
 
             return null;

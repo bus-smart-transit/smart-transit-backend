@@ -320,11 +320,13 @@ Route::prefix('driver')
 
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForDriver']);
-        Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsDriver']);
+        // A 6-digit PIN has a million values: wrong guesses are limited per signed-in account (own counter), so the
+        // partner's code cannot be found by trying them all.
+        Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsDriver'])->middleware('throttle:12,5,crew-pairing');
 
         // QR-based crew pairing (must complete before dashboard access)
         Route::get('pairing-token', [FleetPairingController::class, 'getDriverToken']);
-        Route::post('pair', [FleetPairingController::class, 'pairAsDriver']);
+        Route::post('pair', [FleetPairingController::class, 'pairAsDriver'])->middleware('throttle:12,5,crew-pairing');
         Route::get('pairing-status', [FleetPairingController::class, 'driverPairingStatus']);
     });
 
@@ -377,11 +379,11 @@ Route::prefix('conductor')
 
         // Daily fleet PIN — view and verify
         Route::get('pin', [FleetDailyPinController::class, 'showForConductor']);
-        Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsConductor']);
+        Route::post('pin/verify', [FleetDailyPinController::class, 'verifyAsConductor'])->middleware('throttle:12,5,crew-pairing');
 
         // QR-based crew pairing (must complete before dashboard access)
         Route::get('pairing-token', [FleetPairingController::class, 'getConductorToken']);
-        Route::post('pair', [FleetPairingController::class, 'pairAsConductor']);
+        Route::post('pair', [FleetPairingController::class, 'pairAsConductor'])->middleware('throttle:12,5,crew-pairing');
         Route::get('pairing-status', [FleetPairingController::class, 'conductorPairingStatus']);
     });
 

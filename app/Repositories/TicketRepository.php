@@ -87,12 +87,19 @@ class TicketRepository
             ->values();
     }
 
+    /**
+     * Claims the boarding in ONE statement: the ticket becomes 'boarded' only if it is still 'valid' at this moment.
+     * Two phones scanning the same ticket at the same instant both read it as valid, but only one update changes a row,
+     * so only one scan wins. False means someone else boarded it first (or it is no longer valid).
+     */
     public function markBoarded(int $ticketId): bool
     {
-        return Ticket::where('ticket_id', $ticketId)->update([
-            'status' => 'boarded',
-            'boarded_at' => now(),
-        ]) > 0;
+        return Ticket::where('ticket_id', $ticketId)
+            ->where('status', 'valid')
+            ->update([
+                'status' => 'boarded',
+                'boarded_at' => now(),
+            ]) > 0;
     }
 
     public function findByTransactionRef(string $transactionRef): Collection

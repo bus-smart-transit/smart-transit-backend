@@ -550,13 +550,58 @@ class TicketService
         });
     }
 
-    // $payload = ['ticket_uuid']
+    /**
+     * What a conductor typed or scanned -> the ticket UUID. The QR carries the full UUID. A ticket also prints a short
+     * "Ticket ID" (its first 8 characters) that a person can read out and type; that is looked up ONLY among the tickets
+     * of the conductor's own running trip, never across the system, so it cannot be used to probe other trips.
+     */
+    public function resolveScanCode(string $code, ?int $conductorCompanyUserId): string
+    {
+        $code = trim($code);
+
+        if (! preg_match('/^[0-9a-f]{8}$/i', $code)) {
+            return $code;
+        }
+
+        $activeTrip = $conductorCompanyUserId !== null
+            ? $this->tripService->getCurrentTripForConductor($conductorCompanyUserId)
+            : null;
+
+        if (! $activeTrip) {
+            throw ValidationException::withMessages([
+                'ticket' => ['No active trip found. You must have an active trip to scan tickets.'],
+            ]);
+        }
+
+        return $this->resolveShortCode($code, (int) $activeTrip->trip_id);
+    }
+
+    /** The one ticket of this trip whose UUID starts with the 8 characters; refuses none and refuses more than one. */
+    public function resolveShortCode(string $code, int $tripId): string
+    {
+        $matches = Ticket::where('trip_id', $tripId)
+            ->where('ticket_uuid', 'like', strtolower($code).'-%')
+            ->pluck('ticket_uuid');
+
+        if ($matches->isEmpty()) {
+            throw ValidationException::withMessages(['ticket' => ['Ticket not found on this trip.']]);
+        }
+
+        if ($matches->count() > 1) {
+            throw ValidationException::withMessages(['ticket' => ['More than one ticket matches this ID. Scan the QR code instead.']]);
+        }
+
+        return (string) $matches->first();
+    }
+
+    // $payload = ['ticket_uuid'] (the QR content, or the 8-character Ticket ID printed on the ticket)
     // $conductorCompanyUserId — when provided, the ticket must belong to the
     // conductor's currently active trip (prevents scanning tickets for wrong
     // or future trips even if the date check somehow passes).
     public function validateScan(array $payload, ?int $conductorCompanyUserId = null): object
     {
-        $ticket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
+        $uuid = $this->resolveScanCode((string) $payload['ticket_uuid'], $conductorCompanyUserId);
+        $ticket = $this->ticketRepository->findByUuid($uuid);
 
         if (! $ticket) {
             throw ValidationException::withMessages(['ticket' => ['Ticket not found.']]);
@@ -619,8 +664,13 @@ class TicketService
             ]);
         }
 
-        $this->ticketRepository->markBoarded($ticket->ticket_id);
-        $boardedTicket = $this->ticketRepository->findByUuid($payload['ticket_uuid']);
+        // Claimed atomically: if another scan boarded this ticket a moment ago, this one is refused.
+        if (! $this->ticketRepository->markBoarded($ticket->ticket_id)) {
+            throw ValidationException::withMessages([
+                'ticket' => ['Ticket is already boarded.'],
+            ]);
+        }
+        $boardedTicket = $this->ticketRepository->findByUuid($uuid);
 
         // Destination label — prefer a named stop; fall back to GPS coords for
         // custom-pinpoint tickets so the conductor sees WHERE the passenger alights.
@@ -802,7 +852,12 @@ class TicketService
                 continue;
             }
 
-            $this->ticketRepository->markBoarded($ticket->ticket_id);
+            if (! $this->ticketRepository->markBoarded($ticket->ticket_id)) {
+                // Boarded by another scan between the read above and this claim.
+                $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => true, 'skip_reason' => 'This ticket is invalid/used.']);
+
+                continue;
+            }
             $boardedCount++;
             $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => false]);
         }
