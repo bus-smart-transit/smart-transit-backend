@@ -137,6 +137,7 @@ Route::prefix('passengers')
         Route::post('fcm-token', [AuthController::class, 'registerFcmToken']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);
+        Route::post('tickets/{ticketUuid}/tracking-link', [TicketController::class, 'renewTrackingLink'])->middleware('throttle:10,1,tracking-renew');
         // Batch 28 item 4: no passenger-initiated cancel or refund after payment. These routes exist so the answer is
         // an explicit, audited 422 for every ticket (one-way or either leg of a roundtrip), never a silent 404.
         Route::post('tickets/{ticketUuid}/cancel', [TicketController::class, 'refuseCancellation'])->middleware('throttle:20,1');

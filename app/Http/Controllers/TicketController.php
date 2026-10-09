@@ -346,6 +346,29 @@ class TicketController extends Controller
     }
 
     /**
+     * The owner replaces the tracking link of one of their tickets: the old link stops working at once and the new
+     * token is returned (only to the owner, like the ticket's own tracking_token). A guest ticket has no owner account,
+     * so it is refused here. Another passenger's ticket is a 403, as for the QR.
+     */
+    public function renewTrackingLink(Request $request, string $ticketUuid, \App\Services\TicketTrackingService $tracking)
+    {
+        $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
+
+        $passengerProfile = $request->user()->passengerProfile;
+        if (! $passengerProfile) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+        if ($ticket->passenger_id === null || (int) $ticket->passenger_id !== (int) $passengerProfile->passenger_id) {
+            return $this->error('Unauthorized', 403);
+        }
+
+        $token = $tracking->renew($ticket);
+        \App\Services\AuditLogger::log('ticket.tracking_link_renewed', 'Ticket', (int) $ticket->ticket_id);
+
+        return $this->success(['tracking_token' => $token], 'Tracking link replaced. The old link no longer works.');
+    }
+
+    /**
      * A passenger cannot cancel or ask for a refund after paying (adviser decision, Batch 28). A refund exists only
      * when the OPERATOR cancels a trip (a later stage). The rule applies per ticket, so each ticket of a
      * roundtrip answers the same way. Another passenger's ticket is not found.

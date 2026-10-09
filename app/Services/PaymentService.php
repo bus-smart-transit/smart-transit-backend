@@ -29,6 +29,7 @@ class PaymentService
         private FcmService $fcmService,
         private TripCancellationService $tripCancellations,
         private ShiftCashService $shiftCash,
+        private TrackingLinkMailer $trackingMail,
     ) {}
 
     /**
@@ -480,6 +481,9 @@ class PaymentService
             // has already committed by this point.
             $this->notifyOperatorsOfPayment($payment);
 
+            // The buyer gets the tracking link of each ticket by email (fail-soft and queued: it never delays or undoes
+            // the payment, and it carries no QR code).
+            $this->trackingMail->sendForPayment($payment);
             // Batch 28 Stage 3, item 6: a payment that was still pending when the operator cancelled the trip is confirmed
             // late; its tickets must not be valid for a trip that will not run, so they join those awaiting a choice.
             $this->tripCancellations->flagTicketsOfCancelledTrips($payment->fresh());

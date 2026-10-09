@@ -79,6 +79,25 @@ class TicketTrackingService
         return $ticket->tracking_token_enc;
     }
 
+    /**
+     * Replaces a ticket's tracking link: a new token is made and the old one stops working at once (a link that got out
+     * can be cut off). Only a ticket that can still be tracked has a link to replace.
+     */
+    public function renew(Ticket $ticket): string
+    {
+        if (! in_array($ticket->status, self::TRACKABLE, true)) {
+            throw ValidationException::withMessages(['ticket' => ['This ticket can no longer be tracked.']]);
+        }
+
+        $credentials = $this->newCredentials();
+        Ticket::where('ticket_id', $ticket->ticket_id)->update([
+            'tracking_token_hash' => $credentials['tracking_token_hash'],
+            'tracking_token_enc' => Crypt::encryptString($credentials['token']),
+        ]);
+
+        return $credentials['token'];
+    }
+
     public function findByToken(string $token): ?Ticket
     {
         if (! preg_match(self::TOKEN_FORMAT, $token)) {
