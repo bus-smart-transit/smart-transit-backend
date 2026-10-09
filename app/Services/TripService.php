@@ -426,6 +426,19 @@ class TripService
             ]);
         }
 
+        // A pending request to be released is a different answer to the same question. The screen already hides Accept
+        // in that case; the server refuses it too (a shift block's accept makes the same check).
+        $pendingRelease = \App\Models\TripAssignmentRequest::where('trip_id', $tripId)
+            ->where('role', $role)
+            ->where('staff_company_user_id', $staffCompanyUserId)
+            ->where('status', \App\Models\TripAssignmentRequest::FOR_APPROVAL)
+            ->exists();
+        if ($pendingRelease) {
+            throw ValidationException::withMessages([
+                'trip' => ['You asked to be released from this trip. Wait for the Operator to answer before accepting it.'],
+            ]);
+        }
+
         if ($role === 'driver') {
             $this->tripRepository->markDriverAccepted($tripId);
         } else {
