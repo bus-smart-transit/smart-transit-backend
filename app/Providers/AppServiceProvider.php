@@ -6,6 +6,7 @@ use App\Support\Database\RlsContext;
 use App\Support\RateLimiting\ToggleableRateLimiter;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -31,6 +32,38 @@ class AppServiceProvider extends ServiceProvider
         $this->guardStepUpBypassIsDevOnly();
         $this->guardStaffOtpBypassIsDevOnly();
         $this->guardRateLimitingOffIsDevOnly();
+        $this->endIdleStaffSessions();
+    }
+
+    /**
+     * An Operator's token that has not been used for sanctum.idle_minutes.operator minutes stops working and is deleted,
+     * so a forgotten or stolen office session does not stay open for the full 24 hours. Sanctum calls this BEFORE it
+     * records the new last_used_at, so the gap it sees is the real idle time. Roles that are not listed are untouched:
+     * a Driver's phone sends GPS with nobody touching it, and a Chauffeur's shift runs the same way, so a time limit
+     * there would end a trip's tracking.
+     */
+    private function endIdleStaffSessions(): void
+    {
+        Sanctum::authenticateAccessTokensUsing(function ($accessToken, bool $isValid) {
+            if (! $isValid) {
+                return false;
+            }
+
+            $limits = array_filter((array) config('sanctum.idle_minutes', []));
+            $lastUsed = $accessToken->last_used_at ?? $accessToken->created_at;
+            if ($limits === [] || ! $lastUsed || $lastUsed->gt(now()->subMinutes(min($limits)))) {
+                return true; // nothing to limit, or used recently enough that the role does not matter
+            }
+
+            $limit = $limits[$accessToken->tokenable?->role] ?? null;
+            if ($limit && $lastUsed->lt(now()->subMinutes((int) $limit))) {
+                $accessToken->delete();
+
+                return false;
+            }
+
+            return true;
+        });
     }
 
     /**

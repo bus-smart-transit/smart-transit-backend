@@ -54,6 +54,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Idle limit (minutes, per role)
+    |--------------------------------------------------------------------------
+    | A token not used for this long stops working and is deleted (see AppServiceProvider::endIdleStaffSessions). Only
+    | the Operator portal is listed: Driver and Chauffeur sessions run without anyone touching the screen (GPS, a shift
+    | in progress), so a time limit there would end tracking. 0 turns a role's limit off.
+    */
+    'idle_minutes' => [
+        'operator' => (int) env('SANCTUM_OPERATOR_IDLE_MINUTES', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Token Prefix
     |--------------------------------------------------------------------------
     |
