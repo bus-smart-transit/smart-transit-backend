@@ -39,6 +39,7 @@ class ShiftBlockService
         private FcmService $fcmService,
         private ShiftBlockAssignmentService $assignments,
         private TripCancellationService $cancellations,
+        private FleetScheduleGuard $fleetGuard,
     ) {}
 
     /**
@@ -112,6 +113,18 @@ class ShiftBlockService
         // Rest Rule.
         $this->assertRestThresholdMet('driver', $payload['driver_id'], $scheduledDate, $legTimes[0]);
         $this->assertRestThresholdMet('conductor', $payload['conductor_id'], $scheduledDate, $legTimes[0]);
+
+        // The bus must run this route at every leg's time and not already be on another trip then. Checked for all legs
+        // before anything is created, so a refusal leaves no half-made block.
+        foreach ($legTimes as $index => $time) {
+            $this->fleetGuard->assertCanSchedule(
+                (int) $fleetRoute->fleet_route_id,
+                (string) $scheduledDate,
+                (string) $time,
+                $this->expectedLegDirectionFromIndex($index),
+                ServiceType::normalize($payload['service_type'] ?? null),
+            );
+        }
 
         $block = $this->shiftBlockRepository->create([
             'fleet_id' => $fleetRoute->fleet_id,

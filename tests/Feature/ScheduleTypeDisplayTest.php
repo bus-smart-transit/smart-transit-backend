@@ -86,7 +86,8 @@ it('derives the run pattern from the block for block legs and from the stored tr
 it('labels a one-leg block One-way run, a multi-leg block Round-trip run, and a standalone trip by its stored trip_type', function () {
     $f = sdFixture();
     $oneLeg = sdBlock($f, ['06:00']);
-    $fourLegs = sdBlock($f, ['06:00', '09:00', '12:00', '15:00']);
+    // The same bus cannot be on the one-leg block and the four-leg block at the same time, so the second starts later.
+    $fourLegs = sdBlock($f, ['08:00', '11:00', '14:00', '17:00']);
     $standaloneRound = $f['mk'](['trip_type' => 'round_trip', 'return_departure_time' => '17:00', 'departure_time' => '10:00']);
     $standaloneOne = $f['mk'](['departure_time' => '11:00']);
 

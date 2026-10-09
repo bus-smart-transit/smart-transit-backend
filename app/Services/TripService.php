@@ -26,6 +26,7 @@ class TripService
         private LegProgressionService $legs,
         private TripCancellationService $cancellations,
         private RouteDurationFactorService $durationFactors,
+        private FleetScheduleGuard $fleetGuard,
     ) {}
 
     /**
@@ -57,6 +58,16 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
+        // The bus must be running this route at that time, and not already on another trip then.
+        if (! empty($payload['fleet_route_id']) && ! empty($payload['departure_time']) && ! empty($payload['trip_date'])) {
+            $this->fleetGuard->assertCanSchedule(
+                (int) $payload['fleet_route_id'],
+                (string) $payload['trip_date'],
+                (string) $payload['departure_time'],
+                $payload['leg_direction'] ?? null,
+                $payload['service_type'] ?? null,
+            );
+        }
         // StoreTripRequest only checks driver_id/conductor_id exist as SOME
         // company_users record (not their role) — validate the role here,
         // the same way assignDriver()/assignConductor() already do, so a
@@ -302,6 +313,16 @@ class TripService
             || (int) $trip->current_standing_capacity > (int) $target->fleet->standing_capacity) {
             throw ValidationException::withMessages(['fleet_route_id' => ['That bus does not have room for the tickets already sold on this trip.']]);
         }
+
+        // The other bus must be free at this trip's time (this trip itself does not count against it).
+        $this->fleetGuard->assertCanSchedule(
+            (int) $target->fleet_route_id,
+            $trip->trip_date->toDateString(),
+            (string) $trip->departure_time,
+            $trip->leg_direction,
+            $trip->service_type,
+            (int) $trip->trip_id,
+        );
 
         DB::transaction(function () use ($trip, $target) {
             \App\Models\Trip::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);

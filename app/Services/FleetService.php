@@ -107,6 +107,18 @@ class FleetService
     // $payload = ['route_id','start_time','end_time']
     public function assignRouteToFleet(int $fleetId, array $payload): object
     {
+        // The same route cannot be assigned to a bus twice: two rows would double its trips and its list entries.
+        // To change the hours, the Operator removes or edits the existing assignment.
+        $alreadyAssigned = \App\Models\FleetRoute::where('fleet_id', $fleetId)
+            ->where('route_id', $payload['route_id'] ?? null)
+            ->where('status', 'active')
+            ->exists();
+        if ($alreadyAssigned) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'route_id' => ['This bus already has this route assigned.'],
+            ]);
+        }
+
         return $this->fleetRouteRepository->create(array_merge(
             $payload,
             ['fleet_id' => $fleetId, 'status' => 'active']
