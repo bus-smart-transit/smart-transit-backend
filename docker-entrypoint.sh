@@ -37,5 +37,10 @@ php artisan sanctum:prune-expired --hours=24
 echo "[entrypoint] Starting queue worker (route geometry regeneration)..."
 php artisan queue:work --sleep=3 --tries=1 --max-time=3600 &
 
+# The scheduled jobs in routes/console.php (delayed-trip push, release of expired payment holds, deferred refunds,
+# nightly reports) only run if something calls the scheduler every minute. Without this they never ran in the container.
+echo "[entrypoint] Starting scheduler (routes/console.php)..."
+php artisan schedule:work &
+
 echo "[entrypoint] Starting Laravel on 0.0.0.0:8000..."
 exec php artisan serve --host=0.0.0.0 --port=8000

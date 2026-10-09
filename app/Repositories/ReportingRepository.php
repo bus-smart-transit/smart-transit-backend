@@ -458,7 +458,9 @@ class ReportingRepository
             ->whereIn('payment_id', array_keys($inScopePaymentIds))
             ->get();
 
-        $totalPointsRedeemed = (int) $redemptions->sum(fn ($r) => abs($r->points));
+        // Net per payment: points taken at checkout minus points given back when the payment did not go through.
+        $netByPayment = $redemptions->groupBy('payment_id')->map(fn ($rows) => max(0, -1 * (int) $rows->sum('points')));
+        $totalPointsRedeemed = (int) $netByPayment->sum();
 
         return [
             'fleet_id' => $fleetId,
@@ -468,9 +470,10 @@ class ReportingRepository
             ],
             'channels' => array_values($channelData),
             'reward_redemptions' => [
-                'redemption_count' => $redemptions->count(),
+                'redemption_count' => $netByPayment->filter(fn ($points) => $points > 0)->count(),
                 'total_points_redeemed' => $totalPointsRedeemed,
-                'total_value_php' => round($totalPointsRedeemed * RewardService::PESOS_PER_POINT, 2),
+                // What the passenger actually saved: a point is worth the checkout discount, not the earning rate.
+                'total_value_php' => round($totalPointsRedeemed * RewardService::REDEMPTION_PESOS_PER_POINT, 2),
             ],
         ];
     }

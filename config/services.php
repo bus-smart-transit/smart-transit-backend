@@ -40,6 +40,8 @@ return [
         'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
         'ca_bundle' => env('PAYMONGO_CA_BUNDLE'),
         'verify_ssl' => env('PAYMONGO_VERIFY_SSL', true),
+        // A correctly signed webhook older than this many seconds is refused (replay protection). 0 turns it off.
+        'webhook_tolerance_s' => (int) env('PAYMONGO_WEBHOOK_TOLERANCE_S', 86400),
     ],
 
     // Batch 15, Items 2/3: Firebase Cloud Messaging (push notifications).

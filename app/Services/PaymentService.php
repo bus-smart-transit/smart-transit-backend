@@ -182,9 +182,10 @@ class PaymentService
                         ]);
                     }
 
-                    $maxRedeemableByAmount = max(0, (int) floor($total - 1));
+                    $perPoint = RewardService::REDEMPTION_PESOS_PER_POINT;
+                    $maxRedeemableByAmount = max(0, (int) floor(($total - 1) / $perPoint));
                     $rewardPointsApplied = min($pointsRequested, $currentPoints, $maxRedeemableByAmount);
-                    $rewardDiscount = (float) $rewardPointsApplied;
+                    $rewardDiscount = (float) ($rewardPointsApplied * $perPoint);
 
                     if ($rewardPointsApplied <= 0) {
                         throw ValidationException::withMessages([
@@ -220,6 +221,24 @@ class PaymentService
                 // customized session expiry.
                 $payment->hold_expires_at = Carbon::now()->addMinutes(15);
                 $payment->save();
+
+                // The points are taken here, in the same transaction as the hold and BEFORE the gateway is asked for a
+                // session, in one atomic statement. If they are gone (another checkout spent them a moment ago) the
+                // whole checkout, hold included, is undone and nobody gets a discount that was not paid for.
+                if ($passengerId && $rewardPointsApplied > 0) {
+                    $taken = $this->rewardService->redeemPoints(
+                        $passengerId,
+                        $rewardPointsApplied,
+                        'Redeemed during checkout: '.$payment->transaction_reference,
+                        $payment->payment_id,
+                    );
+
+                    if (! $taken) {
+                        throw ValidationException::withMessages([
+                            'reward_points_to_use' => ['Those reward points are no longer available. Please try again.'],
+                        ]);
+                    }
+                }
 
                 return [
                     'payment' => $payment,
@@ -260,7 +279,7 @@ class PaymentService
                 throw $e;
             }
 
-            DB::transaction(function () use ($session, $payment, $passengerId, $prepared) {
+            DB::transaction(function () use ($session, $payment) {
                 $freshPayment = $this->paymentRepository->findById($payment->payment_id);
                 if (! $freshPayment) {
                     throw new \RuntimeException('Payment record no longer exists.');
@@ -269,15 +288,6 @@ class PaymentService
                 $freshPayment->gateway_reference = $session['id'];
                 $freshPayment->payment_intent_id = $session['attributes']['payment_intent']['id'] ?? null;
                 $freshPayment->save();
-
-                if ($passengerId && ((int) $prepared['reward_points_applied']) > 0) {
-                    $this->rewardService->redeemPoints(
-                        $passengerId,
-                        (int) $prepared['reward_points_applied'],
-                        'Redeemed during checkout: '.$freshPayment->transaction_reference,
-                        $freshPayment->payment_id,
-                    );
-                }
             });
 
             Log::info('Checkout finalized for redirect', [
@@ -403,26 +413,65 @@ class PaymentService
      * back (including the status change), so the webhook can be safely
      * retried by PayMongo instead of leaving a half-issued purchase.
      *
-     * Idempotent: safe to call again on webhook redelivery.
+     * Idempotent: safe to call again on webhook redelivery. One delivery at a time per payment (row lock), so two
+     * deliveries at the same instant cannot both issue tickets.
+     *
+     * A payment that arrives AFTER its hold was released (the hold expired, or an earlier attempt in the same checkout
+     * failed and the customer then paid) is honoured only if its seats are still free, the trip is still taking
+     * bookings and the reward points it used can be taken again. Otherwise no ticket is issued and the payment is
+     * marked 'needs_refund' (the money was taken, so a person must refund it) and the Operator is told.
      */
     public function finalizeOnlinePayment(Payment $payment): void
     {
         RlsContext::withBypass(function () use ($payment) {
-            if ($payment->tickets()->exists()) {
-                Log::info('PaymentService: tickets already issued for this payment, skipping.', ['payment_id' => $payment->payment_id]);
-                $this->confirmOnlinePayment($payment->payment_id);
+            $outcome = DB::transaction(function () use ($payment) {
+                $locked = Payment::whereKey($payment->payment_id)->lockForUpdate()->first() ?? $payment;
 
+                if ($locked->tickets()->exists()) {
+                    Log::info('PaymentService: tickets already issued for this payment, skipping.', ['payment_id' => $locked->payment_id]);
+                    $this->confirmOnlinePayment($locked->payment_id);
+
+                    return 'already_issued';
+                }
+
+                if ($locked->status === 'needs_refund') {
+                    return 'needs_refund'; // already flagged: a redelivery must not issue tickets now
+                }
+
+                if (in_array($locked->status, ['expired', 'failed'], true) && ! $this->reclaimReleasedHold($locked)) {
+                    $this->paymentRepository->markStatus($locked->payment_id, 'needs_refund', false);
+
+                    return 'needs_refund';
+                }
+
+                $this->confirmOnlinePayment($locked->payment_id);
+
+                foreach ($locked->items_payload ?? [] as $reservedItem) {
+                    $passengerId = $reservedItem['passenger_id'] ?? null;
+                    $this->ticketService->finalizeTicket($reservedItem, $passengerId, $locked->payment_id);
+                }
+
+                return 'issued';
+            });
+
+            if ($outcome === 'already_issued') {
                 return;
             }
 
-            DB::transaction(function () use ($payment) {
-                $this->confirmOnlinePayment($payment->payment_id);
+            if ($outcome === 'needs_refund') {
+                Log::error('PaymentService: a payment arrived after its hold was released and could not be honoured; it needs a refund.', [
+                    'payment_id' => $payment->payment_id,
+                    'transaction_reference' => $payment->transaction_reference,
+                ]);
+                $this->notifyOperators(
+                    $payment,
+                    'Payment needs a refund',
+                    'A payment (transaction '.$payment->transaction_reference.') arrived after its seats were released and no ticket was issued. Please refund it.',
+                    'payment_needs_refund',
+                );
 
-                foreach ($payment->items_payload ?? [] as $reservedItem) {
-                    $passengerId = $reservedItem['passenger_id'] ?? null;
-                    $this->ticketService->finalizeTicket($reservedItem, $passengerId, $payment->payment_id);
-                }
-            });
+                return;
+            }
 
             // Batch 15, Item 3: push the relevant Operator(s) so their
             // dashboard can react (silent refresh) instead of waiting on
@@ -438,11 +487,50 @@ class PaymentService
     }
 
     /**
+     * Takes the seats (and the reward points) of a payment whose hold was released, again. All or nothing: the
+     * attempt runs in its own savepoint, so a refusal leaves nothing half-taken.
+     */
+    private function reclaimReleasedHold(Payment $payment): bool
+    {
+        try {
+            DB::transaction(function () use ($payment) {
+                foreach ($payment->items_payload ?? [] as $reservedItem) {
+                    $trip = $this->tripRepository->findById((int) ($reservedItem['trip_id'] ?? 0));
+                    if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
+                        throw ValidationException::withMessages(['trip' => ['This trip is not accepting tickets.']]);
+                    }
+
+                    // Throws "This trip is full" when the seat or standing slot is gone.
+                    $this->ticketService->reserveFromTemplate($reservedItem);
+                }
+
+                if (! $this->rewardService->reclaimRedeemedPoints($payment->payment_id)) {
+                    throw ValidationException::withMessages(['reward_points_to_use' => ['The reward points are no longer available.']]);
+                }
+            });
+        } catch (ValidationException) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Resolves the unique set of Operators who own the trip(s) covered by
      * this payment (a multi-item cart can span more than one trip/fleet)
      * and sends each one a push notification.
      */
     private function notifyOperatorsOfPayment(Payment $payment): void
+    {
+        $this->notifyOperators(
+            $payment,
+            'Payment Confirmed',
+            "A passenger payment of \u{20B1}".number_format((float) $payment->amount, 2)." was just confirmed (transaction {$payment->transaction_reference}).",
+            'payment_confirmed',
+        );
+    }
+
+    private function notifyOperators(Payment $payment, string $title, string $body, string $type): void
     {
         $tripIds = collect($payment->items_payload ?? [])
             ->pluck('trip_id')
@@ -463,9 +551,9 @@ class PaymentService
 
             $this->fcmService->sendToUser(
                 $operatorUser,
-                'Payment Confirmed',
-                "A passenger payment of \u{20B1}".number_format((float) $payment->amount, 2)." was just confirmed (transaction {$payment->transaction_reference}).",
-                ['type' => 'payment_confirmed', 'payment_id' => $payment->payment_id],
+                $title,
+                $body,
+                ['type' => $type, 'payment_id' => $payment->payment_id],
             );
             $notifiedUserIds[] = $operatorUser->user_id;
         }
@@ -498,6 +586,9 @@ class PaymentService
                 foreach ($payment->items_payload ?? [] as $reservedItem) {
                     $this->ticketService->releaseTicketHold($reservedItem);
                 }
+
+                // The points this checkout took come back with the seats (once, however many times this runs).
+                $this->rewardService->returnRedeemedPoints($payment->payment_id);
             });
 
             // Notifications audit follow-up: let the Passenger know their

@@ -181,7 +181,7 @@ class PayMongoService
         }
 
         try {
-            return $this->client->webhooks->constructEvent([
+            $event = $this->client->webhooks->constructEvent([
                 'payload' => $payload,
                 'signature_header' => $signatureHeader,
                 'webhook_secret_key' => config('services.paymongo.webhook_secret'),
@@ -194,5 +194,18 @@ class PayMongoService
             Log::warning('PayMongo webhook rejected: malformed signature or payload.', ['error' => $e->getMessage()]);
             return null;
         }
+
+        // The signature proves PayMongo sent it, not WHEN. The SDK does not look at the age, so a captured delivery
+        // could be replayed forever. The timestamp is part of what was signed (it cannot be changed without breaking
+        // the signature), so it is checked here against a tolerance wide enough for PayMongo's own retries.
+        $tolerance = (int) config('services.paymongo.webhook_tolerance_s', 86400);
+        if ($tolerance > 0 && preg_match('/(?:^|,)\s*t=(\d+)/', $signatureHeader, $match)) {
+            if (abs(time() - (int) $match[1]) > $tolerance) {
+                Log::warning('PayMongo webhook rejected: signature timestamp outside the allowed window.');
+                return null;
+            }
+        }
+
+        return $event;
     }
 }

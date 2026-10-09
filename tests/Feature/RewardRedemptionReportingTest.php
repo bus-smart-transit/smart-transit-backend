@@ -143,5 +143,6 @@ test('payment channel breakdown includes reward redemption value', function () {
     expect($result)->toHaveKey('reward_redemptions');
     expect($result['reward_redemptions']['redemption_count'])->toBe(1);
     expect($result['reward_redemptions']['total_points_redeemed'])->toBe(50);
-    expect($result['reward_redemptions']['total_value_php'])->toBe(1000.0);
+    // A redeemed point is worth the checkout discount (PHP 1), not the earning rate (PHP 20).
+    expect($result['reward_redemptions']['total_value_php'])->toBe(50.0);
 });
