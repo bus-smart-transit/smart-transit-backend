@@ -10,6 +10,7 @@ use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
 use App\Http\Controllers\TrafficController;
+use App\Http\Controllers\UnfulfilledPaymentController;
 use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\RemittanceController;
@@ -263,6 +264,11 @@ Route::prefix('operator')
         Route::get('remittances', [RemittanceController::class, 'index'])->middleware('throttle:60,1,remit-list');
         Route::post('remittances/{id}/confirm', [RemittanceController::class, 'confirm'])->where('id', '[0-9]+')->middleware('throttle:30,1,remit-confirm');
         Route::post('remittances/{id}/resolve', [RemittanceController::class, 'resolve'])->where('id', '[0-9]+')->middleware('throttle:30,1,remit-resolve');
+
+        // Online payments that took money but could not become tickets (a payment that arrived after its seats were released
+        // and could not be honoured), and the Operator's record that they refunded them. Own throttle buckets.
+        Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'index'])->middleware('throttle:60,1,refund-list');
+        Route::post('payments/{id}/refunded', [UnfulfilledPaymentController::class, 'recordRefund'])->where('id', '[0-9]+')->middleware('throttle:30,1,refund-record');
 
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);

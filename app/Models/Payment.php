@@ -68,6 +68,9 @@ class Payment extends Model
         'gateway_payment_id',
         'items_payload',
         'hold_expires_at',
+        'refunded_at',
+        'refund_note',
+        'refunded_by_user_id',
     ];
 
     protected function casts(): array
@@ -75,6 +78,7 @@ class Payment extends Model
         return [
             'payment_created' => 'datetime',
             'hold_expires_at' => 'datetime',
+            'refunded_at' => 'datetime',
             // Stores the reserved items (trip_id, seat_type, stop ids OR
             // coordinates, fare_rule_id, distance_km, amount) locked in at
             // checkout time, so the webhook can create the actual ticket
