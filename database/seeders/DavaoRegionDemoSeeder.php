@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
+use App\Models\PassengerUser;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
@@ -40,6 +41,19 @@ class DavaoRegionDemoSeeder extends Seeder
         ['driver2', 'driver2@smarttransit.com', 'driver', 'Demo Driver Two', '09000000004'],
         ['conductor', 'conductor@smarttransit.com', 'conductor', 'Demo Chauffeur One', '09000000005'],
         ['conductor2', 'conductor2@smarttransit.com', 'conductor', 'Demo Chauffeur Two', '09000000006'],
+        ['driver3', 'driver3@smarttransit.com', 'driver', 'Demo Driver Three', '09000000007'],
+        ['driver4', 'driver4@smarttransit.com', 'driver', 'Demo Driver Four', '09000000008'],
+        ['conductor3', 'conductor3@smarttransit.com', 'conductor', 'Demo Chauffeur Three', '09000000009'],
+        ['conductor4', 'conductor4@smarttransit.com', 'conductor', 'Demo Chauffeur Four', '09000000010'],
+    ];
+
+    /** Mock passengers for trying bookings: [username, email, name, phone, address]. */
+    private const PASSENGERS = [
+        ['mockpassenger1', 'passenger1@smarttransit.com', 'Mock Passenger One', '09100000001', 'Tagum City'],
+        ['mockpassenger2', 'passenger2@smarttransit.com', 'Mock Passenger Two', '09100000002', 'Panabo City'],
+        ['mockpassenger3', 'passenger3@smarttransit.com', 'Mock Passenger Three', '09100000003', 'Digos City'],
+        ['mockpassenger4', 'passenger4@smarttransit.com', 'Mock Passenger Four', '09100000004', 'Nabunturan'],
+        ['mockpassenger5', 'passenger5@smarttransit.com', 'Mock Passenger Five', '09100000005', 'Bansalan'],
     ];
 
     /**
@@ -88,6 +102,7 @@ class DavaoRegionDemoSeeder extends Seeder
     {
         DB::transaction(function () {
             $staff = $this->accounts();
+            $this->passengers();
             $operator = $staff['operator'];
             foreach (self::ROUTES as $name => [$origin, $destination, $stops, $bus]) {
                 $route = Route::firstOrCreate(['route_name' => $name], ['origin' => $origin, 'destination' => $destination]);
@@ -118,6 +133,17 @@ class DavaoRegionDemoSeeder extends Seeder
         }
 
         return $made;
+    }
+
+    private function passengers(): void
+    {
+        foreach (self::PASSENGERS as [$username, $email, $name, $phone, $address]) {
+            $user = User::updateOrCreate(['email' => $email], ['username' => $username, 'password' => self::PASSWORD, 'role' => 'passenger']);
+            PassengerUser::firstOrCreate(
+                ['user_id' => $user->user_id],
+                ['passenger_uuid' => (string) \Illuminate\Support\Str::uuid(), 'name' => $name, 'phone_num' => $phone, 'address' => $address, 'birth_date' => now()->subYears(25)]
+            );
+        }
     }
 
     private function stops(Route $route, array $stops): void
