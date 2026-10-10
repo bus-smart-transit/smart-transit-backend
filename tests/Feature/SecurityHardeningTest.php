@@ -82,7 +82,7 @@ it('rejects invalid bearer token on optional auth routes', function () {
 
     $response
         ->assertStatus(401)
-        ->assertJsonPath('message', 'Invalid or expired authentication token.');
+        ->assertJsonPath('message', 'Your login is not valid or has expired. Please sign in again.');
 });
 
 it('still allows true guests on optional auth routes', function () {

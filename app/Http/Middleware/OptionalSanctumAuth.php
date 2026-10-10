@@ -25,7 +25,7 @@ class OptionalSanctumAuth
             if (! $user) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Invalid or expired authentication token.',
+                    'message' => 'Your login is not valid or has expired. Please sign in again.',
                 ], 401);
             }
 

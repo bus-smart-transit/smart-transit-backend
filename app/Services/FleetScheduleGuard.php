@@ -60,7 +60,7 @@ class FleetScheduleGuard
         if (! $inside) {
             throw ValidationException::withMessages([
                 'departure_time' => [sprintf(
-                    'This bus runs this route between %s and %s. A %s departure is outside that window.',
+                    'This bus runs this route between %s and %s. A %s departure is outside those hours.',
                     $this->clock($start), $this->clock($end), $this->clock($at),
                 )],
             ]);

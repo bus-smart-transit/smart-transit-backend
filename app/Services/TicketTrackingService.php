@@ -199,7 +199,7 @@ class TicketTrackingService
 
         return [
             'state' => $stale ? 'stale' : 'tracking',
-            'message' => $stale ? 'The last known position is a little old.' : null,
+            'message' => $stale ? 'The bus location is a little old.' : null,
         ] + $view;
     }
 

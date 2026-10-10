@@ -125,7 +125,7 @@ class RouteDurationFactorController extends Controller
             (int) config('shift_blocks.legs_per_block'),
         );
 
-        return $this->success($plan + ['note' => 'A suggestion only. Factors are configured by your team, not measured.'], 'Leg times suggested');
+        return $this->success($plan + ['note' => 'A suggestion only. These times come from your settings, not from measurements.'], 'Leg times suggested');
     }
 
     // ----------------------------------------------------------------

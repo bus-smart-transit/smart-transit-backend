@@ -56,11 +56,11 @@ class PaymentController extends Controller
         } catch (ValidationException $e) {
             return $this->error('Checkout validation failed.', 422, $e->errors());
         } catch (ConnectionException $e) {
-            return $this->error('Unable to connect to payment gateway. Please verify SSL certificate settings and try again.', 503);
+            return $this->error('We could not reach the payment service. Please try again.', 503);
         } catch (QueryException $e) {
             $sqlState = $e->getCode();
             if ($sqlState === '57014') {
-                return $this->error('Checkout query timed out. Please retry in a few seconds.', 503);
+                return $this->error('Checking the payment took too long. Please try again in a few seconds.', 503);
             }
             return $this->error('Checkout failed while processing database records.', 500);
         } catch (\RuntimeException $e) {

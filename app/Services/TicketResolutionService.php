@@ -146,7 +146,7 @@ class TicketResolutionService
             }
 
             if ($locked->status !== TripCancellationService::AWAITING_CHOICE) {
-                throw ValidationException::withMessages(['ticket' => ['This ticket is not waiting for a choice. Only tickets of a trip the operator cancelled can be rebooked or refunded.']]);
+                throw ValidationException::withMessages(['ticket' => ['This ticket cannot be rebooked or refunded. Only tickets for a trip the operator cancelled can be.']]);
             }
             $cancellation = TripCancellation::where('trip_id', $locked->trip_id)->first();
             if (! $cancellation) {

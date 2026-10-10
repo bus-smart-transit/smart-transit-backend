@@ -80,7 +80,7 @@ class TicketController extends Controller
         if ($boardedCount === 0 && $totalCount > 0) {
             $allUsedOrRescanned = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
                 $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
-                return str_contains($reason, 'invalid/used');
+                return str_contains($reason, 'not valid or has already been used');
             });
 
             $allFutureDated = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
@@ -94,7 +94,7 @@ class TicketController extends Controller
             });
 
             if ($allUsedOrRescanned) {
-                return $this->error('This ticket is invalid/used.', 422, [
+                return $this->error('This ticket is not valid or has already been used.', 422, [
                     'tickets' => $tickets,
                 ]);
             }

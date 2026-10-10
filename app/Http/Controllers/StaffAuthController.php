@@ -116,7 +116,7 @@ class StaffAuthController extends Controller
 
         return $this->success([
             'two_factor_enabled' => (bool) $request->user()->two_factor_enabled,
-        ], '2FA preference updated successfully.');
+        ], 'Extra login security updated.');
     }
 
     // Batch 15, Items 4/9: "Available" toggle — distinct from shift/pairing
@@ -190,7 +190,7 @@ class StaffAuthController extends Controller
 
         return $this->success([
             'email_masked' => $this->maskEmailLocal($user->email),
-        ], 'Step-up OTP sent to your email.');
+        ], 'A security code was sent to your email.');
     }
 
     /**
@@ -228,7 +228,7 @@ class StaffAuthController extends Controller
         return $this->success([
             'step_up_token' => $rawToken,
             'expires_in'    => $this->stepUpService->ttlSeconds(),
-        ], 'Step-up verified. Token valid for 15 minutes.');
+        ], 'Identity check complete. It stays valid for 15 minutes.');
     }
 
     /**
@@ -266,7 +266,7 @@ class StaffAuthController extends Controller
         return $this->success([
             'step_up_token' => $rawToken,
             'expires_in'    => $this->stepUpService->ttlSeconds(),
-        ], 'Step-up verified. Token valid for 15 minutes.');
+        ], 'Identity check complete. It stays valid for 15 minutes.');
     }
 
     private function maskEmailLocal(string $email): string

@@ -132,7 +132,7 @@ class AuthController extends Controller
 
         return $this->success(
             ['two_factor_enabled' => (bool) $request->user()->two_factor_enabled],
-            '2FA preference updated successfully.'
+            'Extra login security updated.'
         );
     }
 

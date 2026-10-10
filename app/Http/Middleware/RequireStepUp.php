@@ -50,7 +50,7 @@ class RequireStepUp
 
         if ($tokenUserId === null) {
             return response()->json([
-                'message' => 'Step-up token is invalid or has expired. Please re-authenticate.',
+                'message' => 'Your extra security check is not valid or has expired. Please verify again.',
                 'step_up' => true,
             ], 403);
         }

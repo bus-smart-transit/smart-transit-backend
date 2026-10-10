@@ -813,7 +813,7 @@ class TicketService
             ];
 
             if ($ticket->status !== 'valid') {
-                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid/used.']);
+                $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is not valid or has already been used.']);
 
                 continue;
             }
@@ -854,7 +854,7 @@ class TicketService
 
             if (! $this->ticketRepository->markBoarded($ticket->ticket_id)) {
                 // Boarded by another scan between the read above and this claim.
-                $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => true, 'skip_reason' => 'This ticket is invalid/used.']);
+                $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => true, 'skip_reason' => 'This ticket is not valid or has already been used.']);
 
                 continue;
             }
