@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Services;
+
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use Illuminate\Support\Facades\Http;
@@ -13,8 +15,7 @@ class StopService
         private RouteStopRepository $routeStopRepository,
         private RouteGeometryGenerator $geometryGenerator,
         private RegionService $regionService,
-    ) {
-    }
+    ) {}
 
     // $payload = ['stop_name','latitude','longitude','municipality'(optional)]
     public function createStop(array $payload): object
@@ -80,7 +81,17 @@ class StopService
 
     public function deleteStop(int $stopId): bool
     {
-        return $this->stopRepository->delete($stopId);
+        $routeIds = $this->routeStopRepository->routeIdsForStop($stopId);
+        $deleted = $this->stopRepository->delete($stopId);
+
+        if ($deleted) {
+            foreach ($routeIds as $routeId) {
+                $this->routeStopRepository->compactStopOrder($routeId);
+                $this->geometryGenerator->queueRegeneration($routeId);
+            }
+        }
+
+        return $deleted;
     }
 
     private function resolveCoordinates(array $payload, bool $requireCoordinates = true): array
@@ -131,7 +142,7 @@ class StopService
             }
         }
 
-        if (!$requireCoordinates) {
+        if (! $requireCoordinates) {
             throw ValidationException::withMessages([
                 'location' => ['Unable to resolve stop coordinates. Please provide a clearer location name or manual coordinates.'],
             ]);

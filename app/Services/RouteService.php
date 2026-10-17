@@ -1,11 +1,17 @@
 <?php
+
 namespace App\Services;
+
+use App\Models\Route;
+use App\Models\User;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class RouteService
@@ -16,8 +22,7 @@ class RouteService
         private StopRepository $stopRepository,
         private RouteGeometryRepository $geometryRepository,
         private RouteGeometryGenerator $geometryGenerator,
-    ) {
-    }
+    ) {}
 
     // $payload = ['origin','destination','route_name']
     public function createRoute(array $payload): object
@@ -25,14 +30,19 @@ class RouteService
         return $this->routeRepository->create($payload);
     }
 
-    public function listRoutes(): object
+    public function listRoutes(?User $user = null): object
     {
-        return $this->routeRepository->all();
+        $routes = $this->routeRepository->all();
+        $ownedRouteIds = $this->ownedRouteIds($user);
+
+        return $routes->each(fn (Route $route) => $this->attachGeometryState($route, $user, $ownedRouteIds));
     }
 
-    public function getRouteWithStops(int $routeId): ?object
+    public function getRouteWithStops(int $routeId, ?User $user = null): ?object
     {
-        return $this->routeRepository->findWithStops($routeId);
+        $route = $this->routeRepository->findWithStops($routeId);
+
+        return $route ? $this->attachGeometryState($route, $user, $this->ownedRouteIds($user)) : null;
     }
 
     /**
@@ -44,21 +54,32 @@ class RouteService
      */
     public function getPublicStopsForRoute(int $routeId, ?string $direction = 'outbound'): Collection
     {
+        $geometry = $this->geometryRepository->get($routeId);
+
         return $this->routeStopRepository->getOrderedStopsForDirection($routeId, $direction)
-            ->map(fn ($rs) => [
-                'stop_id' => $rs->stop_id,
-                'stop_name' => $rs->stop?->stop_name,
-                'municipality' => $rs->stop?->municipality,
-                'latitude' => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
-                'longitude' => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
-                'snapped_latitude' => $rs->snapped_latitude !== null ? (float) $rs->snapped_latitude : null,
-                'snapped_longitude' => $rs->snapped_longitude !== null ? (float) $rs->snapped_longitude : null,
-                'stop_order' => $rs->stop_order,
-                'stop_type' => $rs->stop_type ?? 'stop',
-                'served_by_express' => (bool) $rs->served_by_express,
-                'express_offset_min' => $rs->express_offset_min !== null ? (int) $rs->express_offset_min : null,
-                'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
-            ])
+            ->map(function ($rs) use ($geometry) {
+                $latitude = $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null;
+                $longitude = $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null;
+                $projection = $geometry && $latitude !== null && $longitude !== null
+                    ? GeoLine::project($geometry['coordinates'], $latitude, $longitude)
+                    : null;
+
+                return [
+                    'stop_id' => $rs->stop_id,
+                    'stop_name' => $rs->stop?->stop_name,
+                    'municipality' => $rs->stop?->municipality,
+                    'latitude' => $latitude,
+                    'longitude' => $longitude,
+                    'snapped_latitude' => $rs->snapped_latitude !== null ? (float) $rs->snapped_latitude : null,
+                    'snapped_longitude' => $rs->snapped_longitude !== null ? (float) $rs->snapped_longitude : null,
+                    'distance_to_line_m' => $projection ? round((float) $projection['distance_to_line_m'], 1) : null,
+                    'stop_order' => $rs->stop_order,
+                    'stop_type' => $rs->stop_type ?? 'stop',
+                    'served_by_express' => (bool) $rs->served_by_express,
+                    'express_offset_min' => $rs->express_offset_min !== null ? (int) $rs->express_offset_min : null,
+                    'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
+                ];
+            })
             ->values();
     }
 
@@ -83,21 +104,81 @@ class RouteService
             'geometry_stale' => (bool) ($status['geometry_stale'] ?? false),
             'geometry_generated_at' => $status['geometry_generated_at'] ?? null,
             'geometry_error' => $status['geometry_error'] ?? null,
+            'geometry_regeneration_pending' => Cache::has(RouteGeometryGenerator::pendingCacheKey($routeId)),
         ];
     }
 
-    public function queueGeometryRegeneration(int $routeId): void
+    public function canRegenerateGeometry(int $routeId, ?User $user): bool
     {
-        $this->geometryGenerator->queueRegeneration($routeId);
+        return $this->canRegenerateFromOwnedRoutes($routeId, $user, $this->ownedRouteIds($user));
+    }
+
+    public function queueManualGeometryRegeneration(int $routeId): void
+    {
+        if (! Route::where('route_id', $routeId)->exists()) {
+            abort(404);
+        }
+
+        $pendingKey = RouteGeometryGenerator::pendingCacheKey($routeId);
+        if (Cache::has($pendingKey)) {
+            abort(409, 'A route line redraw is already running.');
+        }
+
+        $cooldownMinutes = max(1, (int) config('route_geometry.redraw_cooldown_minutes', 15));
+        $cooldownKey = "route_geometry:redraw_cooldown:{$routeId}";
+        if (! Cache::add($cooldownKey, now()->toIso8601String(), $cooldownMinutes * 60)) {
+            abort(429, "This route was redrawn recently. Try again in {$cooldownMinutes} minutes.");
+        }
+
+        try {
+            $this->geometryGenerator->queueRegeneration($routeId);
+            AuditLogger::log('route.geometry_redraw_queued', 'Route', $routeId, [
+                'requested_at' => now()->toIso8601String(),
+                'cooldown_minutes' => $cooldownMinutes,
+            ]);
+        } catch (\Throwable $exception) {
+            Cache::forget($cooldownKey);
+            Cache::forget($pendingKey);
+            throw $exception;
+        }
+    }
+
+    private function ownedRouteIds(?User $user): array
+    {
+        if (! $user || $user->role !== 'operator' || ! $user->companyProfile?->company_user_id) {
+            return [];
+        }
+
+        return DB::table('fleets_routes as fr')
+            ->join('fleets as f', 'f.fleet_id', '=', 'fr.fleet_id')
+            ->where('f.company_user_id', (int) $user->companyProfile->company_user_id)
+            ->distinct()
+            ->pluck('fr.route_id')
+            ->map(fn ($routeId) => (int) $routeId)
+            ->all();
+    }
+
+    private function canRegenerateFromOwnedRoutes(int $routeId, ?User $user, array $ownedRouteIds): bool
+    {
+        return $user?->role === 'admin'
+            || ($user?->role === 'operator' && in_array($routeId, $ownedRouteIds, true));
+    }
+
+    private function attachGeometryState(Route $route, ?User $user, array $ownedRouteIds): Route
+    {
+        $route->setAttribute('geometry_regeneration_pending', Cache::has(RouteGeometryGenerator::pendingCacheKey((int) $route->route_id)));
+        $route->setAttribute('can_regenerate_geometry', $this->canRegenerateFromOwnedRoutes((int) $route->route_id, $user, $ownedRouteIds));
+
+        return $route;
     }
 
     public function setAllowCustomDropoff(int $routeId, bool $allow): bool
     {
         // The older on/off switch: on keeps designated-points mode if that is what the route had, otherwise free pin.
-        $current = \App\Models\Route::where('route_id', $routeId)->value('custom_dropoff_mode');
+        $current = Route::where('route_id', $routeId)->value('custom_dropoff_mode');
         $mode = ! $allow
-            ? \App\Models\Route::MODE_OFF
-            : ($current === \App\Models\Route::MODE_DESIGNATED ? $current : \App\Models\Route::MODE_FREE_PIN);
+            ? Route::MODE_OFF
+            : ($current === Route::MODE_DESIGNATED ? $current : Route::MODE_FREE_PIN);
 
         return $this->routeRepository->update($routeId, ['allow_custom_dropoff' => $allow, 'custom_dropoff_mode' => $mode]);
     }
@@ -105,12 +186,12 @@ class RouteService
     /** Batch 28 Stage 3, item 10: off | designated_points | free_pin (the old on/off flag follows it). */
     public function setCustomDropoffMode(int $routeId, string $mode): bool
     {
-        if (! in_array($mode, \App\Models\Route::MODES, true)) {
+        if (! in_array($mode, Route::MODES, true)) {
             return false;
         }
 
         return $this->routeRepository->update($routeId, [
-            'allow_custom_dropoff' => $mode !== \App\Models\Route::MODE_OFF,
+            'allow_custom_dropoff' => $mode !== Route::MODE_OFF,
             'custom_dropoff_mode' => $mode,
         ]);
     }
@@ -172,6 +253,7 @@ class RouteService
         $deleted = $this->routeStopRepository->delete($routeStopId);
 
         if ($deleted) {
+            $this->routeStopRepository->compactStopOrder($routeId);
             $this->geometryGenerator->queueRegeneration($routeId);
         }
 
@@ -182,7 +264,7 @@ class RouteService
     {
         $newStop = $this->stopRepository->findById($newStopId);
 
-        if (!$newStop || $newStop->latitude === null || $newStop->longitude === null || $orderedStops->isEmpty()) {
+        if (! $newStop || $newStop->latitude === null || $newStop->longitude === null || $orderedStops->isEmpty()) {
             return 0.0;
         }
 
@@ -193,6 +275,7 @@ class RouteService
         foreach ($orderedArray as $routeStop) {
             if ((int) $routeStop->stop_order < $newStopOrder) {
                 $prev = $routeStop;
+
                 continue;
             }
             if ((int) $routeStop->stop_order > $newStopOrder) {
@@ -208,6 +291,7 @@ class RouteService
                 $between = max(0.001, $this->haversineKm((float) $prevStop->latitude, (float) $prevStop->longitude, (float) $nextStop->latitude, (float) $nextStop->longitude));
                 $fromPrev = $this->haversineKm((float) $prevStop->latitude, (float) $prevStop->longitude, (float) $newStop->latitude, (float) $newStop->longitude);
                 $fraction = min(1, max(0, $fromPrev / $between));
+
                 return round((float) $prev->distance_from_origin_km + ($fraction * ((float) $next->distance_from_origin_km - (float) $prev->distance_from_origin_km)), 3);
             }
 
@@ -219,6 +303,7 @@ class RouteService
             if ($prevStop && $prevStop->latitude !== null && $prevStop->longitude !== null) {
                 return round((float) $prev->distance_from_origin_km + $this->haversineKm((float) $prevStop->latitude, (float) $prevStop->longitude, (float) $newStop->latitude, (float) $newStop->longitude), 3);
             }
+
             return round((float) $prev->distance_from_origin_km, 3);
         }
 
@@ -227,6 +312,7 @@ class RouteService
             if ($nextStop && $nextStop->latitude !== null && $nextStop->longitude !== null) {
                 return round(max(0, (float) $next->distance_from_origin_km - $this->haversineKm((float) $newStop->latitude, (float) $newStop->longitude, (float) $nextStop->latitude, (float) $nextStop->longitude)), 3);
             }
+
             return 0.0;
         }
 

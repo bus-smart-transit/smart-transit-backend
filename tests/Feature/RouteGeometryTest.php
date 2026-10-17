@@ -1,19 +1,29 @@
 <?php
 
+use App\Jobs\GenerateRouteGeometry;
+use App\Models\Fleet;
+use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteStop;
-use App\Models\Stop;
 use App\Models\StaffUser;
+use App\Models\Stop;
+use App\Models\Trip;
 use App\Models\User;
+use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TripRepository;
+use App\Services\FleetLocationService;
 use App\Services\RouteGeometryGenerator;
+use App\Services\RouteService;
 use App\Services\RouteSnapService;
 use App\Services\StopCoordinateValidator;
+use App\Services\StopService;
 use App\Support\Geo\GeoLine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 
@@ -22,7 +32,7 @@ uses(RefreshDatabase::class);
 // Data-driven fixture: any route, any stops. Coordinates are test data only.
 function makeRouteWithStops(array $points): Route
 {
-    $route = Route::create(['origin' => 'A', 'destination' => 'B', 'route_name' => 'Fixture ' . Str::random(4)]);
+    $route = Route::create(['origin' => 'A', 'destination' => 'B', 'route_name' => 'Fixture '.Str::random(4)]);
     foreach ($points as $i => [$name, $lat, $lng, $km]) {
         $stop = Stop::create(['stop_name' => $name, 'latitude' => $lat, 'longitude' => $lng]);
         RouteStop::create([
@@ -91,6 +101,20 @@ it('serves canonical geometry per direction and never per-request routes', funct
     Http::assertNothingSent();
 });
 
+it('reports each source stop offset from the stored line without replacing its coordinates', function () {
+    $route = makeRouteWithStops([['A', 7.0, 125.001, 0], ['B', 7.2, 125.001, 22]]);
+    app(RouteGeometryRepository::class)->save($route->route_id, fixtureLine());
+
+    $stops = $this->getJson("/api/routes/{$route->route_id}/stops")
+        ->assertSuccessful()
+        ->json('data');
+
+    expect((float) $stops[0]['latitude'])->toBe(7.0)
+        ->and((float) $stops[0]['longitude'])->toBe(125.001)
+        ->and($stops[0]['distance_to_line_m'])->toBeGreaterThan(100)
+        ->and($stops[0]['distance_to_line_m'])->toBeLessThan(120);
+});
+
 it('exposes stop_type and geometry_stale without leaking the raw column', function () {
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.1, 125.0, 10], ['C', 7.2, 125.0, 22]]);
     $firstId = RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->value('id');
@@ -122,6 +146,8 @@ it('regenerates geometry via ORS with snapped waypoints and continue_straight', 
 
     expect($result['ok'])->toBeTrue();
     expect(app(RouteGeometryRepository::class)->get($route->route_id)['coordinates'])->toHaveCount(3);
+    expect(app(RouteGeometryRepository::class)->status($route->route_id)['geometry_stale'])->toBeFalse();
+    expect(app(RouteGeometryRepository::class)->status($route->route_id)['geometry_generated_at'])->not->toBeNull();
     expect(RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->first()->snapped_latitude)->toEqual(7.0001);
 
     Http::assertSent(fn ($request) => str_contains($request->url(), '/v2/directions/')
@@ -149,19 +175,19 @@ it('flags stale and queues regeneration when a stop is added to a route', functi
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
     $extra = Stop::create(['stop_name' => 'Mid', 'latitude' => 7.1, 'longitude' => 125.0]);
 
-    $user = User::create(['username' => 'op_' . Str::random(5), 'email' => Str::random(6) . '@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
+    $user = User::create(['username' => 'op_'.Str::random(5), 'email' => Str::random(6).'@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
     StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']);
 
     $this->actingAs($user->fresh())
         ->postJson("/api/operator/routes/{$route->route_id}/stops", ['stop_id' => $extra->stop_id, 'stop_order' => 3, 'distance_from_origin_km' => 23])
         ->assertSuccessful();
 
-    Queue::assertPushed(\App\Jobs\GenerateRouteGeometry::class, fn ($job) => $job->routeId === $route->route_id);
+    Queue::assertPushed(GenerateRouteGeometry::class, fn ($job) => $job->routeId === $route->route_id);
     expect(app(RouteGeometryRepository::class)->status($route->route_id)['geometry_stale'])->toBeTrue();
 });
 
 it('rejects invalid stop coordinates on create', function (float $lat, float $lng) {
-    $user = User::create(['username' => 'op_' . Str::random(5), 'email' => Str::random(6) . '@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
+    $user = User::create(['username' => 'op_'.Str::random(5), 'email' => Str::random(6).'@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
     StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']);
 
     $this->actingAs($user->fresh())
@@ -180,6 +206,22 @@ it('accepts a valid in-area stop coordinate', function () {
     expect(app(StopCoordinateValidator::class)->problems(7.07, 125.6))->toBe([]);
 });
 
+it('rejects a stop update when the routing provider cannot snap it near a road', function () {
+    config(['route_geometry.ors.api_key' => 'test-key']);
+    Http::fake(['*/v2/snap/*' => Http::response(['locations' => [null]])]);
+    $operator = makeRouteRedrawStaff('operator');
+    $stop = Stop::create(['stop_name' => 'Existing stop', 'latitude' => 7.07, 'longitude' => 125.6]);
+
+    $this->actingAs($operator)
+        ->putJson("/api/operator/stops/{$stop->stop_id}", ['latitude' => 7.071, 'longitude' => 125.601])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['latitude']);
+
+    expect((float) $stop->fresh()->latitude)->toBe(7.07)
+        ->and((float) $stop->fresh()->longitude)->toBe(125.6);
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/v2/snap/'));
+});
+
 it('reports invalid stops without modifying them', function () {
     Stop::create(['stop_name' => 'Zero', 'latitude' => 0, 'longitude' => 0]);
     Stop::create(['stop_name' => 'Swapped', 'latitude' => 125.6, 'longitude' => 7.07]);
@@ -194,6 +236,35 @@ it('reports invalid stops without modifying them', function () {
     expect(Stop::where('stop_name', 'Zero')->first()->latitude)->toEqual(0);
 });
 
+it('compacts stop sequence and queues geometry when a stop is removed from one route', function () {
+    Queue::fake();
+    $route = makeRouteWithStops([
+        ['A', 7.0, 125.0, 0],
+        ['B', 7.1, 125.0, 10],
+        ['C', 7.2, 125.0, 20],
+        ['D', 7.3, 125.0, 30],
+    ]);
+    $removedRouteStopId = RouteStop::where('route_id', $route->route_id)->where('stop_order', 2)->value('id');
+
+    expect(app(RouteService::class)->removeStopFromRoute($route->route_id, (int) $removedRouteStopId))->toBeTrue();
+    expect(RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->pluck('stop_order')->map(fn ($order) => (int) $order)->all())->toBe([1, 2, 3]);
+    expect(RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->with('stop')->get()->pluck('stop.stop_name')->all())->toBe(['A', 'C', 'D']);
+    Queue::assertPushed(GenerateRouteGeometry::class, fn ($job) => $job->routeId === $route->route_id);
+});
+
+it('compacts and redraws every affected route when a global stop is deleted', function () {
+    Queue::fake();
+    $routeOne = makeRouteWithStops([['A', 7.0, 125.0, 0], ['Shared', 7.1, 125.0, 10], ['C', 7.2, 125.0, 20]]);
+    $shared = Stop::where('stop_name', 'Shared')->firstOrFail();
+    $routeTwo = makeRouteWithStops([['D', 7.3, 125.0, 0], ['E', 7.4, 125.0, 10], ['Shared', 7.1, 125.0, 20], ['F', 7.5, 125.0, 30]]);
+    RouteStop::where('route_id', $routeTwo->route_id)->where('stop_order', 3)->update(['stop_id' => $shared->stop_id]);
+
+    expect(app(StopService::class)->deleteStop($shared->stop_id))->toBeTrue();
+    expect(RouteStop::where('route_id', $routeOne->route_id)->orderBy('stop_order')->pluck('stop_order')->map(fn ($order) => (int) $order)->all())->toBe([1, 2]);
+    expect(RouteStop::where('route_id', $routeTwo->route_id)->orderBy('stop_order')->pluck('stop_order')->map(fn ($order) => (int) $order)->all())->toBe([1, 2, 3]);
+    Queue::assertPushed(GenerateRouteGeometry::class, 2);
+});
+
 it('refuses to run the GPS simulator unless explicitly enabled', function () {
     config(['route_geometry.gps.simulator_enabled' => false]);
 
@@ -203,17 +274,120 @@ it('refuses to run the GPS simulator unless explicitly enabled', function () {
 it('ignores GPS fixes whose accuracy is worse than the configured threshold', function () {
     config(['route_geometry.gps.max_accuracy_m' => 100]);
 
-    $trip = new \App\Models\Trip();
+    $trip = new Trip;
     $trip->trip_id = 9;
-    $trip->setRelation('fleetRoute', new \App\Models\FleetRoute(['fleet_id' => 4]));
-    $trips = Mockery::mock(\App\Repositories\TripRepository::class);
+    $trip->setRelation('fleetRoute', new FleetRoute(['fleet_id' => 4]));
+    $trips = Mockery::mock(TripRepository::class);
     $trips->shouldReceive('findCurrentByDriver')->andReturn($trip);
-    $locations = Mockery::mock(\App\Repositories\FleetLocationRepository::class);
+    $locations = Mockery::mock(FleetLocationRepository::class);
     $locations->shouldReceive('upsertLocation')->twice();
 
-    $service = new \App\Services\FleetLocationService($locations, $trips, app(RouteSnapService::class));
+    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class));
 
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 850]))->toBeFalse();
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 12]))->toBeTrue();
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6]))->toBeTrue();
+});
+
+function makeRouteRedrawStaff(string $role): User
+{
+    $user = User::create([
+        'username' => 'route_redraw_'.Str::random(8),
+        'email' => Str::random(8).'@example.com',
+        'password' => bcrypt('password'),
+        'role' => $role,
+    ]);
+    StaffUser::create([
+        'user_id' => $user->user_id,
+        'company_user_uuid' => (string) Str::uuid(),
+        'name' => 'Route Redraw '.ucfirst($role),
+        'phone_num' => '09123456789',
+        'address' => 'Test Address',
+    ]);
+
+    return $user->fresh();
+}
+
+function assignRouteRedrawFleet(Route $route, User $operator): void
+{
+    $fleet = Fleet::create([
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'plate_number' => 'RR-'.Str::upper(Str::random(6)),
+        'capacity' => 40,
+        'seated_capacity' => 30,
+        'standing_capacity' => 10,
+        'status' => 'active',
+    ]);
+    FleetRoute::create([
+        'fleet_id' => $fleet->fleet_id,
+        'route_id' => $route->route_id,
+        'start_time' => '06:00',
+        'end_time' => '22:00',
+        'status' => 'active',
+    ]);
+}
+
+it('allows an Operator to queue and audit a redraw for a route assigned to their own fleet', function () {
+    config(['cache.default' => 'array', 'route_geometry.redraw_cooldown_minutes' => 15]);
+    Cache::flush();
+    Queue::fake();
+    $operator = makeRouteRedrawStaff('operator');
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+    assignRouteRedrawFleet($route, $operator);
+
+    $this->actingAs($operator)
+        ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
+        ->assertSuccessful()
+        ->assertJsonPath('data.queued', true);
+
+    Queue::assertPushed(GenerateRouteGeometry::class, fn ($job) => $job->routeId === $route->route_id);
+    $this->assertDatabaseHas('audit_logs', [
+        'actor_id' => $operator->user_id,
+        'action' => 'route.geometry_redraw_queued',
+        'subject_type' => 'Route',
+        'subject_id' => $route->route_id,
+    ]);
+    $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")
+        ->assertSuccessful()
+        ->assertJsonPath('data.can_regenerate_geometry', true)
+        ->assertJsonPath('data.geometry_regeneration_pending', true);
+});
+
+it('refuses an Operator redraw for a route assigned only to another company', function () {
+    config(['cache.default' => 'array']);
+    Cache::flush();
+    Queue::fake();
+    $operator = makeRouteRedrawStaff('operator');
+    $otherOperator = makeRouteRedrawStaff('operator');
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+    assignRouteRedrawFleet($route, $otherOperator);
+
+    $this->actingAs($operator)
+        ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
+        ->assertNotFound();
+    $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")
+        ->assertSuccessful()
+        ->assertJsonPath('data.can_regenerate_geometry', false);
+    Queue::assertNothingPushed();
+});
+
+it('allows Admin redraws and blocks another redraw during the configured per-route cooldown', function () {
+    config(['cache.default' => 'array', 'route_geometry.redraw_cooldown_minutes' => 15]);
+    Cache::flush();
+    Queue::fake();
+    $admin = makeRouteRedrawStaff('admin');
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+
+    $this->actingAs($admin)
+        ->postJson("/api/admin/routes/{$route->route_id}/geometry/regenerate")
+        ->assertSuccessful();
+    $this->actingAs($admin)->getJson("/api/admin/routes/{$route->route_id}")
+        ->assertSuccessful()
+        ->assertJsonPath('data.can_regenerate_geometry', true);
+
+    Cache::forget(RouteGeometryGenerator::pendingCacheKey($route->route_id));
+    $this->actingAs($admin)
+        ->postJson("/api/admin/routes/{$route->route_id}/geometry/regenerate")
+        ->assertStatus(429);
+    Queue::assertPushed(GenerateRouteGeometry::class, 1);
 });

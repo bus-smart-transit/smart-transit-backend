@@ -1,29 +1,31 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\RouteService;
-use App\Http\Requests\StoreRouteRequest;
+
 use App\Http\Requests\AddRouteStopRequest;
+use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\UpdateRouteCustomDropoffRequest;
-use App\Http\Requests\UpdateRouteStopTypeRequest;
 use App\Http\Requests\UpdateRouteStopExpressRequest;
+use App\Http\Requests\UpdateRouteStopTypeRequest;
+use App\Models\Route;
+use App\Services\RouteService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
 class RouteController extends Controller
 {
     use ApiResponse;
-    public function __construct(private RouteService $routeService)
+
+    public function __construct(private RouteService $routeService) {}
+
+    public function index(Request $request)
     {
+        return $this->success($this->routeService->listRoutes($request->user()), 'Routes retrieved successfully');
     }
 
-    public function index()
+    public function show(Request $request, int $routeId)
     {
-        return $this->success($this->routeService->listRoutes(), 'Routes retrieved successfully');
-    }
-
-    public function show(int $routeId)
-    {
-        return $this->success($this->routeService->getRouteWithStops($routeId), 'Route retrieved successfully');
+        return $this->success($this->routeService->getRouteWithStops($routeId, $request->user()), 'Route retrieved successfully');
     }
 
     public function store(StoreRouteRequest $request)
@@ -57,11 +59,15 @@ class RouteController extends Controller
     }
 
     // Operator: queue a background regeneration of the canonical geometry.
-    public function regenerateGeometry(int $routeId)
+    public function regenerateGeometry(Request $request, int $routeId)
     {
-        $this->routeService->queueGeometryRegeneration($routeId);
+        if (! $this->routeService->canRegenerateGeometry($routeId, $request->user())) {
+            return $this->error('Route not found.', 404);
+        }
 
-        return $this->success(null, 'Route geometry regeneration queued');
+        $this->routeService->queueManualGeometryRegeneration($routeId);
+
+        return $this->success(['queued' => true], 'Route line redraw queued');
     }
 
     // Operator/admin: stop_type is editable per route stop.
@@ -91,7 +97,7 @@ class RouteController extends Controller
         $updated = $mode !== null
             ? $this->routeService->setCustomDropoffMode($routeId, (string) $mode)
             : $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
-        $route = $updated ? \App\Models\Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']) : null;
+        $route = $updated ? Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']) : null;
 
         return $route
             ? $this->success(['allow_custom_dropoff' => (bool) $route->allow_custom_dropoff, 'custom_dropoff_mode' => $route->custom_dropoff_mode], 'Custom drop-off setting updated')
@@ -115,6 +121,7 @@ class RouteController extends Controller
     public function removeStop(int $routeId, int $routeStopId)
     {
         $this->routeService->removeStopFromRoute($routeId, $routeStopId);
+
         return $this->success(null, 'Stop removed from route successfully');
     }
 }

@@ -8,6 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 
 class GenerateRouteGeometry implements ShouldQueue
 {
@@ -15,12 +16,14 @@ class GenerateRouteGeometry implements ShouldQueue
 
     public int $tries = 1;
 
-    public function __construct(public int $routeId)
-    {
-    }
+    public function __construct(public int $routeId) {}
 
     public function handle(RouteGeometryGenerator $generator): void
     {
-        $generator->generate($this->routeId);
+        try {
+            $generator->generate($this->routeId);
+        } finally {
+            Cache::forget(RouteGeometryGenerator::pendingCacheKey($this->routeId));
+        }
     }
 }

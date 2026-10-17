@@ -1,7 +1,10 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\RouteStop;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class RouteStopRepository
 {
@@ -68,6 +71,21 @@ class RouteStopRepository
     public function delete(int $routeStopId): bool
     {
         return RouteStop::where('id', $routeStopId)->delete() > 0;
+    }
+
+    public function compactStopOrder(int $routeId): void
+    {
+        $routeStops = RouteStop::where('route_id', $routeId)
+            ->orderBy('stop_order')
+            ->orderBy('id')
+            ->get(['id', 'stop_order']);
+
+        foreach ($routeStops as $index => $routeStop) {
+            $nextOrder = $index + 1;
+            if ((int) $routeStop->stop_order !== $nextOrder) {
+                DB::table('route_stop')->where('id', $routeStop->id)->update(['stop_order' => $nextOrder]);
+            }
+        }
     }
 
     /** @return array<int, int> */

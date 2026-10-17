@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Jobs\GenerateRouteGeometry;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -22,17 +23,30 @@ use Illuminate\Support\Facades\Log;
  */
 class RouteGeometryGenerator
 {
+    private const PENDING_CACHE_PREFIX = 'route_geometry:pending:';
+
     public function __construct(
         private RouteGeometryRepository $geometryRepository,
         private RouteStopRepository $routeStopRepository,
-    ) {
-    }
+    ) {}
 
     /** Flags the route stale and queues regeneration (called when stops change). */
     public function queueRegeneration(int $routeId): void
     {
         $this->geometryRepository->markStale($routeId, 'Stops changed; geometry regeneration queued.');
-        GenerateRouteGeometry::dispatch($routeId);
+        Cache::put(self::pendingCacheKey($routeId), true, max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
+
+        try {
+            GenerateRouteGeometry::dispatch($routeId);
+        } catch (\Throwable $exception) {
+            Cache::forget(self::pendingCacheKey($routeId));
+            throw $exception;
+        }
+    }
+
+    public static function pendingCacheKey(int $routeId): string
+    {
+        return self::PENDING_CACHE_PREFIX.$routeId;
     }
 
     /** @return array{ok: bool, message: string} */
@@ -80,7 +94,7 @@ class RouteGeometryGenerator
             $this->geometryRepository->save($routeId, $line);
         });
 
-        return ['ok' => true, 'message' => 'Geometry regenerated (' . count($line['coordinates']) . ' points).'];
+        return ['ok' => true, 'message' => 'Geometry regenerated ('.count($line['coordinates']).' points).'];
     }
 
     /**

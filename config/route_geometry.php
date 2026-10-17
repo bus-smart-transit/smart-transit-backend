@@ -26,7 +26,6 @@ return [
         'timeout_s' => (int) env('ORS_TIMEOUT_S', 20),
     ],
 
-
     // A stop farther than this from the road network is rejected (D5 snap threshold).
     'max_stop_off_network_m' => (float) env('STOP_MAX_OFF_NETWORK_M', 150),
 
@@ -35,6 +34,9 @@ return [
 
     // A stop farther than this from the stored route line is reported as off-route.
     'stop_off_route_report_m' => (float) env('STOP_OFF_ROUTE_REPORT_M', 100),
+
+    'redraw_cooldown_minutes' => (int) env('ROUTE_GEOMETRY_REDRAW_COOLDOWN_MINUTES', 15),
+    'regeneration_pending_ttl_s' => (int) env('ROUTE_GEOMETRY_PENDING_TTL_S', 3600),
 
     'gps' => [
         // Fixes reporting a worse (larger) accuracy radius are not accepted.
