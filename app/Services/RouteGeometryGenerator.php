@@ -5,10 +5,13 @@ namespace App\Services;
 use App\Jobs\GenerateRouteGeometry;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * Builds the canonical route line once from the ordered stops via
@@ -25,6 +28,8 @@ class RouteGeometryGenerator
 {
     private const PENDING_CACHE_PREFIX = 'route_geometry:pending:';
 
+    private const ROUTE_CACHE_PREFIX = 'route_geometry:result:';
+
     public function __construct(
         private RouteGeometryRepository $geometryRepository,
         private RouteStopRepository $routeStopRepository,
@@ -34,10 +39,11 @@ class RouteGeometryGenerator
     public function queueRegeneration(int $routeId): void
     {
         $this->geometryRepository->markStale($routeId, 'Stops changed; geometry regeneration queued.');
-        Cache::put(self::pendingCacheKey($routeId), true, max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
+        Cache::put(self::pendingCacheKey($routeId), (string) Str::uuid(), max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
 
         try {
-            GenerateRouteGeometry::dispatch($routeId);
+            GenerateRouteGeometry::dispatch($routeId)
+                ->delay(now()->addSeconds(max(0, (int) config('route_geometry.debounce_s', 5))));
         } catch (\Throwable $exception) {
             Cache::forget(self::pendingCacheKey($routeId));
             throw $exception;
@@ -49,7 +55,7 @@ class RouteGeometryGenerator
         return self::PENDING_CACHE_PREFIX.$routeId;
     }
 
-    /** @return array{ok: bool, message: string} */
+    /** @return array{ok: bool, message: string, retryable: bool} */
     public function generate(int $routeId): array
     {
         $apiKey = config('route_geometry.ors.api_key');
@@ -58,43 +64,76 @@ class RouteGeometryGenerator
         }
 
         $routeStops = $this->routeStopRepository->getOrderedStops($routeId);
-        $usable = $routeStops->filter(fn ($rs) => $rs->stop && $rs->stop->latitude !== null && $rs->stop->longitude !== null)->values();
+        $usable = $routeStops->filter(fn ($routeStop) => $routeStop->stop && $routeStop->stop->latitude !== null && $routeStop->stop->longitude !== null)->values();
         if ($usable->count() < 2) {
             return $this->fail($routeId, 'A route needs at least two stops with coordinates.');
         }
-
-        $raw = $usable->map(fn ($rs) => [(float) $rs->stop->longitude, (float) $rs->stop->latitude])->all();
-
-        try {
-            $snapped = $this->snapWaypoints($raw);
-
-            // Stops that cannot be snapped are data errors to correct, never
-            // silently moved; keep the previous geometry and flag the route.
-            if (count($snapped['unsnapped']) > 0) {
-                $names = $usable->filter(fn ($rs, $i) => in_array($i, $snapped['unsnapped'], true))
-                    ->map(fn ($rs) => $rs->stop->stop_name)->implode(', ');
-
-                return $this->fail($routeId, "Stops not within snap radius of a road (fix coordinates): {$names}");
-            }
-
-            $line = $this->route($snapped['coordinates']);
-        } catch (\Throwable $e) {
-            Log::warning('Route geometry generation failed', ['route_id' => $routeId, 'error' => $e->getMessage()]);
-
-            return $this->fail($routeId, $e->getMessage());
+        if ($usable->count() !== $routeStops->count()) {
+            return $this->fail($routeId, 'Every route stop needs coordinates before distances can be recalculated.');
         }
 
-        DB::transaction(function () use ($routeId, $usable, $snapped, $line) {
-            foreach ($usable as $i => $rs) {
-                DB::table('route_stop')->where('id', $rs->id)->update([
-                    'snapped_longitude' => $snapped['coordinates'][$i][0],
-                    'snapped_latitude' => $snapped['coordinates'][$i][1],
+        $raw = $usable->map(fn ($routeStop) => [(float) $routeStop->stop->longitude, (float) $routeStop->stop->latitude])->all();
+        $cacheKey = $this->routeCacheKey($usable, $apiKey);
+        $cached = Cache::get($cacheKey);
+
+        try {
+            if (is_array($cached) && isset($cached['snapped'], $cached['line'])) {
+                $snapped = $cached['snapped'];
+                $line = $cached['line'];
+            } else {
+                $snapped = $this->snapWaypoints($raw);
+                if (count($snapped['unsnapped']) > 0) {
+                    $names = $usable->filter(fn ($routeStop, $index) => in_array($index, $snapped['unsnapped'], true))
+                        ->map(fn ($routeStop) => $routeStop->stop->stop_name)->implode(', ');
+
+                    return $this->fail($routeId, "Stops not within snap radius of a road (fix coordinates): {$names}");
+                }
+
+                $line = $this->route($snapped['coordinates']);
+                Cache::put($cacheKey, ['snapped' => $snapped, 'line' => $line], max(1, (int) config('route_geometry.result_cache_ttl_s', 600)));
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('Route geometry generation failed', ['route_id' => $routeId, 'error' => $exception->getMessage()]);
+
+            return $this->fail($routeId, $exception->getMessage(), $this->isRetryableProviderFailure($exception));
+        }
+
+        $applied = DB::transaction(function () use ($routeId, $usable, $snapped, $line) {
+            $currentStops = DB::table('route_stop')
+                ->join('stops', 'stops.stop_id', '=', 'route_stop.stop_id')
+                ->where('route_stop.route_id', $routeId)
+                ->orderBy('route_stop.stop_order')
+                ->lockForUpdate()
+                ->get(['route_stop.id', 'route_stop.stop_id', 'route_stop.stop_order', 'stops.latitude', 'stops.longitude'])
+                ->map(fn ($stop) => [(int) $stop->id, (int) $stop->stop_id, (int) $stop->stop_order, (float) $stop->latitude, (float) $stop->longitude])
+                ->all();
+            $routedStops = $usable->map(fn ($stop) => [
+                (int) $stop->id, (int) $stop->stop_id, (int) $stop->stop_order,
+                (float) $stop->stop->latitude, (float) $stop->stop->longitude,
+            ])->all();
+            if ($currentStops !== $routedStops) {
+                return false;
+            }
+
+            foreach ($usable as $index => $routeStop) {
+                DB::table('route_stop')->where('id', $routeStop->id)->update([
+                    'snapped_longitude' => $snapped['coordinates'][$index][0],
+                    'snapped_latitude' => $snapped['coordinates'][$index][1],
+                    'distance_from_origin_km' => round($line['distances_m'][$index] / 1000, 4),
+                    'distance_from_origin_m' => (int) round($line['distances_m'][$index]),
+                    'scheduled_offset_min' => $line['offsets_min'][$index],
                 ]);
             }
-            $this->geometryRepository->save($routeId, $line);
+            $this->geometryRepository->save($routeId, $line['geometry']);
+
+            return true;
         });
 
-        return ['ok' => true, 'message' => 'Geometry regenerated ('.count($line['coordinates']).' points).'];
+        if (! $applied) {
+            return $this->fail($routeId, 'Stops changed during routing; regenerate again using the current stops.', true);
+        }
+
+        return ['ok' => true, 'message' => 'Geometry and fare distances regenerated ('.count($line['geometry']['coordinates']).' points).', 'retryable' => false];
     }
 
     /**
@@ -134,13 +173,17 @@ class RouteGeometryGenerator
 
     /**
      * @param  array<int, array{0: float, 1: float}>  $waypoints
-     * @return array{type: string, coordinates: array<int, array{0: float, 1: float}>}
+     * @return array{geometry: array{type: string, coordinates: array<int, array{0: float, 1: float}>}, distances_m: array<int, float>, offsets_min: array<int, int>}
      */
     private function route(array $waypoints): array
     {
         $cfg = config('route_geometry.ors');
         $max = max(2, (int) $cfg['max_waypoints']);
         $line = [];
+        $distances = [0.0];
+        $cumulativeDistance = 0.0;
+        $offsets = [0];
+        $cumulativeDuration = 0.0;
 
         // Chunk long routes to respect the provider waypoint limit; chunks
         // overlap by one waypoint so the line stays continuous.
@@ -166,6 +209,23 @@ class RouteGeometryGenerator
                 throw new \RuntimeException('Routing provider returned no geometry.');
             }
 
+            $segments = $response->json('features.0.properties.segments');
+            if (! is_array($segments) || count($segments) !== count($chunk) - 1) {
+                throw new \RuntimeException('Routing provider returned incomplete leg distances.');
+            }
+            foreach ($segments as $segment) {
+                $distance = $segment['distance'] ?? null;
+                $duration = $segment['duration'] ?? null;
+                if (! is_numeric($distance) || ! is_finite((float) $distance) || (float) $distance <= 0
+                    || ! is_numeric($duration) || ! is_finite((float) $duration) || (float) $duration <= 0) {
+                    throw new \RuntimeException('Routing provider returned an invalid leg distance or duration.');
+                }
+                $cumulativeDistance += (float) $distance;
+                $distances[] = $cumulativeDistance;
+                $cumulativeDuration += (float) $duration;
+                $offsets[] = (int) round($cumulativeDuration / 60);
+            }
+
             foreach ($part as $point) {
                 $line[] = [(float) $point[0], (float) $point[1]];
             }
@@ -175,21 +235,58 @@ class RouteGeometryGenerator
             throw new \RuntimeException('Routing provider returned no geometry.');
         }
 
-        return ['type' => 'LineString', 'coordinates' => $line];
+        return [
+            'geometry' => ['type' => 'LineString', 'coordinates' => $line],
+            'distances_m' => $distances,
+            'offsets_min' => $offsets,
+        ];
     }
 
     private function client()
     {
-        return Http::timeout((int) config('route_geometry.ors.timeout_s'))
+        return Http::connectTimeout((int) config('route_geometry.ors.connect_timeout_s', 5))
+            ->timeout((int) config('route_geometry.ors.timeout_s'))
             ->acceptJson()
             ->withHeaders(['Authorization' => (string) config('route_geometry.ors.api_key')]);
     }
 
-    /** @return array{ok: bool, message: string} */
-    private function fail(int $routeId, string $message): array
+    private function routeCacheKey($routeStops, string $apiKey): string
+    {
+        $inputs = [
+            'result_schema_version' => 2,
+            'base_url' => config('route_geometry.ors.base_url'),
+            'profile' => config('route_geometry.ors.profile'),
+            'api_key_hash' => hash('sha256', $apiKey),
+            'snap_radius_m' => config('route_geometry.ors.snap_radius_m'),
+            'max_waypoints' => config('route_geometry.ors.max_waypoints'),
+            'stops' => $routeStops->map(fn ($routeStop) => [
+                (int) $routeStop->stop_id,
+                (int) $routeStop->stop_order,
+                (float) $routeStop->stop->latitude,
+                (float) $routeStop->stop->longitude,
+            ])->all(),
+        ];
+
+        return self::ROUTE_CACHE_PREFIX.hash('sha256', json_encode($inputs, JSON_THROW_ON_ERROR));
+    }
+
+    private function isRetryableProviderFailure(\Throwable $exception): bool
+    {
+        if ($exception instanceof ConnectionException) {
+            return true;
+        }
+        if ($exception instanceof RequestException) {
+            return in_array($exception->response->status(), [408, 425, 429, 500, 502, 503, 504], true);
+        }
+
+        return false;
+    }
+
+    /** @return array{ok: bool, message: string, retryable: bool} */
+    private function fail(int $routeId, string $message, bool $retryable = false): array
     {
         $this->geometryRepository->markStale($routeId, $message);
 
-        return ['ok' => false, 'message' => $message];
+        return ['ok' => false, 'message' => $message, 'retryable' => $retryable];
     }
 }

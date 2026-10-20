@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Trip;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -41,10 +42,8 @@ class TripRepository
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
     }
 
-    public function listUpcomingByOperator(int $operatorCompanyUserId, string $statusFilter = 'all'): Collection
+    public function listUpcomingByOperator(int $operatorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): LengthAwarePaginator
     {
-        $this->markOverdueScheduledAsDelayed($operatorCompanyUserId);
-
         $today = $this->serviceToday();
 
         $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
@@ -55,34 +54,36 @@ class TripRepository
         $normalized = $this->normalizeStatusFilter($statusFilter);
 
         if ($normalized === 'completed') {
-            return $query->where('status', 'completed')->get()->values();
-        }
-
-        if ($normalized === 'scheduled') {
+            $query->where('status', 'completed');
+        } elseif ($normalized === 'scheduled') {
             return $query
                 ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
                 ->whereDate('trip_date', '>=', $today)
-                ->get()
-                ->values();
+                ->paginate($perPage, ['*'], 'page', $page);
+        } elseif ($normalized !== 'all') {
+            $timezone = config('app.timezone', 'Asia/Manila');
+            $today = $this->serviceToday()->toDateString();
+            $currentTime = Carbon::now($timezone)->format('H:i:s');
+            $scheduledTime = "COALESCE(trips.departure_time, (SELECT start_time FROM fleets_routes WHERE fleets_routes.fleet_route_id = trips.fleet_route_id))";
+
+            $query->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+                ->where(function ($upcoming) use ($today, $currentTime, $scheduledTime) {
+                    $upcoming->where('trip_date', '>', $today)
+                        ->orWhere(function ($sameDay) use ($today, $currentTime, $scheduledTime) {
+                            $sameDay->where('trip_date', $today)
+                                ->where(function ($departure) use ($currentTime, $scheduledTime) {
+                                    $departure->whereRaw("{$scheduledTime} IS NULL")
+                                        ->orWhereRaw("{$scheduledTime} >= ?", [$currentTime]);
+                                });
+                            });
+                });
         }
 
-        if ($normalized === 'all') {
-            return $query->get()->values();
-        }
-
-        $trips = $query
-            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
-            ->get();
-
-        return $trips->filter(function (Trip $trip) {
-            return $this->isUpcomingScheduledAt($trip);
-        })->values();
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
     public function listByDriver(int $driverCompanyUserId, string $statusFilter = 'all'): Collection
     {
-        $this->markOverdueScheduledAsDelayed();
-
         $today = $this->serviceToday();
 
         $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
@@ -97,8 +98,6 @@ class TripRepository
 
     public function listByConductor(int $conductorCompanyUserId, string $statusFilter = 'all'): Collection
     {
-        $this->markOverdueScheduledAsDelayed();
-
         $today = $this->serviceToday();
 
         $query = Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
@@ -113,8 +112,6 @@ class TripRepository
 
     public function findCurrentByDriver(int $driverCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
@@ -128,8 +125,6 @@ class TripRepository
 
     public function findCurrentByConductor(int $conductorCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
@@ -169,7 +164,7 @@ class TripRepository
      * Batch 26: the trips and shift legs of one business day for the calendar's day list, earliest
      * first, scoped like the summary (the caller's own assignments, or the operator's fleets).
      */
-    public function paginateForCalendarDay(string $role, int $companyUserId, string $date, int $page, int $perPage): \Illuminate\Pagination\LengthAwarePaginator
+    public function paginateForCalendarDay(string $role, int $companyUserId, string $date, int $page, int $perPage): LengthAwarePaginator
     {
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
             ->where($this->calendarScopeColumn($role), $companyUserId)
@@ -353,8 +348,6 @@ class TripRepository
 
     private function rawFindTodayByDriver(int $driverCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereDate('trip_date', $this->serviceToday())
@@ -367,8 +360,6 @@ class TripRepository
 
     private function rawFindTodayByConductor(int $conductorCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereDate('trip_date', $this->serviceToday())
@@ -381,8 +372,6 @@ class TripRepository
 
     private function rawFindCurrentOrUpcomingByDriver(int $driverCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
@@ -396,8 +385,6 @@ class TripRepository
 
     private function rawFindCurrentOrUpcomingByConductor(int $conductorCompanyUserId): ?Trip
     {
-        $this->markOverdueScheduledAsDelayed();
-
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
@@ -449,8 +436,6 @@ class TripRepository
      */
     public function listAvailableForPassengers(bool $includeStops = true, ?string $tripDate = null): Collection
     {
-        $this->markOverdueScheduledAsDelayed();
-
         $today = $this->serviceToday();
 
         $with = [

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\ApiRequestMetricsMiddleware;
 use App\Http\Middleware\OptionalSanctumAuth;
 use App\Http\Middleware\RequirePairedSession;
 use App\Http\Middleware\RequireStepUp;
@@ -19,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append('App\\Http\\Middleware\\ApplyDatabaseRlsContext');
+        $middleware->appendToGroup('api', ApiRequestMetricsMiddleware::class);
 
         $middleware->alias([
             'role' => CheckRole::class,

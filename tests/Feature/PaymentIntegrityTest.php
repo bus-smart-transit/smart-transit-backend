@@ -134,6 +134,29 @@ it('issues one ticket and takes one seat however many times the paid webhook is 
     expect((float) Ticket::firstOrFail()->amount)->toBe(47.0);
 });
 
+it('returns a controlled unavailable response and releases the hold when PayMongo is not configured', function () {
+    $f = piFixture();
+    config(['services.paymongo.secret_key' => null]);
+
+    piCheckout($this, piPassenger(), $f)
+        ->assertStatus(503)
+        ->assertJsonPath('message', 'Online checkout is temporarily unavailable. Please try again later.');
+
+    expect($f['trip']->fresh()->total_occupancy)->toBe(0);
+    expect(Payment::where('status', 'pending')->exists())->toBeFalse();
+    expect(Payment::where('status', 'failed')->exists())->toBeTrue();
+});
+
+it('loads authenticated payment history when PayMongo is not configured', function () {
+    $pax = piPassenger();
+    config(['services.paymongo.secret_key' => null]);
+
+    $this->actingAs($pax->user)
+        ->getJson('/api/passengers/payments')
+        ->assertOk()
+        ->assertJsonPath('data.data', []);
+});
+
 it('keeps one ticket when the paid event arrives twice at once, and ignores a failure that arrives after it', function () {
     $f = piFixture();
     $payment = Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id'));

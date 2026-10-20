@@ -3,6 +3,7 @@ namespace App\Repositories;
 
 use App\Models\PassengerUser;
 use App\Models\RewardTransaction;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
 class RewardRepository
@@ -49,11 +50,12 @@ class RewardRepository
         return RewardTransaction::create($payload);
     }
 
-    public function findHistoryForPassenger(int $passengerId): Collection
+    public function findHistoryForPassenger(int $passengerId, int $perPage = 50, int $page = 1): LengthAwarePaginator
     {
         return RewardTransaction::with('payment')
             ->where('passenger_id', $passengerId)
-            ->latest()
-            ->get();
+            ->orderByDesc('created_at')
+            ->orderByDesc('reward_transaction_id')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 }

@@ -150,8 +150,10 @@ class ReportingRepository
             ->whereIn('status', ['departed', 'completed'])
             ->get();
 
+        $gpsByTrip = $this->getGpsPointsForTrips($trips->pluck('trip_id')->all(), DB::getDriverName())
+            ->groupBy('trip_id');
+
         $totalTrips       = count($trips);
-        $driver           = DB::getDriverName();
         $tripAdherences   = [];
         $stopCoverageSum  = 0;
         $deviatedTrips    = 0;
@@ -166,8 +168,7 @@ class ReportingRepository
                 continue; // no route geometry — skip adherence calc
             }
 
-            // Fetch GPS trail for this trip (chronological)
-            $gpsPoints = $this->getTripGpsPoints($trip->trip_id, $driver);
+            $gpsPoints = $gpsByTrip->get($trip->trip_id, collect());
 
             if ($gpsPoints->isEmpty()) {
                 // No GPS data — fall back to completion-based proxy
@@ -235,29 +236,36 @@ class ReportingRepository
         ];
     }
 
-    private function getTripGpsPoints(int $tripId, string $driver): Collection
+    private function getGpsPointsForTrips(array $tripIds, string $driver): Collection
     {
+        if ($tripIds === []) {
+            return collect();
+        }
+
+        $placeholders = implode(',', array_fill(0, count($tripIds), '?'));
         if ($driver === 'sqlite') {
             return collect(DB::select("
                 SELECT
+                    trip_id,
                     CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
                     CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
                     recorded_at
                 FROM fleet_location_history
-                WHERE trip_id = ?
-                ORDER BY recorded_at ASC
-            ", [$tripId]));
+                WHERE trip_id IN ({$placeholders})
+                ORDER BY trip_id ASC, recorded_at ASC
+            ", $tripIds));
         }
 
         return collect(DB::select("
             SELECT
+                trip_id,
                 ST_Y(location::geometry) AS latitude,
                 ST_X(location::geometry) AS longitude,
                 recorded_at
             FROM fleet_location_history
-            WHERE trip_id = ?
-            ORDER BY recorded_at ASC
-        ", [$tripId]));
+            WHERE trip_id IN ({$placeholders})
+            ORDER BY trip_id ASC, recorded_at ASC
+        ", $tripIds));
     }
 
     /**

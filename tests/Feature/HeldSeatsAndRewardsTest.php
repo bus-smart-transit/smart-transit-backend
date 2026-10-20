@@ -20,6 +20,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -116,6 +117,221 @@ beforeEach(function () {
     Http::fake(['api.paymongo.com/*' => fn () => Http::response(['data' => ['id' => 'cs_'.Str::random(12), 'attributes' => ['checkout_url' => 'https://pay.example/x', 'payment_intent' => ['id' => 'pi_'.Str::random(8)]]]])]);
 });
 afterEach(fn () => Carbon::setTestNow());
+
+it('replays an online checkout key without duplicating its payment, hold, or reward redemption', function () {
+    $fixture = hlFixture();
+    $passenger = hlPassenger(20);
+    $key = 'online-retry-key-00000001';
+    $payload = [
+        'booking_date' => '2026-10-05',
+        'payment_channel' => 'gcash',
+        'reward_points_to_use' => 5,
+        'items' => [[
+            'trip_id' => $fixture['trip']->trip_id,
+            'seat_type' => 'seated',
+            'origin_stop_id' => $fixture['stops']['B']->stop_id,
+            'destination_stop_id' => $fixture['stops']['D']->stop_id,
+        ]],
+    ];
+
+    $first = $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)->postJson('/api/passengers/checkout', $payload)->assertSuccessful();
+    $replay = $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)->postJson('/api/passengers/checkout', $payload)->assertSuccessful();
+
+    expect($replay->json('data.payment.payment_id'))->toBe($first->json('data.payment.payment_id'));
+    expect($replay->json('data.checkout_url'))->toBe($first->json('data.checkout_url'));
+    expect(Payment::where('idempotency_key_hash', hash('sha256', $key))->count())->toBe(1);
+    expect((int) $fixture['trip']->fresh()->current_seated_capacity)->toBe(1);
+    expect((int) $passenger->fresh()->reward_points)->toBe(15);
+    expect(RewardTransaction::where('passenger_id', $passenger->passenger_id)->where('type', 'redeemed')->count())->toBe(1);
+    Http::assertSentCount(1);
+
+    $changedPayload = $payload;
+    $changedPayload['payment_channel'] = 'maya';
+    $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)->postJson('/api/passengers/checkout', $changedPayload)->assertStatus(409);
+    expect(Payment::where('idempotency_key_hash', hash('sha256', $key))->count())->toBe(1);
+});
+
+it('enforces the database unique index for an actor-scoped checkout key', function () {
+    $attributes = [
+        'amount' => 1,
+        'payment_created' => now(),
+        'transaction_reference' => 'IDEMPOTENCY-'.Str::random(8),
+        'payment_method' => 'online',
+        'payment_channel' => 'gcash',
+        'status' => 'pending',
+        'payment_uuid' => (string) Str::uuid(),
+        'is_valid' => true,
+        'idempotency_scope_hash' => hash('sha256', 'passenger:42'),
+        'idempotency_key_hash' => hash('sha256', 'duplicate-key'),
+        'idempotency_request_hash' => hash('sha256', 'payload'),
+        'idempotency_state' => 'processing',
+    ];
+    Payment::create($attributes);
+
+    expect(fn () => Payment::create(array_replace($attributes, [
+        'transaction_reference' => 'IDEMPOTENCY-'.Str::random(8),
+        'payment_uuid' => (string) Str::uuid(),
+    ])))->toThrow(\Illuminate\Database\QueryException::class);
+});
+
+it('keeps the hold and reward redemption when PayMongo session creation has an unknown outcome', function () {
+    $fixture = hlFixture();
+    $passenger = hlPassenger(20);
+    $gatewayCalls = 0;
+    Http::fake(['api.paymongo.com/*' => function () use (&$gatewayCalls) {
+        $gatewayCalls++;
+        throw new ConnectionException('simulated timeout');
+    }]);
+    $key = 'online-unknown-key-0000001';
+    $payload = [
+        'booking_date' => '2026-10-05',
+        'payment_channel' => 'gcash',
+        'reward_points_to_use' => 5,
+        'items' => [[
+            'trip_id' => $fixture['trip']->trip_id,
+            'seat_type' => 'seated',
+            'origin_stop_id' => $fixture['stops']['B']->stop_id,
+            'destination_stop_id' => $fixture['stops']['D']->stop_id,
+        ]],
+    ];
+
+    $response = $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)
+        ->postJson('/api/passengers/checkout', $payload)
+        ->assertStatus(503);
+    $reference = $response->json('errors.transaction_reference.0');
+    expect($response->json('message'))->toContain($reference);
+    $payment = Payment::where('transaction_reference', $reference)->firstOrFail();
+
+    expect($payment->status)->toBe('pending');
+    expect($payment->idempotency_state)->toBe('unknown');
+    expect((int) $fixture['trip']->fresh()->current_seated_capacity)->toBe(1);
+    expect((int) $passenger->fresh()->reward_points)->toBe(15);
+    $payment->forceFill(['hold_expires_at' => now()->subMinute()])->save();
+    Artisan::call('payments:release-expired-holds');
+    expect($payment->fresh()->status)->toBe('pending');
+    expect((int) $fixture['trip']->fresh()->current_seated_capacity)->toBe(1);
+    expect((int) $passenger->fresh()->reward_points)->toBe(15);
+    $this->getJson('/api/payments/status?ref='.urlencode($reference))
+        ->assertSuccessful()
+        ->assertJsonPath('data.status', 'pending')
+        ->assertJsonPath('data.outcome_unknown', true);
+
+    $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)
+        ->postJson('/api/passengers/checkout', $payload)
+        ->assertStatus(409);
+    expect($gatewayCalls)->toBe(1);
+});
+
+it('serves bounded passenger history pages for tickets, rewards, and payments', function () {
+    $fixture = hlFixture();
+    $passenger = hlPassenger();
+
+    foreach ([1, 2] as $sequence) {
+        $payment = Payment::create([
+            'amount' => 20 * $sequence,
+            'payment_created' => now()->addMinutes($sequence),
+            'transaction_reference' => 'HISTORY-'.$sequence.'-'.Str::random(6),
+            'payment_method' => 'online',
+            'payment_channel' => 'gcash',
+            'status' => 'paid',
+            'payment_uuid' => (string) Str::uuid(),
+            'is_valid' => true,
+            'items_payload' => [[
+                'passenger_id' => $passenger->passenger_id,
+                'trip_id' => $fixture['trip']->trip_id,
+                'seat_type' => 'seated',
+                'amount' => 20 * $sequence,
+                'origin_stop_id' => $fixture['stops']['B']->stop_id,
+                'destination_stop_id' => $fixture['stops']['D']->stop_id,
+            ]],
+        ]);
+
+        Ticket::create([
+            'fleet_route_id' => $fixture['trip']->fleet_route_id,
+            'trip_id' => $fixture['trip']->trip_id,
+            'payment_id' => $payment->payment_id,
+            'passenger_id' => $passenger->passenger_id,
+            'ticket_uuid' => (string) Str::uuid(),
+            'status' => 'valid',
+            'seat_type' => 'seated',
+            'amount' => 20 * $sequence,
+            'origin_stop_id' => $fixture['stops']['B']->stop_id,
+            'destination_stop_id' => $fixture['stops']['D']->stop_id,
+        ]);
+        RewardTransaction::create([
+            'passenger_id' => $passenger->passenger_id,
+            'payment_id' => $payment->payment_id,
+            'points' => $sequence,
+            'type' => 'earned',
+            'description' => 'History page test',
+        ]);
+    }
+
+    $summary = $this->actingAs($passenger->user)->getJson('/api/passengers/dashboard-summary')->assertSuccessful()->json('data');
+    expect($summary['tickets'])->toHaveCount(2);
+    expect($summary['rewards'])->toHaveCount(2);
+
+    expect($summary['payments'])->toHaveCount(2);
+    expect($summary['meta']['history_pagination']['tickets']['total'])->toBe(2);
+    expect($summary['dashboard_facts']['upcoming_count'])->toBe(2);
+    expect($summary['dashboard_facts']['nearby_routes_count'])->toBe(1);
+    expect($summary['dashboard_facts']['featured_ticket']['passenger_id'])->toBe($passenger->passenger_id);
+
+    foreach ([
+        '/api/passengers/tickets',
+        '/api/passengers/rewards/history',
+        '/api/passengers/payments',
+    ] as $endpoint) {
+        $page = $this->actingAs($passenger->user)->getJson($endpoint.'?page=2&per_page=1')->assertSuccessful()->json('data');
+        expect($page['data'])->toHaveCount(1);
+        expect($page)->toMatchArray(['current_page' => 2, 'last_page' => 2, 'per_page' => 1, 'total' => 2]);
+    }
+});
+
+it('recovers an unknown checkout from a signed paid-session webhook by payment metadata', function () {
+    $fixture = hlFixture();
+    $passenger = hlPassenger(20);
+    Http::fake(['api.paymongo.com/*' => fn () => throw new ConnectionException('simulated timeout')]);
+    $key = 'online-webhook-recovery-001';
+    $payload = [
+        'booking_date' => '2026-10-05',
+        'payment_channel' => 'gcash',
+        'reward_points_to_use' => 5,
+        'items' => [[
+            'trip_id' => $fixture['trip']->trip_id,
+            'seat_type' => 'seated',
+            'origin_stop_id' => $fixture['stops']['B']->stop_id,
+            'destination_stop_id' => $fixture['stops']['D']->stop_id,
+        ]],
+    ];
+
+    $checkout = $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)
+        ->postJson('/api/passengers/checkout', $payload)->assertStatus(503);
+    $reference = $checkout->json('errors.transaction_reference.0');
+    $payment = Payment::where('transaction_reference', $reference)->firstOrFail();
+
+    hlWebhook($this, 'checkout_session.payment.paid', [
+        'id' => 'cs_recovered_123',
+        'type' => 'checkout_session',
+        'attributes' => [
+            'metadata' => ['payment_id' => (string) $payment->payment_id],
+            'payment_intent' => ['id' => 'pi_recovered_123'],
+            'payments' => [['id' => 'pay_recovered_123']],
+        ],
+    ])->assertOk();
+
+    expect($payment->fresh()->status)->toBe('paid');
+    expect($payment->fresh()->idempotency_state)->toBe('settled');
+    expect($payment->fresh()->gateway_reference)->toBe('cs_recovered_123');
+    expect($payment->fresh()->payment_intent_id)->toBe('pi_recovered_123');
+    expect(Ticket::where('payment_id', $payment->payment_id)->count())->toBe(1);
+    expect((int) $passenger->fresh()->reward_points)->toBe(17);
+
+    $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)
+        ->postJson('/api/passengers/checkout', $payload)
+        ->assertStatus(409)
+        ->assertJsonFragment(['This checkout has been settled. Check its payment status before starting another checkout.']);
+});
 
 // ------------------------------------------------------------ reward points: taken once, given back
 

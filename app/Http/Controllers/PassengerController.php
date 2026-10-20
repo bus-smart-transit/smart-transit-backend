@@ -34,9 +34,11 @@ class PassengerController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
-        $tickets = $this->ticketService->getPassengerTickets($passenger->passenger_id);
-        $rewards = $this->rewardService->getHistory($passenger->passenger_id);
-        $payments = $this->paymentService->getPassengerHistoryFromPayments($passenger->passenger_id);
+        $historyPerPage = 50;
+        $tickets = $this->ticketService->getPassengerTickets($passenger->passenger_id, 1, $historyPerPage);
+        $dashboardFacts = $this->ticketService->getPassengerDashboardFacts($passenger->passenger_id);
+        $rewards = $this->rewardService->getHistory($passenger->passenger_id, 1, $historyPerPage);
+        $payments = $this->paymentService->getPassengerHistoryFromPayments($passenger->passenger_id, 1, $historyPerPage);
 
         return $this->success([
             'profile' => [
@@ -56,13 +58,20 @@ class PassengerController extends Controller
                 ],
                 'created_at' => $passenger->created_at,
             ],
-            'tickets' => $tickets,
-            'rewards' => $rewards,
-            'payments' => $payments,
+            'tickets' => $tickets->items(),
+            'rewards' => $rewards->items(),
+            'payments' => $payments->items(),
+            'dashboard_facts' => $dashboardFacts,
             'meta' => [
-                'tickets_count' => $tickets->count(),
-                'rewards_count' => $rewards->count(),
-                'payments_count' => $payments->count(),
+                'tickets_count' => $tickets->total(),
+                'rewards_count' => $rewards->total(),
+                'payments_count' => $payments->total(),
+                'history_pagination' => [
+                    'per_page' => $historyPerPage,
+                    'tickets' => ['page' => 1, 'last_page' => $tickets->lastPage(), 'total' => $tickets->total()],
+                    'rewards' => ['page' => 1, 'last_page' => $rewards->lastPage(), 'total' => $rewards->total()],
+                    'payments' => ['page' => 1, 'last_page' => $payments->lastPage(), 'total' => $payments->total()],
+                ],
                 'synced_at' => now()->toISOString(),
             ],
         ], 'Dashboard summary retrieved successfully');

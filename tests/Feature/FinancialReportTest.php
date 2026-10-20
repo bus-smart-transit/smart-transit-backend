@@ -8,6 +8,7 @@ use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -63,7 +64,7 @@ function fnSale(array $world, array $amounts, string $created, string $method = 
     $paymentId = DB::table('payments')->insertGetId([
         'amount' => array_sum($amounts), 'payment_created' => $created, 'transaction_reference' => 'TX-'.Str::upper(Str::random(8)), 'payment_method' => $method,
         'payment_channel' => $channel, 'status' => $status, 'payment_uuid' => (string) Str::uuid(), 'is_valid' => $valid, 'created_at' => $created, 'updated_at' => $created,
-    ]);
+    ], 'payment_id');
     if ($issuedUtc) {
         DB::table('onsite_payment')->insert(['payment_id' => $paymentId, 'conductor_id' => fnCid(fnUser('conductor')), 'issued_at' => $issuedUtc, 'created_at' => $created, 'updated_at' => $created]);
     }
@@ -72,7 +73,7 @@ function fnSale(array $world, array $amounts, string $created, string $method = 
         $ids[] = DB::table('tickets')->insertGetId([
             'fleet_route_id' => $world['fleetRoute']->fleet_route_id, 'trip_id' => $world['trip']->trip_id, 'payment_id' => $paymentId, 'ticket_uuid' => (string) Str::uuid(),
             'status' => $ticketStatus, 'seat_type' => 'seated', 'amount' => $amount, 'created_at' => $created, 'updated_at' => $created,
-        ]);
+        ], 'ticket_id');
     }
 
     return ['payment_id' => $paymentId, 'ticket_ids' => $ids];
@@ -136,6 +137,37 @@ it('subtracts succeeded refunds as their own figure and shows partial and pendin
     expect($log[80.0]['status'])->toEqual('partially_refunded');
     expect($log[80.0]['refunded'])->toEqual(30.0);
     expect($log[60.0]['status'])->toEqual('refund_pending');
+});
+
+it('paginates the financial transaction log with SQL ordering and stable metadata', function () {
+    $w = fnWorld();
+    fnSale($w, [30.00], '2026-10-05 09:00:00');
+    fnSale($w, [10.00], '2026-10-05 09:00:00');
+    fnSale($w, [20.00], '2026-10-05 09:00:00');
+    $pageQuery = null;
+    $pageBindings = [];
+    DB::listen(function (QueryExecuted $query) use (&$pageQuery, &$pageBindings) {
+        $sql = strtolower($query->sql);
+        if (str_contains($sql, 'from "tickets"') && str_contains($sql, 'limit')) {
+            $pageQuery = $query->sql;
+            $pageBindings = $query->bindings;
+        }
+    });
+
+    $page = fnGet($this, $w['operator'], '/transactions', [
+        'from' => '2026-10-05', 'per_page' => 1, 'page' => 2, 'sort' => 'amount', 'dir' => 'asc',
+    ])->assertSuccessful()->json('data');
+
+    expect($page['data'])->toHaveCount(1);
+    expect($page['data'][0]['amount'])->toEqual(20.0);
+    expect($page['meta'])->toMatchArray(['page' => 2, 'per_page' => 1, 'total' => 3, 'last_page' => 3, 'sort' => 'amount', 'dir' => 'asc']);
+
+    if (DB::getDriverName() === 'pgsql') {
+        expect($pageQuery)->toBeString();
+        $plan = DB::select('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '.$pageQuery, $pageBindings);
+        expect($plan)->not->toBeEmpty();
+        expect(json_decode($plan[0]->{'QUERY PLAN'}, true))->toHaveCount(1);
+    }
 });
 
 it('counts a rebooked journey once, through its replacement ticket', function () {

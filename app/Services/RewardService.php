@@ -108,9 +108,9 @@ class RewardService
         return $this->redeemPoints((int) $rows->first()->passenger_id, $original, 'Redeemed during checkout (payment confirmed late)', $paymentId);
     }
 
-    public function getHistory(int $passengerId): Collection
+    public function getHistory(int $passengerId, int $page = 1, int $perPage = 50): object
     {
-        return $this->rewardRepository->findHistoryForPassenger($passengerId);
+        return $this->rewardRepository->findHistoryForPassenger($passengerId, $perPage, $page);
     }
 
     public function getPoints(int $passengerId): int

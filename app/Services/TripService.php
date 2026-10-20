@@ -2,12 +2,18 @@
 
 namespace App\Services;
 
+use App\Models\FleetRoute;
+use App\Models\Ticket;
+use App\Models\Trip;
+use App\Models\TripAssignmentRequest;
 use App\Repositories\ConductorShiftLogRepository;
 use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\BusLabel;
 use App\Support\Notifications\NotificationLink;
+use App\Support\ScheduleStatus;
 use App\Support\TripCapacity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -46,6 +52,18 @@ class TripService
      */
     private function assertNotAlreadyAssignedThatDay(string $role, int $companyUserId, string $tripDate, ?int $excludeTripId = null): void
     {
+        if (TripAssignmentRequest::query()
+            ->where('role', $role)
+            ->where('staff_company_user_id', $companyUserId)
+            ->where('status', TripAssignmentRequest::APPROVED)
+            ->whereHas('trip', fn ($query) => $query->whereDate('trip_date', $tripDate))
+            ->exists()) {
+            $field = $role === 'driver' ? 'driver_id' : 'conductor_id';
+            throw ValidationException::withMessages([
+                $field => [ucfirst($role).' has an approved release request for this date and cannot be reassigned.'],
+            ]);
+        }
+
         $alreadyAssigned = $this->tripRepository->hasAnySameDayAssignment($role, $companyUserId, $tripDate, $excludeTripId);
 
         if ($alreadyAssigned) {
@@ -302,7 +320,7 @@ class TripService
             throw ValidationException::withMessages(['trip' => ['The bus can only be changed before the trip starts boarding.']]);
         }
 
-        $target = \App\Models\FleetRoute::with('fleet')->find($fleetRouteId);
+        $target = FleetRoute::with('fleet')->find($fleetRouteId);
         if (! $target || $target->status !== 'active' || (int) $target->route_id !== (int) $trip->fleetRoute->route_id) {
             throw ValidationException::withMessages(['fleet_route_id' => ['Choose an active bus assigned to this trip\'s route.']]);
         }
@@ -325,8 +343,8 @@ class TripService
         );
 
         DB::transaction(function () use ($trip, $target) {
-            \App\Models\Trip::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
-            \App\Models\Ticket::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
+            Trip::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
+            Ticket::where('trip_id', $trip->trip_id)->update(['fleet_route_id' => $target->fleet_route_id]);
         });
 
         $fresh = $this->tripRepository->findById($tripId);
@@ -339,7 +357,7 @@ class TripService
     private function notifyPassengersOfBusChange(object $trip): void
     {
         $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
-        $label = \App\Support\BusLabel::for($trip->fleetRoute?->fleet);
+        $label = BusLabel::for($trip->fleetRoute?->fleet);
         $body = $label
             ? "{$routeName} on {$trip->trip_date->toDateString()} will now run on {$label}."
             : "{$routeName} on {$trip->trip_date->toDateString()} has a new bus. Its label will be shown on your ticket as soon as it is available.";
@@ -352,7 +370,6 @@ class TripService
             $this->fcmService->sendToUser($passenger->user, 'Your bus has changed', $body, ['type' => 'trip_bus_changed', 'trip_id' => $trip->trip_id]);
         }
     }
-
 
     /**
      * Notifications audit follow-up (auto-delay item): notifies passengers
@@ -371,6 +388,7 @@ class TripService
      */
     public function notifyDelayedTrips(): int
     {
+        $this->tripRepository->markOverdueScheduledAsDelayed();
         $trips = $this->tripRepository->findDelayedTripsPendingNotification();
         $notified = 0;
 
@@ -436,8 +454,8 @@ class TripService
         }
 
         // Batch 29, issue 3: a date that has passed (Manila) can no longer be answered.
-        if (\App\Support\ScheduleStatus::isPastDate($trip->trip_date?->toDateString())) {
-            throw ValidationException::withMessages(['status' => [\App\Support\ScheduleStatus::PAST_DATE_MESSAGE]]);
+        if (ScheduleStatus::isPastDate($trip->trip_date?->toDateString())) {
+            throw ValidationException::withMessages(['status' => [ScheduleStatus::PAST_DATE_MESSAGE]]);
         }
 
         $assignedId = $role === 'driver' ? $trip->driver_id : $trip->conductor_id;
@@ -449,10 +467,10 @@ class TripService
 
         // A pending request to be released is a different answer to the same question. The screen already hides Accept
         // in that case; the server refuses it too (a shift block's accept makes the same check).
-        $pendingRelease = \App\Models\TripAssignmentRequest::where('trip_id', $tripId)
+        $pendingRelease = TripAssignmentRequest::where('trip_id', $tripId)
             ->where('role', $role)
             ->where('staff_company_user_id', $staffCompanyUserId)
-            ->where('status', \App\Models\TripAssignmentRequest::FOR_APPROVAL)
+            ->where('status', TripAssignmentRequest::FOR_APPROVAL)
             ->exists();
         if ($pendingRelease) {
             throw ValidationException::withMessages([
@@ -610,9 +628,9 @@ class TripService
         return $this->tripRepository->listByConductor($conductorCompanyUserId, $statusFilter);
     }
 
-    public function getOperatorUpcomingTrips(int $operatorCompanyUserId, string $statusFilter = 'all'): object
+    public function getOperatorUpcomingTrips(int $operatorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): object
     {
-        return $this->tripRepository->listUpcomingByOperator($operatorCompanyUserId, $statusFilter);
+        return $this->tripRepository->listUpcomingByOperator($operatorCompanyUserId, $statusFilter, $page, $perPage);
     }
 
     public function getCurrentTripForDriver(int $driverCompanyUserId): ?object

@@ -6,11 +6,13 @@ use App\Models\PassengerUser;
 use App\Models\Payment;
 use App\Models\Route;
 use App\Models\RouteStop;
+use App\Models\ShiftBlock;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
+use App\Services\ShiftBlockService;
 use App\Support\TripRunInfo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -54,13 +56,13 @@ function sdFixture(array $express = ['A', 'B', 'D', 'E']): array
     return compact('operator', 'route', 'stops', 'fleet', 'fleetRoute', 'mk', 'company');
 }
 
-function sdBlock(array $f, array $times): \App\Models\ShiftBlock
+function sdBlock(array $f, array $times): ShiftBlock
 {
     config(['shift_blocks.legs_per_block' => count($times)]);
     $driver = sdStaff('driver');
     $conductor = sdStaff('conductor');
 
-    return app(\App\Services\ShiftBlockService::class)->createBlock([
+    return app(ShiftBlockService::class)->createBlock([
         'fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'driver_id' => $driver->companyProfile->company_user_id, 'conductor_id' => $conductor->companyProfile->company_user_id,
         'company_user_id' => $f['company'], 'block_type' => 'morning', 'scheduled_date' => '2026-10-05', 'leg_departure_times' => $times,
     ]);
@@ -158,7 +160,7 @@ it('carries both facts to the booking list, the A2 timeline header, the operator
     $ticket = Ticket::create(['fleet_route_id' => $leg->fleet_route_id, 'trip_id' => $leg->trip_id, 'payment_id' => $payment->payment_id, 'passenger_id' => $pax->passenger_id, 'ticket_uuid' => (string) Str::uuid(), 'status' => 'valid', 'amount' => 47, 'seat_type' => 'seated',
         'origin_stop_id' => $f['stops']['B']->stop_id, 'destination_stop_id' => $f['stops']['D']->stop_id]);
 
-    $mine = collect($this->actingAs($user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data'))->firstWhere('ticket_uuid', $ticket->ticket_uuid);
+    $mine = collect($this->actingAs($user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data.data'))->firstWhere('ticket_uuid', $ticket->ticket_uuid);
     expect($mine['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($mine['run_info']['service']['label'])->toBe('Express');
     $qr = $this->actingAs($user)->getJson("/api/passengers/tickets/{$ticket->ticket_uuid}/qr")->assertSuccessful()->json('data');
     expect($qr['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($qr['run_info']['service']['label'])->toBe('Express');

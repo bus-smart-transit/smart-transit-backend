@@ -6,6 +6,7 @@ use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
+use App\Models\TripAssignmentRequest;
 use App\Models\User;
 use App\Services\FcmService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -35,10 +36,10 @@ function rqUser(string $role): User
 
 function rqTrip(User $operator, User $driver, User $conductor, string $status = 'scheduled'): Trip
 {
-    $route = Route::create(['route_name' => 'Req ' . Str::random(4), 'origin' => 'A', 'destination' => 'B']);
+    $route = Route::create(['route_name' => 'Req '.Str::random(4), 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create([
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'plate_number' => 'RQ-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'RQ-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -116,7 +117,7 @@ test('repeating the request is idempotent and does not create a second one', fun
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
 
-    expect(\App\Models\TripAssignmentRequest::where('trip_id', $trip->trip_id)->count())->toBe(1);
+    expect(TripAssignmentRequest::where('trip_id', $trip->trip_id)->count())->toBe(1);
 });
 
 test('a driver who already accepted the trip cannot decline it', function () {
@@ -144,7 +145,7 @@ test('approve releases the driver, drops the stale PIN, keeps the trip status an
     ]);
 
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
-    $requestId = \App\Models\TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
+    $requestId = TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
 
     $titles = [];
     rqFakeFcm($titles);
@@ -159,6 +160,27 @@ test('approve releases the driver, drops the stale PIN, keeps the trip status an
     expect($titles)->toContain([$driver->user_id, 'Decline Request Approved']);
 });
 
+test('a driver with an approved release cannot be selected again on that date', function () {
+    $operator = rqUser('operator');
+    $driver = rqUser('driver');
+    $conductor = rqUser('conductor');
+    $declinedTrip = rqTrip($operator, $driver, $conductor);
+
+    $this->actingAs($driver)->patchJson("/api/driver/trips/{$declinedTrip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
+    $requestId = TripAssignmentRequest::where('trip_id', $declinedTrip->trip_id)->value('id');
+    $this->actingAs($operator)->patchJson("/api/operator/trip-requests/{$requestId}/approve")->assertSuccessful();
+
+    $anotherTrip = rqTrip($operator, rqUser('driver'), rqUser('conductor'));
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$anotherTrip->trip_id}/driver", [
+        'driver_id' => $driver->companyProfile->company_user_id,
+    ])->assertStatus(422)->assertJsonValidationErrors(['driver_id']);
+
+    $availableIds = collect($this->actingAs($operator)->getJson('/api/operator/drivers?trip_date='.now()->toDateString())->assertSuccessful()->json('data'))
+        ->pluck('company_user_id')
+        ->map(fn ($id) => (int) $id);
+    expect($availableIds)->not->toContain((int) $driver->companyProfile->company_user_id);
+});
+
 test('reject keeps the staff member assigned, tells them to proceed and blocks a repeat request', function () {
     $operator = rqUser('operator');
     $driver = rqUser('driver');
@@ -166,7 +188,7 @@ test('reject keeps the staff member assigned, tells them to proceed and blocks a
     $trip = rqTrip($operator, $driver, $conductor);
 
     $this->actingAs($conductor)->patchJson("/api/conductor/trips/{$trip->trip_id}/decline", ['reason_code' => 'vehicle_issue'])->assertSuccessful();
-    $requestId = \App\Models\TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
+    $requestId = TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
 
     $titles = [];
     rqFakeFcm($titles);
@@ -189,7 +211,7 @@ test('only the owning operator can decide, and only once', function () {
     $trip = rqTrip($operator, $driver, rqUser('conductor'));
 
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
-    $requestId = \App\Models\TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
+    $requestId = TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
 
     $this->actingAs($otherOperator)->patchJson("/api/operator/trip-requests/{$requestId}/approve")->assertForbidden();
 
@@ -204,7 +226,7 @@ test('a request cannot be approved once the trip has departed', function () {
     $trip = rqTrip($operator, $driver, rqUser('conductor'));
 
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$trip->trip_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
-    $requestId = \App\Models\TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
+    $requestId = TripAssignmentRequest::where('trip_id', $trip->trip_id)->value('id');
     $trip->update(['status' => 'departed']);
 
     $this->actingAs($operator)->patchJson("/api/operator/trip-requests/{$requestId}/approve")->assertStatus(422);

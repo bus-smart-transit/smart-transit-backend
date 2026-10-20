@@ -4,7 +4,9 @@ use App\Models\Stop;
 use App\Models\Payment;
 use App\Models\Ticket;
 use App\Models\RewardTransaction;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class PaymentRepository
@@ -26,6 +28,19 @@ class PaymentRepository
         return Payment::where('transaction_reference', $transactionReference)->first();
     }
 
+    public function findByIdempotencyKey(string $scopeHash, string $keyHash, bool $lockForUpdate = false): ?Payment
+    {
+        $query = Payment::with(['tickets', 'onsitePayment'])
+            ->where('idempotency_scope_hash', $scopeHash)
+            ->where('idempotency_key_hash', $keyHash);
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->first();
+    }
+
     public function findByGatewayReference(string $gatewayReference): ?Payment
     {
         return Payment::where('gateway_reference', $gatewayReference)->first();
@@ -44,40 +59,30 @@ class PaymentRepository
         ]) > 0;
     }
 
-    public function findPassengerHistoryFromPayments(int $passengerId): Collection
+    public function findPassengerHistoryFromPayments(int $passengerId, int $perPage = 50, int $page = 1): LengthAwarePaginator
     {
-        // Fast path: resolve payment ids through indexed relations first.
-        $ticketPaymentIds = Ticket::query()
+        $ticketPaymentIds = DB::table('tickets')
+            ->select('payment_id')
             ->where('passenger_id', $passengerId)
             ->whereNotNull('payment_id')
-            ->pluck('payment_id')
-            ->map(fn ($id) => (int) $id)
-            ->values();
-
-        $rewardPaymentIds = RewardTransaction::query()
+            ->distinct();
+        $rewardPaymentIds = DB::table('reward_transactions')
+            ->select('payment_id')
             ->where('passenger_id', $passengerId)
             ->whereNotNull('payment_id')
-            ->pluck('payment_id')
-            ->map(fn ($id) => (int) $id)
-            ->values();
-
-        $resolvedPaymentIds = $ticketPaymentIds
-            ->merge($rewardPaymentIds)
-            ->unique()
-            ->values();
-
-        if ($resolvedPaymentIds->isEmpty()) {
-            return collect();
-        }
+            ->distinct();
+        $resolvedPaymentIds = $ticketPaymentIds->union($rewardPaymentIds);
 
         $payments = Payment::query()
             ->with(['tickets.originStop', 'tickets.destinationStop'])
             ->whereIn('payment_id', $resolvedPaymentIds)
             ->orderByDesc('payment_created')
             ->orderByDesc('created_at')
-            ->get();
+            ->orderByDesc('payment_id')
+            ->paginate($perPage, ['*'], 'page', $page);
+        $paymentRows = $payments->getCollection();
 
-        $paymentIds = $payments->pluck('payment_id')->filter()->map(fn ($id) => (int) $id)->values();
+        $paymentIds = $paymentRows->pluck('payment_id')->filter()->map(fn ($id) => (int) $id)->values();
 
         $rewardByPayment = RewardTransaction::query()
             ->where('passenger_id', $passengerId)
@@ -87,7 +92,7 @@ class PaymentRepository
             ->groupBy('payment_id');
 
         $stopIds = [];
-        foreach ($payments as $payment) {
+        foreach ($paymentRows as $payment) {
             foreach (($payment->items_payload ?? []) as $item) {
                 if (isset($item['origin_stop_id'])) {
                     $stopIds[] = (int) $item['origin_stop_id'];
@@ -102,7 +107,7 @@ class PaymentRepository
             ->whereIn('stop_id', array_values(array_unique(array_filter($stopIds))))
             ->pluck('stop_name', 'stop_id');
 
-        return $payments->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment) {
+        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment) {
             $matchedItems = collect($payment->items_payload ?? [])
                 ->filter(function ($item) use ($passengerId) {
                     return (int) ($item['passenger_id'] ?? 0) === $passengerId;
@@ -183,6 +188,8 @@ class PaymentRepository
                 'route_summary' => $items->pluck('route_label')->filter()->unique()->implode('; '),
                 'items' => $items,
             ];
-        })->values();
+        })->values());
+
+        return $payments;
     }
 }

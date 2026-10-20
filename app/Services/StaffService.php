@@ -2,15 +2,19 @@
 
 namespace App\Services;
 
-use App\Repositories\UserRepository;
+use App\Models\Trip;
+use App\Models\TripAssignmentRequest;
 use App\Repositories\StaffRepository;
-use Illuminate\Validation\ValidationException;
+use App\Repositories\UserRepository;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class StaffService
 {
     private UserRepository $userRepository;
+
     private StaffRepository $staffRepository;
+
     private const STAFF_ROLES = ['operator', 'driver', 'conductor', 'admin'];
 
     private const OPERATOR_CREATABLE_ROLES = ['driver', 'conductor'];
@@ -49,7 +53,7 @@ class StaffService
         $targetRole = $payload['role'];
 
         if ($createdByRole === 'operator') {
-            if (!in_array($targetRole, self::OPERATOR_CREATABLE_ROLES)) {
+            if (! in_array($targetRole, self::OPERATOR_CREATABLE_ROLES)) {
                 throw ValidationException::withMessages([
                     'role' => ['Operators can only create driver or conductor accounts.'],
                 ]);
@@ -91,9 +95,26 @@ class StaffService
 
     // ── Staff listings (operator/admin views) ───────────────────────
 
-    public function listDrivers(): object
+    public function listDrivers(?string $tripDate = null): object
     {
-        return $this->staffRepository->listByRole('driver');
+        $drivers = $this->staffRepository->listByRole('driver');
+        if ($tripDate === null) {
+            return $drivers;
+        }
+
+        $assignedIds = Trip::query()
+            ->whereDate('trip_date', $tripDate)
+            ->whereNotNull('driver_id')
+            ->where('status', '!=', 'cancelled')
+            ->pluck('driver_id');
+        $releasedIds = TripAssignmentRequest::query()
+            ->where('role', 'driver')
+            ->where('status', TripAssignmentRequest::APPROVED)
+            ->whereHas('trip', fn ($query) => $query->whereDate('trip_date', $tripDate))
+            ->pluck('staff_company_user_id');
+        $unavailableIds = $assignedIds->merge($releasedIds)->map(fn ($id) => (int) $id)->unique();
+
+        return $drivers->reject(fn ($driver) => $unavailableIds->contains((int) $driver->company_user_id))->values();
     }
 
     public function listConductors(): object

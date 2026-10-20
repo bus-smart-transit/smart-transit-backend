@@ -8,6 +8,7 @@ use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -28,7 +29,20 @@ function adherenceTrip(Fleet $fleet, int $stopCount, string $status = 'completed
         'trip_type' => 'one_way', 'status' => $status, 'current_seated_capacity' => 0, 'current_standing_capacity' => 0, 'total_occupancy' => 0,
     ]);
     foreach ($gpsLatitudes as $n => $latitude) {
-        DB::table('fleet_location_history')->insert(['fleet_id' => $fleet->fleet_id, 'trip_id' => $trip->trip_id, 'location' => $latitude . ',125.0', 'recorded_at' => '2026-10-05 0' . (6 + $n) . ':00:00']);
+        $recordedAt = '2026-10-05 0' . (6 + $n) . ':00:00';
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                'INSERT INTO fleet_location_history (fleet_id, trip_id, location, recorded_at) VALUES (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)',
+                [$fleet->fleet_id, $trip->trip_id, 125.0, $latitude, $recordedAt],
+            );
+        } else {
+            DB::table('fleet_location_history')->insert([
+                'fleet_id' => $fleet->fleet_id,
+                'trip_id' => $trip->trip_id,
+                'location' => $latitude.',125.0',
+                'recorded_at' => $recordedAt,
+            ]);
+        }
     }
 
     return $trip;
@@ -157,6 +171,37 @@ describe('Fleet Reporting System', function () {
         expect($response->json('data.summary.total_trips'))->toBe(2);
         expect($response->json('data.summary.trips_with_gps_data'))->toBe(0);
         expect(collect($response->json('data.trips'))->pluck('data_source')->all())->toBe(['proxy']);
+    });
+
+    it('loads GPS history in one batch for multiple trips', function () {
+        $operator = makeOperatorWithProfile();
+        $fleet = createOwnedFleet($operator);
+        adherenceTrip($fleet, 3, 'completed', [7.0, 7.1]);
+        adherenceTrip($fleet, 3, 'completed', [7.0, 7.1]);
+        $gpsQueries = 0;
+        $gpsSql = null;
+        $gpsBindings = [];
+
+        DB::listen(function (QueryExecuted $query) use (&$gpsQueries, &$gpsSql, &$gpsBindings) {
+            if (str_contains(strtolower($query->sql), 'from fleet_location_history')) {
+                $gpsQueries++;
+                $gpsSql = $query->sql;
+                $gpsBindings = $query->bindings;
+            }
+        });
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . issueOperatorToken($operator))
+            ->getJson('/api/operator/fleets/' . $fleet->fleet_id . '/reports/route-adherence?start_date=2026-10-01&end_date=2026-10-07');
+
+        $response->assertOk();
+        expect($response->json('data.trips'))->toHaveCount(2);
+        expect($gpsQueries)->toBe(1);
+
+        if (DB::getDriverName() === 'pgsql') {
+            $plan = DB::select('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '.$gpsSql, $gpsBindings);
+            expect($plan)->not->toBeEmpty();
+            expect(json_decode($plan[0]->{'QUERY PLAN'}, true))->toHaveCount(1);
+        }
     });
 
     it('route adherence is not shown for another operator\'s fleet', function () {

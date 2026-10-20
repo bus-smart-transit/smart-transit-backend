@@ -153,6 +153,32 @@ it('records who issued the cash ticket, that it is cash, and the server time in 
     $this->assertDatabaseHas('audit_logs', ['action' => 'payment.cash_ticket_issued', 'subject_id' => $paymentId]);
 });
 
+it('replays an idempotent cash sale without issuing or auditing a second ticket', function () {
+    [$conductor, $trip, $stops] = cashFixture();
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+    $headers = ['Idempotency-Key' => 'cash-retry-key-00000001'];
+    $payload = ['items' => [[
+        'trip_id' => $trip->trip_id,
+        'seat_type' => 'seated',
+        'origin_stop_id' => $stops['Stop A']->stop_id,
+        'destination_stop_id' => $stops['Stop C']->stop_id,
+    ]]];
+
+    $first = $this->actingAs($conductor)->postJson('/api/conductor/checkout', $payload, $headers)->assertSuccessful();
+    $replay = $this->actingAs($conductor)->postJson('/api/conductor/checkout', $payload, $headers)->assertSuccessful();
+
+    expect($replay->json('data.payment.payment_id'))->toBe($first->json('data.payment.payment_id'));
+    expect($replay->json('data.tickets.0.ticket_id'))->toBe($first->json('data.tickets.0.ticket_id'));
+    expect(\App\Models\Payment::where('idempotency_key_hash', hash('sha256', $headers['Idempotency-Key']))->count())->toBe(1);
+    expect(\App\Models\Ticket::where('trip_id', $trip->trip_id)->count())->toBe(1);
+    expect(\Illuminate\Support\Facades\DB::table('audit_logs')->where('action', 'payment.cash_ticket_issued')->count())->toBe(1);
+
+    $changedPayload = $payload;
+    $changedPayload['items'][0]['destination_stop_id'] = $stops['Stop B']->stop_id;
+    $this->actingAs($conductor)->postJson('/api/conductor/checkout', $changedPayload, $headers)->assertStatus(409);
+    expect(\App\Models\Ticket::where('trip_id', $trip->trip_id)->count())->toBe(1);
+});
+
 it('blocks issuing once the bus is at capacity', function () {
     [$conductor, $trip, $stops] = cashFixture(seated: 1, standing: 0);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();

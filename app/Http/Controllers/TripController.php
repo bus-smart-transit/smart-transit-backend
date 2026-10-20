@@ -307,11 +307,31 @@ class TripController extends Controller
 
         $statusFilter = $request->query('status_filter');
         $resolvedFilter = $statusFilter !== null ? (string) $statusFilter : 'upcoming';
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
 
-        $trips = $this->tripService->getOperatorUpcomingTrips($companyUser->company_user_id, $resolvedFilter);
+        $page = $this->tripService->getOperatorUpcomingTrips(
+            $companyUser->company_user_id,
+            $resolvedFilter,
+            (int) ($pagination['page'] ?? 1),
+            (int) ($pagination['per_page'] ?? 100),
+        );
+        $trips = $page->getCollection();
         \App\Support\TripRunInfo::attach($trips);
 
-        return $this->success($trips, 'Upcoming trips retrieved successfully');
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Upcoming trips retrieved successfully',
+            'data' => $trips->values(),
+            'meta' => [
+                'current_page' => $page->currentPage(),
+                'last_page' => $page->lastPage(),
+                'per_page' => $page->perPage(),
+                'total' => $page->total(),
+            ],
+        ]);
     }
 
     // Driver: current active trip

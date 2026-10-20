@@ -21,7 +21,7 @@ class UnfulfilledPaymentController extends Controller
     public function index(Request $request)
     {
         $data = $request->validate([
-            'status' => ['nullable', 'in:needs_refund,refunded,all'],
+            'status' => ['nullable', 'in:needs_refund,refunded,outcome_unknown,all'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
         ]);
@@ -43,6 +43,27 @@ class UnfulfilledPaymentController extends Controller
         }
 
         return $this->success($row, 'Refund recorded');
+    }
+
+    /** POST /operator/payments/{id}/checkout-reconciled-not-paid { note } */
+    public function reconcileCheckoutNotPaid(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'note' => ['required', 'string', 'min:12', 'max:255'],
+        ]);
+
+        try {
+            $payment = $this->payments->recordCheckoutNotCharged(
+                $id,
+                $this->ownerId($request),
+                $request->user(),
+                $data['note'],
+            );
+        } catch (ModelNotFoundException) {
+            return $this->error('Payment not found.', 404);
+        }
+
+        return $this->success(['payment_id' => $payment->payment_id, 'status' => $payment->status], 'Checkout reconciled as not charged');
     }
 
     private function ownerId(Request $request): int

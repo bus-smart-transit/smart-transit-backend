@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Payment;
+use App\Exceptions\CheckoutIdempotencyConflict;
+use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
 use App\Repositories\OnlinePaymentRepository;
 use App\Repositories\OnsitePaymentRepository;
 use App\Repositories\PassengerRepository;
@@ -12,6 +14,7 @@ use App\Support\Database\RlsContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -60,31 +63,50 @@ class PaymentService
         }
 
         $status = (string) $payment->status;
-        if ($status === 'pending' && $payment->hold_expires_at && Carbon::parse($payment->hold_expires_at)->isPast()) {
+        $outcomeUnknown = $payment->idempotency_state === 'unknown';
+        if (! $outcomeUnknown && $status === 'pending' && $payment->hold_expires_at && Carbon::parse($payment->hold_expires_at)->isPast()) {
             $status = 'expired';
         }
 
-        return [
+        $result = [
             'transaction_reference' => $payment->transaction_reference,
             'status' => $status,
             'hold_expires_at' => $payment->hold_expires_at ? Carbon::parse($payment->hold_expires_at)->toIso8601String() : null,
         ];
+        if ($outcomeUnknown) {
+            $result['outcome_unknown'] = true;
+        }
+
+        return $result;
     }
 
-    public function checkoutOnline(?int $passengerId, ?string $guestEmail, array $payload): array
+    public function checkoutOnline(?int $passengerId, ?string $guestEmail, array $payload, ?string $idempotencyKey = null): array
     {
-        return RlsContext::withBypass(function () use ($passengerId, $guestEmail, $payload) {
+        return RlsContext::withBypass(function () use ($passengerId, $guestEmail, $payload, $idempotencyKey) {
+            $identity = $this->idempotencyIdentity(
+                $idempotencyKey,
+                $passengerId !== null ? 'passenger:'.$passengerId : 'guest:'.strtolower((string) ($guestEmail ?? 'anonymous')),
+                $payload,
+            );
             if (function_exists('set_time_limit')) {
                 @set_time_limit(120);
             }
 
             $startedAt = microtime(true);
 
-            $prepared = DB::transaction(function () use ($passengerId, $guestEmail, $payload, $startedAt) {
+            try {
+                $prepared = DB::transaction(function () use ($passengerId, $guestEmail, $payload, $startedAt, $identity) {
                 // PostgreSQL only: bounded waits for row locks. (Other drivers, i.e. the SQLite test database, have no such setting.)
                 if (DB::getDriverName() === 'pgsql') {
                     DB::statement("SET LOCAL lock_timeout TO '5s'");
                     DB::statement("SET LOCAL statement_timeout TO '12s'");
+                }
+
+                if ($identity !== null) {
+                    $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
+                    if ($existing) {
+                        return ['idempotency_replay' => $existing];
+                    }
                 }
 
                 $pointsRequested = max(0, (int) ($payload['reward_points_to_use'] ?? 0));
@@ -103,6 +125,10 @@ class PaymentService
                     'guest_email' => $guestEmail,
                     'status' => 'pending',
                     'is_valid' => true,
+                    'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
+                    'idempotency_key_hash' => $identity['key_hash'] ?? null,
+                    'idempotency_request_hash' => $identity['request_hash'] ?? null,
+                    'idempotency_state' => $identity !== null ? 'processing' : null,
                 ]);
 
                 // Keep one online_payment row per online transaction.
@@ -249,7 +275,23 @@ class PaymentService
                     'reward_discount' => $rewardDiscount,
                     'net_amount' => (float) $payment->amount,
                 ];
-            });
+                });
+            } catch (QueryException $exception) {
+                if ($identity === null || ! $this->isUniqueConstraintViolation($exception)) {
+                    throw $exception;
+                }
+
+                $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash']);
+                if (! $existing) {
+                    throw $exception;
+                }
+
+                return $this->replayOnlineCheckout($existing, $identity);
+            }
+
+            if (isset($prepared['idempotency_replay'])) {
+                return $this->replayOnlineCheckout($prepared['idempotency_replay'], $identity);
+            }
 
             /** @var Payment $payment */
             $payment = $prepared['payment'];
@@ -268,6 +310,14 @@ class PaymentService
                     'payment_id' => $payment->payment_id,
                     'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 ]);
+            } catch (PayMongoCheckoutOutcomeUnknown $e) {
+                $payment->forceFill(['idempotency_state' => 'unknown'])->save();
+                Log::warning('Checkout session outcome is unknown; preserving the payment hold for reconciliation.', [
+                    'payment_id' => $payment->payment_id,
+                    'transaction_reference' => $payment->transaction_reference,
+                ]);
+
+                throw $e;
             } catch (\Throwable $e) {
                 try {
                     $this->failOnlinePaymentWithReleases($payment);
@@ -277,10 +327,21 @@ class PaymentService
                         'error' => $releaseError->getMessage(),
                     ]);
                 }
+                if ($identity !== null) {
+                    $payment->forceFill(['idempotency_state' => 'failed'])->save();
+                }
                 throw $e;
             }
 
-            DB::transaction(function () use ($session, $payment) {
+            $replayResponse = [
+                'gross_amount' => $prepared['gross_amount'],
+                'reward_points_applied' => $prepared['reward_points_applied'],
+                'reward_discount' => $prepared['reward_discount'],
+                'net_amount' => $prepared['net_amount'],
+                'checkout_url' => $session['attributes']['checkout_url'],
+            ];
+
+            $completedPayment = DB::transaction(function () use ($session, $payment, $identity, $replayResponse) {
                 $freshPayment = $this->paymentRepository->findById($payment->payment_id);
                 if (! $freshPayment) {
                     throw new \RuntimeException('Payment record no longer exists.');
@@ -288,7 +349,13 @@ class PaymentService
 
                 $freshPayment->gateway_reference = $session['id'];
                 $freshPayment->payment_intent_id = $session['attributes']['payment_intent']['id'] ?? null;
+                if ($identity !== null) {
+                    $freshPayment->idempotency_state = 'completed';
+                    $freshPayment->idempotency_response = $replayResponse;
+                }
                 $freshPayment->save();
+
+                return $freshPayment;
             });
 
             Log::info('Checkout finalized for redirect', [
@@ -297,14 +364,68 @@ class PaymentService
             ]);
 
             return [
-                'payment' => $this->paymentRepository->findById($payment->payment_id),
-                'gross_amount' => $prepared['gross_amount'],
-                'reward_points_applied' => $prepared['reward_points_applied'],
-                'reward_discount' => $prepared['reward_discount'],
-                'net_amount' => $prepared['net_amount'],
-                'checkout_url' => $session['attributes']['checkout_url'],
-            ];
+                'payment' => $completedPayment,
+            ] + $replayResponse;
         });
+    }
+
+    /** @return array{scope_hash: string, key_hash: string, request_hash: string}|null */
+    private function idempotencyIdentity(?string $key, string $scope, array $payload): ?array
+    {
+        $key = trim((string) $key);
+        if ($key === '') {
+            return null;
+        }
+
+        $normalized = $this->normalizeIdempotencyValue($payload);
+
+        return [
+            'scope_hash' => hash('sha256', $scope),
+            'key_hash' => hash('sha256', $key),
+            'request_hash' => hash('sha256', json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)),
+        ];
+    }
+
+    private function normalizeIdempotencyValue(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map(fn ($item) => $this->normalizeIdempotencyValue($item), $value);
+        }
+
+        ksort($value);
+
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->normalizeIdempotencyValue($item);
+        }
+
+        return $value;
+    }
+
+    private function replayOnlineCheckout(Payment $payment, array $identity): array
+    {
+        if (! hash_equals((string) $payment->idempotency_request_hash, $identity['request_hash'])) {
+            throw new CheckoutIdempotencyConflict('This checkout key was already used with different details. Start a new checkout.');
+        }
+        if ($payment->idempotency_state !== 'completed' || ! is_array($payment->idempotency_response)) {
+            if ($payment->idempotency_state === 'settled') {
+                throw new CheckoutIdempotencyConflict('This checkout has been settled. Check its payment status before starting another checkout.');
+            }
+            throw new CheckoutIdempotencyConflict('A checkout with this key is still processing or did not complete. Check its status before trying again.');
+        }
+
+        return ['payment' => $this->paymentRepository->findById($payment->payment_id) ?? $payment]
+            + $payment->idempotency_response;
+    }
+
+    private function isUniqueConstraintViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
+
+        return in_array($sqlState, ['23000', '23505'], true) || $driverCode === 19;
     }
 
     private function resolveCheckoutReturnBaseUrl(array $payload): string
@@ -360,9 +481,19 @@ class PaymentService
      * Onsite/cash sales are confirmed instantly, so tickets are still
      * created immediately here (no pending window to defer for).
      */
-    public function checkoutOnsite(int $conductorCompanyUserId, array $payload): array
+    public function checkoutOnsite(int $conductorCompanyUserId, array $payload, ?string $idempotencyKey = null): array
     {
-        return RlsContext::withBypass(fn () => DB::transaction(function () use ($conductorCompanyUserId, $payload) {
+        $identity = $this->idempotencyIdentity($idempotencyKey, 'conductor:'.$conductorCompanyUserId, $payload);
+
+        try {
+            $result = RlsContext::withBypass(fn () => DB::transaction(function () use ($conductorCompanyUserId, $payload, $identity) {
+            if ($identity !== null) {
+                $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
+                if ($existing) {
+                    return ['idempotency_replay' => $existing];
+                }
+            }
+
             $payment = $this->paymentRepository->create([
                 'amount' => 0,
                 'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
@@ -370,6 +501,10 @@ class PaymentService
                 'payment_channel' => 'onsite',
                 'status' => 'paid',
                 'is_valid' => true,
+                'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
+                'idempotency_key_hash' => $identity['key_hash'] ?? null,
+                'idempotency_request_hash' => $identity['request_hash'] ?? null,
+                'idempotency_state' => $identity !== null ? 'processing' : null,
             ]);
 
             $issuedAt = \Illuminate\Support\Carbon::now('UTC');
@@ -396,6 +531,10 @@ class PaymentService
             }
 
             $payment->amount = $total;
+            if ($identity !== null) {
+                $payment->idempotency_state = 'completed';
+                $payment->idempotency_response = ['issued_at' => $issuedAt->toIso8601ZuluString()];
+            }
             $payment->save();
 
             return [
@@ -404,7 +543,44 @@ class PaymentService
                 // ISO 8601 with Z: clients convert to Asia/Manila for display.
                 'issued_at' => $issuedAt->toIso8601ZuluString(),
             ];
-        }));
+            }));
+        } catch (QueryException $exception) {
+            if ($identity === null || ! $this->isUniqueConstraintViolation($exception)) {
+                throw $exception;
+            }
+
+            $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash']);
+            if (! $existing) {
+                throw $exception;
+            }
+
+            return $this->replayOnsiteCheckout($existing, $identity);
+        }
+
+        if (isset($result['idempotency_replay'])) {
+            return $this->replayOnsiteCheckout($result['idempotency_replay'], $identity);
+        }
+
+        return $result;
+    }
+
+    private function replayOnsiteCheckout(Payment $payment, array $identity): array
+    {
+        if (! hash_equals((string) $payment->idempotency_request_hash, $identity['request_hash'])) {
+            throw new CheckoutIdempotencyConflict('This checkout key was already used with different details. Start a new checkout.');
+        }
+        if ($payment->idempotency_state !== 'completed' || ! is_array($payment->idempotency_response)) {
+            throw new CheckoutIdempotencyConflict('A cash checkout with this key is already processing. Check the receipt before retrying.');
+        }
+
+        $payment = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash']) ?? $payment;
+
+        return [
+            'payment' => $payment,
+            'tickets' => $payment->tickets,
+            'issued_at' => $payment->idempotency_response['issued_at'],
+            'idempotency_replayed' => true,
+        ];
     }
 
     /**
@@ -431,21 +607,25 @@ class PaymentService
                 if ($locked->tickets()->exists()) {
                     Log::info('PaymentService: tickets already issued for this payment, skipping.', ['payment_id' => $locked->payment_id]);
                     $this->confirmOnlinePayment($locked->payment_id);
+                    $this->settleUnknownCheckout($locked);
 
                     return 'already_issued';
                 }
 
                 if ($locked->status === 'needs_refund') {
+                    $this->settleUnknownCheckout($locked);
                     return 'needs_refund'; // already flagged: a redelivery must not issue tickets now
                 }
 
                 if (in_array($locked->status, ['expired', 'failed'], true) && ! $this->reclaimReleasedHold($locked)) {
                     $this->paymentRepository->markStatus($locked->payment_id, 'needs_refund', false);
+                    $this->settleUnknownCheckout($locked);
 
                     return 'needs_refund';
                 }
 
                 $this->confirmOnlinePayment($locked->payment_id);
+                $this->settleUnknownCheckout($locked);
 
                 foreach ($locked->items_payload ?? [] as $reservedItem) {
                     $passengerId = $reservedItem['passenger_id'] ?? null;
@@ -593,6 +773,12 @@ class PaymentService
 
                 // The points this checkout took come back with the seats (once, however many times this runs).
                 $this->rewardService->returnRedeemedPoints($payment->payment_id);
+
+                if ($payment->idempotency_state === 'unknown') {
+                    Payment::whereKey($payment->payment_id)
+                        ->where('idempotency_state', 'unknown')
+                        ->update(['idempotency_state' => 'failed']);
+                }
             });
 
             // Notifications audit follow-up: let the Passenger know their
@@ -646,6 +832,16 @@ class PaymentService
         return $this->paymentRepository->findByPaymentIntentId($paymentIntentId);
     }
 
+    private function settleUnknownCheckout(Payment $payment): void
+    {
+        if ($payment->idempotency_state !== 'unknown') {
+            return;
+        }
+
+        $payment->idempotency_state = 'settled';
+        $payment->save();
+    }
+
     public function confirmOnlinePayment(int $paymentId): bool
     {
         return $this->paymentRepository->markStatus($paymentId, 'paid', true);
@@ -656,8 +852,8 @@ class PaymentService
         return $this->paymentRepository->markStatus($paymentId, 'failed', false);
     }
 
-    public function getPassengerHistoryFromPayments(int $passengerId): object
+    public function getPassengerHistoryFromPayments(int $passengerId, int $page = 1, int $perPage = 50): object
     {
-        return $this->paymentRepository->findPassengerHistoryFromPayments($passengerId);
+        return $this->paymentRepository->findPassengerHistoryFromPayments($passengerId, $perPage, $page);
     }
 }

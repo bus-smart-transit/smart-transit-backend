@@ -1,41 +1,41 @@
 <?php
 
+use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
 use App\Http\Controllers\DriverShiftController;
+use App\Http\Controllers\DropoffOptionsController;
+use App\Http\Controllers\DropoffRulesController;
 use App\Http\Controllers\FareRuleController;
+use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
-use App\Http\Controllers\TrafficController;
-use App\Http\Controllers\UnfulfilledPaymentController;
-use App\Http\Controllers\FinancialController;
 use App\Http\Controllers\FleetPairingController;
-use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
-use App\Http\Controllers\ReportingController;
 use App\Http\Controllers\RegionController;
+use App\Http\Controllers\RemittanceController;
+use App\Http\Controllers\ReportingController;
 use App\Http\Controllers\RewardController;
 use App\Http\Controllers\RouteController;
+use App\Http\Controllers\RouteDurationFactorController;
+use App\Http\Controllers\ShiftBlockController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketResolutionController;
-use App\Http\Controllers\RouteDurationFactorController;
-use App\Http\Controllers\DropoffRulesController;
-use App\Http\Controllers\DropoffOptionsController;
 use App\Http\Controllers\TrackingController;
-use App\Http\Controllers\TripController;
+use App\Http\Controllers\TrafficController;
 use App\Http\Controllers\TripAssignmentRequestController;
-use App\Http\Controllers\TripTimelineController;
+use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripNotificationController;
+use App\Http\Controllers\TripTimelineController;
+use App\Http\Controllers\UnfulfilledPaymentController;
 use App\Http\Controllers\UserNotificationController;
-use App\Http\Controllers\AssignmentController;
-use App\Http\Controllers\ShiftBlockController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -119,7 +119,7 @@ Route::get('booking/address-search', [BookingController::class, 'addressSearch']
 // PAYMONGO / PAYMENT
 
 Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
-    ->middleware(['auth.optional', 'throttle:10,15']);
+    ->middleware(['auth.optional', 'throttle:30,1,checkout']);
 Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:10,15');
 Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
 Route::get('payments/status', [PaymentController::class, 'onlineStatus'])->middleware('throttle:30,1');
@@ -149,7 +149,7 @@ Route::prefix('passengers')
         Route::get('dashboard-summary', [PassengerController::class, 'summary']);
         Route::get('payments', [PaymentController::class, 'passengerHistory']);
         Route::get('rewards/history', [RewardController::class, 'history']);
-        Route::post('checkout', [PaymentController::class, 'checkoutOnline'])->middleware('throttle:10,15');
+        Route::post('checkout', [PaymentController::class, 'checkoutOnline'])->middleware('throttle:30,1,checkout');
 
         // Route::post('fare/quote', [FareRuleController::class, 'quote']);
         // Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations']);
@@ -270,6 +270,7 @@ Route::prefix('operator')
         // and could not be honoured), and the Operator's record that they refunded them. Own throttle buckets.
         Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'index'])->middleware('throttle:60,1,refund-list');
         Route::post('payments/{id}/refunded', [UnfulfilledPaymentController::class, 'recordRefund'])->where('id', '[0-9]+')->middleware('throttle:30,1,refund-record');
+        Route::post('payments/{id}/checkout-reconciled-not-paid', [UnfulfilledPaymentController::class, 'reconcileCheckoutNotPaid'])->where('id', '[0-9]+')->middleware('throttle:30,1,checkout-reconcile');
 
         // GPS history for a trip (route adherence + replay)
         Route::get('trips/{tripId}/gps-history', [FleetLocationController::class, 'tripHistory']);

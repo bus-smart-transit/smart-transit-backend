@@ -33,8 +33,17 @@ class TicketController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
         return $this->success(
-            $this->ticketService->getPassengerTickets($passenger->passenger_id),
+            $this->ticketService->getPassengerTickets(
+                $passenger->passenger_id,
+                (int) ($pagination['page'] ?? 1),
+                (int) ($pagination['per_page'] ?? 50),
+            ),
             'Tickets retrieved successfully'
         );
     }

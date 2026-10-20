@@ -42,6 +42,7 @@ class OnlineCheckoutRequest extends FormRequest
             'guest_email' => ['nullable', 'email'],
             'return_base_url' => ['nullable', 'url', 'max:255'],
             'reward_points_to_use' => ['nullable', 'integer', 'min:1'],
+            'idempotency_key' => ['nullable', 'string', 'min:16', 'max:128'],
         ];
     }
 
@@ -102,6 +103,7 @@ class OnlineCheckoutRequest extends FormRequest
     {
         $this->merge([
             'guest_checkout' => $this->user()?->passengerProfile === null,
+            'idempotency_key' => $this->header('Idempotency-Key'),
         ]);
     }
 

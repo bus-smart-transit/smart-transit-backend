@@ -23,6 +23,7 @@ return [
         'snap_radius_m' => (int) env('ORS_SNAP_RADIUS_M', 350),
         // Public ORS rate limit is ~40 requests/minute; pause between calls.
         'request_delay_ms' => (int) env('ORS_REQUEST_DELAY_MS', 1600),
+        'connect_timeout_s' => (int) env('ORS_CONNECT_TIMEOUT_S', 5),
         'timeout_s' => (int) env('ORS_TIMEOUT_S', 20),
     ],
 
@@ -37,6 +38,8 @@ return [
 
     'redraw_cooldown_minutes' => (int) env('ROUTE_GEOMETRY_REDRAW_COOLDOWN_MINUTES', 15),
     'regeneration_pending_ttl_s' => (int) env('ROUTE_GEOMETRY_PENDING_TTL_S', 3600),
+    'debounce_s' => (int) env('ROUTE_GEOMETRY_DEBOUNCE_S', 5),
+    'result_cache_ttl_s' => (int) env('ROUTE_GEOMETRY_RESULT_CACHE_TTL_S', 600),
 
     'gps' => [
         // Fixes reporting a worse (larger) accuracy radius are not accepted.

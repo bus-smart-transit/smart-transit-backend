@@ -13,9 +13,11 @@ use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
 use App\Services\FcmService;
+use App\Services\PaymentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -211,7 +213,7 @@ it('gates each ticket by its own trip date and shows each its own bus', function
     $payment = Payment::findOrFail(rtCheckout($this, $pax, rtItems($f))->json('data.payment.payment_id'));
     rtPaidWebhook($this, $payment)->assertOk();
 
-    $tickets = collect($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data'))->keyBy('journey_leg');
+    $tickets = collect($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data.data'))->keyBy('journey_leg');
     expect(Carbon::parse($tickets['outbound']['valid_from'])->setTimezone('Asia/Manila')->toDateString())->toBe('2026-10-05');
     expect(Carbon::parse($tickets['return']['valid_from'])->setTimezone('Asia/Manila')->toDateString())->toBe('2026-10-06');
     expect($tickets['outbound']['bus_label'])->toBe('Co A - 101')->and($tickets['return']['bus_label'])->toBe('Co B - 202');
@@ -264,14 +266,14 @@ it('leaves no orphan ticket when finalising fails halfway', function () {
     $payment->update(['items_payload' => $payload]);
 
     try {
-        app(\App\Services\PaymentService::class)->finalizeOnlinePayment($payment->fresh());
-    } catch (\Throwable) {
+        app(PaymentService::class)->finalizeOnlinePayment($payment->fresh());
+    } catch (Throwable) {
         // the webhook would answer an error and PayMongo would retry
     }
 
     expect(Ticket::count())->toBe(0);
     expect($payment->fresh()->status)->toBe('pending');
-})->skip(fn () => \Illuminate\Support\Facades\DB::getDriverName() === 'sqlite' && ! \Illuminate\Support\Facades\DB::selectOne('PRAGMA foreign_keys')->foreign_keys, 'needs enforced foreign keys');
+})->skip(fn () => DB::getDriverName() === 'sqlite' && ! DB::selectOne('PRAGMA foreign_keys')->foreign_keys, 'needs enforced foreign keys');
 
 it('refuses a passenger cancel or refund of either ticket with 422 and an audit entry, and hides other people\'s tickets', function () {
     $f = rtFixture();
@@ -311,7 +313,7 @@ it('moves a trip to another bus before it starts, updates its tickets and tells 
     expect($f['backTrip']->fresh()->fleet_route_id)->toBe($spareRoute->fleet_route_id);
     expect(Ticket::where('journey_leg', 'return')->first()->fleet_route_id)->toBe($spareRoute->fleet_route_id);
     // Read live: the passenger now sees the unlabelled state for the return bus, and the outbound bus is untouched.
-    $tickets = collect($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->json('data'))->keyBy('journey_leg');
+    $tickets = collect($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->json('data.data'))->keyBy('journey_leg');
     expect($tickets['return']['bus_label'])->toBeNull()->and($tickets['outbound']['bus_label'])->toBe('Co A - 101');
 
     // Only before the trip starts, and only onto a bus of the same route.

@@ -2,13 +2,14 @@
 
 use App\Models\Fleet;
 use App\Models\FleetRoute;
-use App\Models\Route;
 use App\Models\PassengerUser;
 use App\Models\Payment;
+use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
+use App\Repositories\TripRepository;
 use App\Services\FcmService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -16,12 +17,7 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
-// Regression tests for the auto-delay → passenger notification flow.
-// TripRepository::markOverdueScheduledAsDelayed() flips trips to 'delayed'
-// from 10+ different read-time call sites with no single authoritative
-// caller — so notifications are driven separately by
-// TripService::notifyDelayedTrips() (invoked by the trips:notify-delayed
-// scheduled command), gated by the delay_notified_at idempotency column.
+// Regression tests for the scheduled auto-delay → passenger notification flow.
 
 function makeOperatorForDelayNotificationTest(): StaffUser
 {
@@ -72,7 +68,7 @@ function makeDelayedTripWithTicket(int $operatorCompanyUserId, PassengerUser $pa
 
     $fleet = Fleet::create([
         'company_user_id' => $operatorCompanyUserId,
-        'plate_number' => 'DLY-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'DLY-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -102,7 +98,7 @@ function makeDelayedTripWithTicket(int $operatorCompanyUserId, PassengerUser $pa
     $payment = Payment::create([
         'amount' => 50,
         'payment_created' => now(),
-        'transaction_reference' => 'txn-delay-' . uniqid(),
+        'transaction_reference' => 'txn-delay-'.uniqid(),
         'payment_method' => 'online',
         'payment_channel' => 'gcash',
         'status' => 'paid',
@@ -164,11 +160,39 @@ test('notifyDelayedTrips does not double-notify a trip on a second run', functio
     expect($second)->toBe(0);
 });
 
+test('trip reads leave overdue trips unchanged and the scheduled notifier marks them delayed', function () {
+    $operator = makeOperatorForDelayNotificationTest();
+    $passenger = makePassengerForDelayNotificationTest();
+    $trip = makeDelayedTripWithTicket($operator->company_user_id, $passenger);
+    $trip->forceFill([
+        'status' => 'scheduled',
+        'departure_time' => now(config('app.timezone'))->subMinutes(2)->format('H:i:s'),
+    ])->save();
+
+    app(TripRepository::class)->listUpcomingByOperator($operator->company_user_id);
+
+    expect($trip->fresh()->status)->toBe('scheduled');
+
+    $this->mock(FcmService::class, function ($mock) use ($passenger) {
+        $mock->shouldReceive('sendToUser')
+            ->once()
+            ->withArgs(fn ($user, $title) => $user->user_id === $passenger->user_id && $title === 'Trip Delayed')
+            ->andReturn(true);
+    });
+
+    expect(app(TripService::class)->notifyDelayedTrips())->toBe(1);
+    expect($trip->fresh()->status)->toBe('delayed');
+    expect($trip->fresh()->delay_notified_at)->not->toBeNull();
+});
+
 test('notifyDelayedTrips ignores trips that are not delayed', function () {
     $operator = makeOperatorForDelayNotificationTest();
     $passenger = makePassengerForDelayNotificationTest();
     $trip = makeDelayedTripWithTicket($operator->company_user_id, $passenger);
-    $trip->update(['status' => 'scheduled']);
+    $trip->update([
+        'status' => 'scheduled',
+        'departure_time' => now(config('app.timezone'))->addHour()->format('H:i:s'),
+    ]);
 
     $this->mock(FcmService::class, function ($mock) {
         $mock->shouldNotReceive('sendToUser');

@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Ticket;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -22,12 +23,38 @@ class TicketRepository
             ->first();
     }
 
-    public function findByPassenger(int $passengerId): Collection
+    public function findByPassenger(int $passengerId, int $perPage = 50, int $page = 1): LengthAwarePaginator
     {
         return Ticket::with(['trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'fareRule', 'originStop', 'destinationStop', 'payment'])
             ->where('passenger_id', $passengerId)
-            ->latest()
-            ->get();
+            ->orderByDesc('created_at')
+            ->orderByDesc('ticket_id')
+            ->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    /** Small dashboard aggregates stay accurate without loading full ticket history. */
+    public function findPassengerDashboardFacts(int $passengerId): array
+    {
+        $ticketQuery = Ticket::where('passenger_id', $passengerId);
+        $routeCount = Ticket::query()
+            ->join('trips', 'trips.trip_id', '=', 'tickets.trip_id')
+            ->join('fleets_routes', 'fleets_routes.fleet_route_id', '=', 'trips.fleet_route_id')
+            ->join('routes', 'routes.route_id', '=', 'fleets_routes.route_id')
+            ->where('tickets.passenger_id', $passengerId)
+            ->distinct()
+            ->count('routes.route_name');
+
+        return [
+            'upcoming_count' => (clone $ticketQuery)->whereIn('status', ['valid', 'issued'])->count(),
+            'completed_count' => (clone $ticketQuery)->where('status', 'alighted')->count(),
+            'nearby_routes_count' => $routeCount,
+            'featured_ticket' => Ticket::with(['trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'fareRule', 'originStop', 'destinationStop', 'payment'])
+                ->where('passenger_id', $passengerId)
+                ->whereIn('status', ['valid', 'issued', 'boarded'])
+                ->latest('created_at')
+                ->orderByDesc('ticket_id')
+                ->first(),
+        ];
     }
 
     public function findByPayment(int $paymentId): Collection

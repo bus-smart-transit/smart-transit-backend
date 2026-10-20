@@ -107,19 +107,78 @@ class FinancialReportService
     /** One page of the transaction log. @return array{data: array<int, array<string, mixed>>, meta: array<string, mixed>} */
     public function transactions(?int $ownerCompanyUserId, array $filters): array
     {
-        $rows = $this->logRows($ownerCompanyUserId, $filters);
-        $total = $rows->count();
         $page = $filters['page'];
         $perPage = $filters['per_page'];
+        $query = $this->transactionLogQuery($ownerCompanyUserId, $filters);
+        $total = (clone $query)->distinct()->count('tickets.ticket_id');
+        $rows = $query
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get()
+            ->map(fn ($row) => $this->presentTransaction($this->mapSale($row)))
+            ->all();
 
         return [
-            'data' => $rows->slice(($page - 1) * $perPage, $perPage)->values()->map(fn ($r) => $this->presentTransaction($r))->all(),
+            'data' => $rows,
             'meta' => [
                 'page' => $page, 'per_page' => $perPage, 'total' => $total,
                 'last_page' => max(1, (int) ceil($total / $perPage)),
                 'sort' => $filters['sort'], 'dir' => $filters['dir'],
             ],
         ];
+    }
+
+    /** Build one filtered, deterministically ordered SQL page for the transaction screen. */
+    private function transactionLogQuery(?int $owner, array $filters): Builder
+    {
+        $start = FinancialClock::startOfDay($filters['from']);
+        $end = FinancialClock::endOfDay($filters['to']);
+        $driver = DB::getDriverName();
+        $paidAtExpression = $driver === 'sqlite'
+            ? "CASE WHEN payments.payment_method = 'cash' AND onsite_payment.issued_at IS NOT NULL THEN datetime(onsite_payment.issued_at, '+8 hours') ELSE COALESCE(first_t.first_ticket_at, payments.payment_created) END"
+            : "CASE WHEN payments.payment_method = 'cash' AND onsite_payment.issued_at IS NOT NULL THEN timezone('".str_replace("'", "''", FinancialClock::tz())."', onsite_payment.issued_at AT TIME ZONE 'UTC') ELSE COALESCE(first_t.first_ticket_at, payments.payment_created) END";
+
+        $query = $this->base($owner)
+            ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
+            ->leftJoin('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
+            ->where('tickets.status', '!=', 'rebooked')
+            ->whereBetween(DB::raw($paidAtExpression), [FinancialClock::wallString($start), FinancialClock::wallString($end)]);
+
+        if ($filters['route_id'] !== null) {
+            $query->where('routes.route_id', $filters['route_id']);
+        }
+        if ($filters['fleet_id'] !== null) {
+            $query->where('fleets.fleet_id', $filters['fleet_id']);
+        }
+        if ($filters['trip_id'] !== null) {
+            $query->where('trips.trip_id', $filters['trip_id']);
+        }
+        if ($filters['payment_method'] !== null) {
+            $filters['payment_method'] === 'cash'
+                ? $query->where('payments.payment_method', 'cash')
+                : $query->where('payments.payment_method', '!=', 'cash');
+        }
+        if ($filters['channel'] !== null) {
+            $query->where('payments.payment_channel', $filters['channel']);
+        }
+
+        $query->select($this->columns())
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at');
+
+        $direction = $filters['dir'];
+        match ($filters['sort']) {
+            'paid_at' => $query->orderByRaw($paidAtExpression.' '.$direction),
+            'amount' => $query->orderBy('tickets.amount', $direction),
+            'route' => $query->orderByRaw('LOWER(routes.route_name) '.$direction),
+            'bus' => $query->orderByRaw('LOWER(fleets.plate_number) '.$direction),
+            'status' => $query->orderByRaw("CASE WHEN res.resolution = 'refund' AND res.status = 'succeeded' AND res.amount IS NOT NULL AND res.amount >= tickets.amount THEN 'refunded' WHEN res.resolution = 'refund' AND res.status = 'succeeded' AND res.amount IS NOT NULL AND res.amount > 0 THEN 'partially_refunded' WHEN res.resolution = 'refund' AND res.status IN ('pending', 'needs_review') THEN 'refund_pending' ELSE 'paid' END ".$direction),
+            'method' => $query->orderBy('payments.payment_method', $direction)->orderBy('payments.payment_channel', $direction),
+            'trip_date' => $query->orderBy('trips.trip_date', $direction)->orderBy('trips.departure_time', $direction),
+            default => null,
+        };
+
+        return $query->orderByDesc('tickets.ticket_id');
     }
 
     // ------------------------------------------------------------------ CSV

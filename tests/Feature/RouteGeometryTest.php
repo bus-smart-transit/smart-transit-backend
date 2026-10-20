@@ -128,17 +128,25 @@ it('exposes stop_type and geometry_stale without leaking the raw column', functi
     expect($route->fresh()->toArray())->not->toHaveKey('route_geometry');
 });
 
-it('regenerates geometry via ORS with snapped waypoints and continue_straight', function () {
+it('regenerates geometry and cumulative stop offsets via ORS', function () {
     config(['route_geometry.ors.api_key' => 'test-key']);
-    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+    $route = makeRouteWithStops([
+        ['A', 7.0, 125.0, 0],
+        ['B', 7.1, 125.0, 10],
+        ['C', 7.2, 125.0, 20],
+    ]);
 
     Http::fake([
         '*/v2/snap/*' => Http::response(['locations' => [
             ['location' => [125.0002, 7.0001]],
+            ['location' => [125.00025, 7.1001]],
             ['location' => [125.0003, 7.2001]],
         ]]),
         '*/v2/directions/*' => Http::response(['features' => [['geometry' => ['coordinates' => [
-            [125.0002, 7.0001], [125.001, 7.1], [125.0003, 7.2001],
+            [125.0002, 7.0001], [125.00025, 7.1001], [125.0003, 7.2001],
+        ]], 'properties' => ['segments' => [
+            ['distance' => 5000, 'duration' => 600],
+            ['distance' => 8000, 'duration' => 900],
         ]]]]]),
     ]);
 
@@ -148,7 +156,10 @@ it('regenerates geometry via ORS with snapped waypoints and continue_straight', 
     expect(app(RouteGeometryRepository::class)->get($route->route_id)['coordinates'])->toHaveCount(3);
     expect(app(RouteGeometryRepository::class)->status($route->route_id)['geometry_stale'])->toBeFalse();
     expect(app(RouteGeometryRepository::class)->status($route->route_id)['geometry_generated_at'])->not->toBeNull();
-    expect(RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->first()->snapped_latitude)->toEqual(7.0001);
+    $stops = RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->get();
+    expect($stops->pluck('scheduled_offset_min')->map(fn ($minutes) => (int) $minutes)->all())->toBe([0, 10, 25]);
+    expect($stops->pluck('distance_from_origin_km')->map(fn ($distance) => (float) $distance)->all())->toBe([0.0, 5.0, 13.0]);
+    expect((float) $stops->first()->snapped_latitude)->toBe(7.0001);
 
     Http::assertSent(fn ($request) => str_contains($request->url(), '/v2/directions/')
         && $request['continue_straight'] === true

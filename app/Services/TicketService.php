@@ -698,12 +698,27 @@ class TicketService
         ];
     }
 
-    public function getPassengerTickets(int $passengerId): object
+    public function getPassengerTickets(int $passengerId, int $page = 1, int $perPage = 50): object
     {
-        $tickets = $this->ticketRepository->findByPassenger($passengerId);
-        \App\Support\TripRunInfo::attach($tickets->pluck('trip')->filter()->unique('trip_id'));
+        $tickets = $this->ticketRepository->findByPassenger($passengerId, $perPage, $page);
+        $collection = $tickets->getCollection();
+        \App\Support\TripRunInfo::attach($collection->pluck('trip')->filter()->unique('trip_id'));
 
-        return $tickets->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
+        $tickets->setCollection($collection->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket)));
+
+        return $tickets;
+    }
+
+    public function getPassengerDashboardFacts(int $passengerId): array
+    {
+        $facts = $this->ticketRepository->findPassengerDashboardFacts($passengerId);
+        $featured = $facts['featured_ticket'];
+        if ($featured) {
+            \App\Support\TripRunInfo::attach([$featured->trip]);
+            $facts['featured_ticket'] = $this->appendValidityWindow($featured);
+        }
+
+        return $facts;
     }
 
     /**

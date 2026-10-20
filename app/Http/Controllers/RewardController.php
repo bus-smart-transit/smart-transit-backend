@@ -21,7 +21,15 @@ class RewardController extends Controller
             return $this->error("Account is invalid. Please log out and try again.");
         }
 
-        $history = $this->rewardService->getHistory($passenger->passenger_id);
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+        $history = $this->rewardService->getHistory(
+            $passenger->passenger_id,
+            (int) ($pagination['page'] ?? 1),
+            (int) ($pagination['per_page'] ?? 50),
+        );
         return $this->success($history, 'Reward history retrieved');
     }
 }

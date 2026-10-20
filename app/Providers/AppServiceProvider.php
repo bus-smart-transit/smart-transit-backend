@@ -3,8 +3,11 @@
 namespace App\Providers;
 
 use App\Support\Database\RlsContext;
+use App\Support\ApiRequestMetrics;
 use App\Support\RateLimiting\ToggleableRateLimiter;
 use Illuminate\Cache\RateLimiter;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 
@@ -12,6 +15,8 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->scoped(ApiRequestMetrics::class);
+
         // Laravel's CacheServiceProvider is deferred and (re)binds the limiter
         // when it loads, so a plain singleton() here would be overwritten.
         // extend() runs after that binding and swaps in a limiter that honours
@@ -25,6 +30,10 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        if (config('api_instrumentation.enabled', true)) {
+            DB::listen(fn (QueryExecuted $query) => app(ApiRequestMetrics::class)->recordQuery((float) $query->time));
+        }
+
         if ($this->app->runningInConsole()) {
             RlsContext::enableBypass();
         }

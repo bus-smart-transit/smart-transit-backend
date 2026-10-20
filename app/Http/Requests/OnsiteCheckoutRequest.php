@@ -21,6 +21,12 @@ class OnsiteCheckoutRequest extends FormRequest
             'items.*.destination_lng'     => 'nullable|required_with:items.*.destination_lat|numeric|between:-180,180',
             'items.*.destination_label'   => 'nullable|string|max:255',
             'items.*.passenger_id'        => 'nullable|integer|exists:passenger_users,passenger_id',
+            'idempotency_key'             => 'nullable|string|min:16|max:128',
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge(['idempotency_key' => $this->header('Idempotency-Key')]);
     }
 }

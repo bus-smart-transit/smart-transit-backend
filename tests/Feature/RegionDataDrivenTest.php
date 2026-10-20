@@ -3,7 +3,6 @@
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
-use App\Models\Stop;
 use App\Models\User;
 use App\Repositories\RouteGeometryRepository;
 use App\Services\RouteGeometryGenerator;
@@ -106,9 +105,12 @@ it('works for a second, different route with no code change (dummy route proof)'
         '*/v2/snap/*' => Http::response(['locations' => [
             ['location' => [126.2168, 6.9554]], ['location' => [125.85, 6.90]], ['location' => [125.3571, 6.7501]],
         ]]),
-        '*/v2/directions/*' => Http::response(['features' => [['geometry' => ['coordinates' => [
-            [126.2168, 6.9554], [125.85, 6.90], [125.3571, 6.7501],
-        ]]]]]),
+        '*/v2/directions/*' => Http::response(['features' => [[
+            'properties' => ['segments' => [['distance' => 40000.0, 'duration' => 2400.0], ['distance' => 55000.0, 'duration' => 3300.0]]],
+            'geometry' => ['coordinates' => [
+                [126.2168, 6.9554], [125.85, 6.90], [125.3571, 6.7501],
+            ]],
+        ]]]),
     ]);
 
     expect(app(RouteGeometryGenerator::class)->generate($route->route_id)['ok'])->toBeTrue();

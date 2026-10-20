@@ -71,7 +71,9 @@ class PayMongoController extends Controller
             return $this->paymentService->findById((int) $paymentId);
         }
 
-        $paymentIntentId = $resource['attributes']['payment_intent_id'] ?? null;
+        $paymentIntentId = $resource['attributes']['payment_intent_id']
+            ?? $resource['attributes']['payment_intent']['id']
+            ?? null;
 
         if ($paymentIntentId) {
             $payment = $this->paymentService->findByPaymentIntentId($paymentIntentId);
@@ -93,11 +95,21 @@ class PayMongoController extends Controller
         $sessionId = $resource['id'] ?? null;
 
         $payment = $sessionId ? $this->paymentService->findByGatewayReference($sessionId) : null;
+        if (! $payment) {
+            $payment = $this->resolvePaymentFromMetadata($resource);
+        }
 
         if (! $payment) {
             Log::warning('PayMongo webhook: no matching payment for checkout session.', ['session_id' => $sessionId]);
 
             return;
+        }
+
+        if ($payment->idempotency_state === 'unknown') {
+            $payment->forceFill([
+                'gateway_reference' => $payment->gateway_reference ?: $sessionId,
+                'payment_intent_id' => $payment->payment_intent_id ?: ($resource['attributes']['payment_intent']['id'] ?? $resource['attributes']['payment_intent_id'] ?? null),
+            ])->save();
         }
 
         // A refund needs PayMongo's own payment id (pay_...); the paid event carries it.

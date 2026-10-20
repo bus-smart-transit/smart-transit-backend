@@ -71,6 +71,19 @@ class Payment extends Model
         'refunded_at',
         'refund_note',
         'refunded_by_user_id',
+        'idempotency_scope_hash',
+        'idempotency_key_hash',
+        'idempotency_request_hash',
+        'idempotency_state',
+        'idempotency_response',
+    ];
+
+    protected $hidden = [
+        'idempotency_scope_hash',
+        'idempotency_key_hash',
+        'idempotency_request_hash',
+        'idempotency_state',
+        'idempotency_response',
     ];
 
     protected function casts(): array
@@ -84,6 +97,7 @@ class Payment extends Model
             // checkout time, so the webhook can create the actual ticket
             // rows later without re-running any pricing logic.
             'items_payload' => 'array',
+            'idempotency_response' => 'array',
         ];
     }
 

@@ -136,7 +136,7 @@ it('shows the link to the owner only: a guest with the reference and email, or t
     $myTicket = trkTicket($trip, $stops, $fare, null, $mine->passenger_id);
     trkTicket($trip, $stops, $fare, null, $other->passenger_id);
 
-    $list = $this->actingAs($mine->user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data');
+    $list = $this->actingAs($mine->user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data.data');
     expect($list)->toHaveCount(1);
     expect($list[0]['tracking_token'])->toBe(trkToken($myTicket));
 });

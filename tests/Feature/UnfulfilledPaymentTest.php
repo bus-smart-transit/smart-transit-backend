@@ -93,6 +93,16 @@ it('shows a guest payment by the email it was made with', function () {
     expect($row['payer'])->toMatchArray(['is_guest' => true, 'email' => 'guest@example.com']);
 });
 
+it('loads the Operator payment queue when PayMongo is not configured', function () {
+    ['operator' => $operator] = nrOperator();
+    config(['services.paymongo.secret_key' => null]);
+
+    $this->actingAs($operator)
+        ->getJson('/api/operator/payments/needs-refund')
+        ->assertOk()
+        ->assertJsonPath('data.data', []);
+});
+
 it('shows only needs-refund payments by default: not paid ones, not refunded ones, not another Operator\'s', function () {
     ['operator' => $operator, 'trip' => $trip] = nrOperator();
     ['trip' => $otherTrip] = nrOperator('Other route');
@@ -120,6 +130,47 @@ it('filters by refunded and all, and counts both', function () {
     expect($all->json('data.data'))->toHaveCount(2);
     expect($all->json('data.meta.counts'))->toMatchArray(['needs_refund' => 1, 'refunded' => 1]);
     expect($waiting->payment_id)->not->toBe($done->payment_id);
+});
+
+it('lists unknown checkout outcomes only for the Operator who owns their trip', function () {
+    ['operator' => $operator, 'trip' => $trip] = nrOperator();
+    ['trip' => $otherTrip] = nrOperator('Other route');
+    $unknown = nrPayment($trip, 'pending', ['idempotency_state' => 'unknown', 'hold_expires_at' => now()->subMinute()]);
+    nrPayment($otherTrip, 'pending', ['idempotency_state' => 'unknown', 'hold_expires_at' => now()->subMinute()]);
+
+    $response = $this->actingAs($operator)->getJson('/api/operator/payments/needs-refund?status=outcome_unknown')->assertOk();
+
+    expect($response->json('data.data'))->toHaveCount(1);
+    expect($response->json('data.data.0'))->toMatchArray([
+        'payment_id' => $unknown->payment_id,
+        'status' => 'pending',
+        'reconciliation_status' => 'outcome_unknown',
+    ]);
+    expect($response->json('data.meta.counts.outcome_unknown'))->toBe(1);
+});
+
+it('releases an unknown checkout only after an Operator records that PayMongo shows it was not charged', function () {
+    ['operator' => $operator, 'trip' => $trip] = nrOperator();
+    $trip->update(['current_seated_capacity' => 1, 'total_occupancy' => 1]);
+    $payment = nrPayment($trip, 'pending', [
+        'idempotency_state' => 'unknown',
+        'hold_expires_at' => now()->subMinute(),
+    ]);
+
+    $this->actingAs($operator)->postJson("/api/operator/payments/{$payment->payment_id}/checkout-reconciled-not-paid", [
+        'note' => 'Verified no charge in PayMongo dashboard',
+    ])->assertOk()->assertJsonPath('data.status', 'failed');
+
+    expect($payment->fresh()->idempotency_state)->toBe('failed');
+    expect((int) $trip->fresh()->current_seated_capacity)->toBe(0);
+    expect((int) $trip->fresh()->total_occupancy)->toBe(0);
+    expect(DB::table('audit_logs')->where('action', 'payment.checkout_reconciled_not_charged')
+        ->where('subject_id', $payment->payment_id)->exists())->toBeTrue();
+
+    $this->actingAs($operator)->postJson("/api/operator/payments/{$payment->payment_id}/checkout-reconciled-not-paid", [
+        'note' => 'Verified no charge in PayMongo dashboard',
+    ])->assertStatus(422);
+    expect((int) $trip->fresh()->current_seated_capacity)->toBe(0);
 });
 
 it('records a refund: the payment becomes refunded with who, when and the note, and it is audit logged', function () {

@@ -25,3 +25,6 @@ Thumbs.db
 *.md
 
 .vercel
+
+.vercel
+.env*

@@ -1,12 +1,14 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\StaffService;
-use App\Services\FcmService;
-use App\Services\StepUpService;
-use App\Http\Requests\LoginRequest;
+
 use App\Http\Requests\CreateStaffAccountRequest;
-use App\Traits\ApiResponse;
+use App\Http\Requests\LoginRequest;
 use App\Mail\PassengerOtpMail;
+use App\Services\FcmService;
+use App\Services\StaffService;
+use App\Services\StepUpService;
+use App\Traits\ApiResponse;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -19,16 +21,16 @@ use Illuminate\Validation\ValidationException;
 class StaffAuthController extends Controller
 {
     use ApiResponse;
+
     public function __construct(
         private StaffService $staffService,
         private StepUpService $stepUpService,
-    ) {
-    }
+    ) {}
 
     public function login(LoginRequest $request)
     {
         // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        $key = 'staff-login:' . $request->ip();
+        $key = 'staff-login:'.$request->ip();
 
         if (RateLimiter::tooManyAttempts($key, 5)) {
             $seconds = RateLimiter::availableIn($key);
@@ -57,10 +59,10 @@ class StaffAuthController extends Controller
     {
         $request->validate([
             'user_id' => 'required|integer',
-            'otp'     => 'required|string|size:6',
+            'otp' => 'required|string|size:6',
         ]);
 
-        $otpKey = 'staff-otp-verify:' . $request->ip() . ':' . $request->input('user_id');
+        $otpKey = 'staff-otp-verify:'.$request->ip().':'.$request->input('user_id');
 
         if (RateLimiter::tooManyAttempts($otpKey, 5)) {
             $seconds = RateLimiter::availableIn($otpKey);
@@ -83,19 +85,21 @@ class StaffAuthController extends Controller
 
         return $this->success([
             'token' => $result['token'],
-            'user'  => $result['user'],
+            'user' => $result['user'],
         ], 'Logged in successfully.');
     }
 
     public function profile(Request $request)
     {
         $profile = $this->staffService->getStaffProfile($request->user());
+
         return $this->success($profile, 'Profile retrieved successfully');
     }
 
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();
+
         return $this->success(null, 'Logged out successfully');
     }
 
@@ -106,7 +110,7 @@ class StaffAuthController extends Controller
         ]);
 
         // Operator and Admin MFA is mandatory — cannot be disabled.
-        if (!$validated['enabled'] && in_array($request->user()?->role, ['operator', 'admin'])) {
+        if (! $validated['enabled'] && in_array($request->user()?->role, ['operator', 'admin'])) {
             return $this->error('Two-factor authentication cannot be disabled for operator and admin accounts.', 403);
         }
 
@@ -172,17 +176,20 @@ class StaffAuthController extends Controller
     public function stepUpInitiate(Request $request)
     {
         $user = $request->user();
-        if (!$user) return $this->error('Unauthenticated.', 401);
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
 
-        $rateLimitKey = 'step-up-initiate:' . $user->user_id;
+        $rateLimitKey = 'step-up-initiate:'.$user->user_id;
         if (RateLimiter::tooManyAttempts($rateLimitKey, 3)) {
             $seconds = RateLimiter::availableIn($rateLimitKey);
+
             return $this->error("Too many requests. Try again in {$seconds} seconds.", 429);
         }
         RateLimiter::hit($rateLimitKey, 300);
 
-        $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        $cacheKey = 'step-up-otp:' . $user->user_id;
+        $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $cacheKey = 'step-up-otp:'.$user->user_id;
         Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
 
         $name = $user->username ?? explode('@', $user->email)[0];
@@ -204,18 +211,21 @@ class StaffAuthController extends Controller
         ]);
 
         $user = $request->user();
-        if (!$user) return $this->error('Unauthenticated.', 401);
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
 
-        $rateLimitKey = 'step-up-verify:' . $user->user_id;
+        $rateLimitKey = 'step-up-verify:'.$user->user_id;
         if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
             $seconds = RateLimiter::availableIn($rateLimitKey);
+
             return $this->error("Too many incorrect attempts. Wait {$seconds} seconds.", 429);
         }
 
-        $cacheKey = 'step-up-otp:' . $user->user_id;
-        $stored   = Cache::get($cacheKey);
+        $cacheKey = 'step-up-otp:'.$user->user_id;
+        $stored = Cache::get($cacheKey);
 
-        if (!$stored || !Hash::check($validated['otp'], $stored)) {
+        if (! $stored || ! Hash::check($validated['otp'], $stored)) {
             RateLimiter::hit($rateLimitKey, 900);
             throw ValidationException::withMessages(['otp' => ['Incorrect or expired OTP.']]);
         }
@@ -227,7 +237,7 @@ class StaffAuthController extends Controller
 
         return $this->success([
             'step_up_token' => $rawToken,
-            'expires_in'    => $this->stepUpService->ttlSeconds(),
+            'expires_in' => $this->stepUpService->ttlSeconds(),
         ], 'Identity check complete. It stays valid for 15 minutes.');
     }
 
@@ -246,15 +256,18 @@ class StaffAuthController extends Controller
         ]);
 
         $user = $request->user();
-        if (!$user) return $this->error('Unauthenticated.', 401);
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
 
-        $rateLimitKey = 'step-up-password:' . $user->user_id;
+        $rateLimitKey = 'step-up-password:'.$user->user_id;
         if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
             $seconds = RateLimiter::availableIn($rateLimitKey);
+
             return $this->error("Too many incorrect attempts. Wait {$seconds} seconds.", 429);
         }
 
-        if (!Hash::check($validated['password'], (string) $user->password)) {
+        if (! Hash::check($validated['password'], (string) $user->password)) {
             RateLimiter::hit($rateLimitKey, 900);
             throw ValidationException::withMessages(['password' => ['Incorrect password.']]);
         }
@@ -265,7 +278,7 @@ class StaffAuthController extends Controller
 
         return $this->success([
             'step_up_token' => $rawToken,
-            'expires_in'    => $this->stepUpService->ttlSeconds(),
+            'expires_in' => $this->stepUpService->ttlSeconds(),
         ], 'Identity check complete. It stays valid for 15 minutes.');
     }
 
@@ -273,8 +286,9 @@ class StaffAuthController extends Controller
     {
         [$local, $domain] = explode('@', $email, 2);
         $visible = substr($local, 0, min(2, strlen($local)));
-        $masked  = str_repeat('*', max(0, strlen($local) - 2));
-        return $visible . $masked . '@' . $domain;
+        $masked = str_repeat('*', max(0, strlen($local) - 2));
+
+        return $visible.$masked.'@'.$domain;
     }
 
     public function forgotPassword(Request $request)
@@ -293,9 +307,9 @@ class StaffAuthController extends Controller
     {
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate([
-            'token'                 => 'required|string',
-            'email'                 => 'required|email',
-            'password'              => 'required|string|min:8|confirmed',
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
             'password_confirmation' => 'required|string',
         ]);
 
@@ -325,12 +339,20 @@ class StaffAuthController extends Controller
             $request->validated(),
             $request->user()->role
         );
+
         return $this->success($result, 'Account created successfully');
     }
 
-    public function listDrivers()
+    public function listDrivers(Request $request)
     {
-        return $this->success($this->staffService->listDrivers(), 'Drivers retrieved successfully');
+        $validated = $request->validate([
+            'trip_date' => ['sometimes', 'date_format:Y-m-d'],
+        ]);
+
+        return $this->success(
+            $this->staffService->listDrivers($validated['trip_date'] ?? null),
+            'Drivers retrieved successfully',
+        );
     }
 
     public function listConductors()

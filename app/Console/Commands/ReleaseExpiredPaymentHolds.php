@@ -23,6 +23,9 @@ class ReleaseExpiredPaymentHolds extends Command
     {
         $candidates = Payment::where('status', 'pending')
             ->where('payment_method', 'online')
+            ->where(function ($query) {
+                $query->whereNull('idempotency_state')->orWhere('idempotency_state', '!=', 'unknown');
+            })
             ->where('hold_expires_at', '<=', now())
             ->doesntHave('tickets')
             ->pluck('payment_id');
@@ -33,7 +36,7 @@ class ReleaseExpiredPaymentHolds extends Command
             $done = DB::transaction(function () use ($paymentId) {
                 // Locked and re-read: a paid webhook arriving at this very moment must win, not be released under it.
                 $payment = Payment::whereKey($paymentId)->lockForUpdate()->first();
-                if (! $payment || $payment->status !== 'pending' || $payment->tickets()->exists()) {
+                if (! $payment || $payment->status !== 'pending' || $payment->idempotency_state === 'unknown' || $payment->tickets()->exists()) {
                     return false;
                 }
 

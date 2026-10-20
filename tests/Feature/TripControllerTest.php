@@ -814,6 +814,15 @@ test('operator trips endpoint supports completed and scheduled-active filters', 
         ->getJson('/api/operator/trips?status_filter=all')
         ->assertSuccessful()
         ->assertJsonCount(2, 'data');
+
+    $this->actingAs($operator)
+        ->getJson('/api/operator/trips?status_filter=all&page=2&per_page=1')
+        ->assertSuccessful()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.trip_id', $scheduledTrip->trip_id)
+        ->assertJsonPath('meta.current_page', 2)
+        ->assertJsonPath('meta.last_page', 2)
+        ->assertJsonPath('meta.total', 2);
 });
 
 test('driver trips endpoint returns completed trips when requested', function () {

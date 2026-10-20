@@ -116,7 +116,7 @@ it('puts the label on the passenger ticket list and the guest lookup, with no pl
     ], $pax->passenger_id, $payment->payment_id);
 
     $mine = $this->actingAs($pax->user)->getJson('/api/passengers/tickets')->assertSuccessful();
-    expect($mine->json('data.0.bus_label'))->toBe('Davao Bus - B-014');
+    expect($mine->json('data.data.0.bus_label'))->toBe('Davao Bus - B-014');
     expect($mine->getContent())->not->toContain('SECRET-PLATE');
 
     app(TicketService::class)->finalizeTicket([

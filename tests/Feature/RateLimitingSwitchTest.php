@@ -49,6 +49,17 @@ it('lets a throttled route be called past its limit only when rate limiting is o
     expect($statuses)->not->toContain(429);
 });
 
+it('allows thirty checkout attempts per minute and throttles the next attempt', function () {
+    config(['app.rate_limiting_enabled' => true]);
+    $statuses = [];
+    for ($attempt = 0; $attempt < 30; $attempt++) {
+        $statuses[] = $this->postJson('/api/checkout', [])->status();
+    }
+
+    expect($statuses)->not->toContain(429);
+    $this->postJson('/api/checkout', [])->assertStatus(429);
+});
+
 it('lets staff login keep failing past 5 attempts only when rate limiting is off', function () {
     $payload = ['email' => 'nobody@example.com', 'password' => 'wrong-password', 'role' => 'operator'];
 
