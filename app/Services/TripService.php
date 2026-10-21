@@ -618,14 +618,14 @@ class TripService
         return $this->tripRepository->findById($tripId);
     }
 
-    public function getDriverTrips(int $driverCompanyUserId, string $statusFilter = 'all'): object
+    public function getDriverTrips(int $driverCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): object
     {
-        return $this->tripRepository->listByDriver($driverCompanyUserId, $statusFilter);
+        return $this->tripRepository->paginateByDriver($driverCompanyUserId, $statusFilter, $page, $perPage);
     }
 
-    public function getConductorTrips(int $conductorCompanyUserId, string $statusFilter = 'all'): object
+    public function getConductorTrips(int $conductorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): object
     {
-        return $this->tripRepository->listByConductor($conductorCompanyUserId, $statusFilter);
+        return $this->tripRepository->paginateByConductor($conductorCompanyUserId, $statusFilter, $page, $perPage);
     }
 
     public function getOperatorUpcomingTrips(int $operatorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): object

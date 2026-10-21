@@ -375,6 +375,7 @@ Route::prefix('conductor')
             Route::post('tickets/scan', [TicketController::class, 'scan'])->middleware('throttle:30,1');
             Route::post('tickets/scan-group', [TicketController::class, 'scanGroup'])->middleware('throttle:20,1');
             Route::post('checkout', [PaymentController::class, 'checkoutOnsite'])->middleware('throttle:20,1');
+            Route::post('checkout/quote', [PaymentController::class, 'quoteOnsite'])->middleware('throttle:120,1');
 
             // Occupancy monitoring dashboard
             Route::get('trips/current/occupancy', [TicketController::class, 'currentTripOccupancy']);

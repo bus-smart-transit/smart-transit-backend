@@ -7,6 +7,7 @@ use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -30,6 +31,21 @@ class RouteGeometryGenerator
 
     private const ROUTE_CACHE_PREFIX = 'route_geometry:result:';
 
+    private const PROGRESS_CACHE_PREFIX = 'route_geometry:progress:';
+
+    private const LAST_REDRAW_CACHE_PREFIX = 'route_geometry:last_redraw:';
+
+    private const DURATIONS_CACHE_KEY = 'route_geometry:redraw_durations';
+
+    // Where each stage sits on a 0-100 bar; the routing stage fills 20-90 as its chunks finish.
+    private const STAGE_LABELS = [
+        'queued' => 'Waiting to start',
+        'snapping' => 'Matching the stops to the road',
+        'routing' => 'Drawing the route line',
+        'saving' => 'Saving the new line',
+        'retrying' => 'The routing provider is busy, trying again shortly',
+    ];
+
     public function __construct(
         private RouteGeometryRepository $geometryRepository,
         private RouteStopRepository $routeStopRepository,
@@ -40,14 +56,119 @@ class RouteGeometryGenerator
     {
         $this->geometryRepository->markStale($routeId, 'Stops changed; geometry regeneration queued.');
         Cache::put(self::pendingCacheKey($routeId), (string) Str::uuid(), max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
+        Cache::put(self::progressCacheKey($routeId), ['requested_at' => now()->toIso8601String(), 'stage' => 'queued', 'step' => 0, 'steps' => 0], max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
+        Cache::forget(self::lastRedrawCacheKey($routeId));
 
         try {
             GenerateRouteGeometry::dispatch($routeId)
                 ->delay(now()->addSeconds(max(0, (int) config('route_geometry.debounce_s', 5))));
         } catch (\Throwable $exception) {
             Cache::forget(self::pendingCacheKey($routeId));
+            Cache::forget(self::progressCacheKey($routeId));
             throw $exception;
         }
+    }
+
+    public static function progressCacheKey(int $routeId): string
+    {
+        return self::PROGRESS_CACHE_PREFIX.$routeId;
+    }
+
+    public static function lastRedrawCacheKey(int $routeId): string
+    {
+        return self::LAST_REDRAW_CACHE_PREFIX.$routeId;
+    }
+
+    /** The provider asked us to wait; the bar steps back and says so until the next attempt. */
+    public function markRetrying(int $routeId): void
+    {
+        $this->setProgress($routeId, 'retrying');
+    }
+
+    /** Moves the progress of a redraw that someone asked for; a generate() run with no redraw pending records nothing. */
+    private function setProgress(int $routeId, string $stage, int $step = 0, int $steps = 0): void
+    {
+        $current = Cache::get(self::progressCacheKey($routeId));
+        if (! is_array($current) || ! Cache::has(self::pendingCacheKey($routeId))) {
+            return;
+        }
+
+        Cache::put(self::progressCacheKey($routeId), array_merge($current, [
+            'stage' => $stage,
+            'step' => $step,
+            'steps' => $steps,
+            'started_at' => $current['started_at'] ?? now()->toIso8601String(),
+        ]), max(60, (int) config('route_geometry.regeneration_pending_ttl_s', 3600)));
+    }
+
+    /** Called when a requested redraw is over: remembers how long it took and what happened, and clears the progress. */
+    public function finishRedraw(int $routeId, bool $ok, string $message): void
+    {
+        $progress = Cache::get(self::progressCacheKey($routeId));
+        $requestedAt = is_array($progress) && ! empty($progress['requested_at']) ? Carbon::parse($progress['requested_at']) : null;
+        $duration = $requestedAt ? max(0, now()->timestamp - $requestedAt->timestamp) : null;
+
+        Cache::put(self::lastRedrawCacheKey($routeId), [
+            'ok' => $ok,
+            'message' => $message,
+            'finished_at' => now()->toIso8601String(),
+            'duration_s' => $duration,
+        ], 7 * 24 * 3600);
+        Cache::forget(self::progressCacheKey($routeId));
+
+        if ($ok && $duration !== null) {
+            $durations = Cache::get(self::DURATIONS_CACHE_KEY, []);
+            $durations = array_slice([...(is_array($durations) ? $durations : []), $duration], -20);
+            Cache::put(self::DURATIONS_CACHE_KEY, $durations, 30 * 24 * 3600);
+        }
+    }
+
+    /**
+     * What the operator sees while and after a redraw: the stage, a 0-100 percentage, the time so far, how long redraws
+     * usually take here (the median of the recent ones), and the outcome of the last one.
+     *
+     * @return array<string, mixed>
+     */
+    public static function redrawStatus(int $routeId): array
+    {
+        $pending = Cache::has(self::pendingCacheKey($routeId));
+        $progress = $pending ? Cache::get(self::progressCacheKey($routeId)) : null;
+        $progress = is_array($progress) ? $progress : null;
+
+        $durations = Cache::get(self::DURATIONS_CACHE_KEY, []);
+        $durations = is_array($durations) ? array_values($durations) : [];
+        sort($durations);
+        $typical = $durations === [] ? null : (int) $durations[intdiv(count($durations), 2)];
+
+        $stage = $pending ? ($progress['stage'] ?? 'queued') : null;
+        $step = (int) ($progress['step'] ?? 0);
+        $steps = (int) ($progress['steps'] ?? 0);
+        $percent = match ($stage) {
+            null => null,
+            'queued' => 5,
+            'snapping' => 15,
+            'routing' => $steps > 0 ? 20 + (int) round(70 * min($step, $steps) / $steps) : 20,
+            'saving' => 95,
+            'retrying' => 10,
+            default => 5,
+        };
+        $requestedAt = $progress['requested_at'] ?? null;
+
+        $last = Cache::get(self::lastRedrawCacheKey($routeId));
+
+        return [
+            'pending' => $pending,
+            'stage' => $stage,
+            'stage_label' => $stage ? (self::STAGE_LABELS[$stage] ?? 'Working') : null,
+            'percent' => $percent,
+            'step' => $step,
+            'steps' => $steps,
+            'requested_at' => $requestedAt,
+            'started_at' => $progress['started_at'] ?? null,
+            'elapsed_s' => $requestedAt ? max(0, now()->timestamp - Carbon::parse($requestedAt)->timestamp) : null,
+            'typical_s' => $typical,
+            'last' => is_array($last) ? $last : null,
+        ];
     }
 
     public static function pendingCacheKey(int $routeId): string
@@ -81,6 +202,7 @@ class RouteGeometryGenerator
                 $snapped = $cached['snapped'];
                 $line = $cached['line'];
             } else {
+                $this->setProgress($routeId, 'snapping');
                 $snapped = $this->snapWaypoints($raw);
                 if (count($snapped['unsnapped']) > 0) {
                     $names = $usable->filter(fn ($routeStop, $index) => in_array($index, $snapped['unsnapped'], true))
@@ -89,7 +211,9 @@ class RouteGeometryGenerator
                     return $this->fail($routeId, "Stops not within snap radius of a road (fix coordinates): {$names}");
                 }
 
-                $line = $this->route($snapped['coordinates']);
+                $chunks = max(1, (int) ceil((count($snapped['coordinates']) - 1) / (max(2, (int) config('route_geometry.ors.max_waypoints')) - 1)));
+                $this->setProgress($routeId, 'routing', 0, $chunks);
+                $line = $this->route($snapped['coordinates'], fn (int $done) => $this->setProgress($routeId, 'routing', $done, $chunks));
                 Cache::put($cacheKey, ['snapped' => $snapped, 'line' => $line], max(1, (int) config('route_geometry.result_cache_ttl_s', 600)));
             }
         } catch (\Throwable $exception) {
@@ -98,6 +222,7 @@ class RouteGeometryGenerator
             return $this->fail($routeId, $exception->getMessage(), $this->isRetryableProviderFailure($exception));
         }
 
+        $this->setProgress($routeId, 'saving');
         $applied = DB::transaction(function () use ($routeId, $usable, $snapped, $line) {
             $currentStops = DB::table('route_stop')
                 ->join('stops', 'stops.stop_id', '=', 'route_stop.stop_id')
@@ -175,7 +300,7 @@ class RouteGeometryGenerator
      * @param  array<int, array{0: float, 1: float}>  $waypoints
      * @return array{geometry: array{type: string, coordinates: array<int, array{0: float, 1: float}>}, distances_m: array<int, float>, offsets_min: array<int, int>}
      */
-    private function route(array $waypoints): array
+    private function route(array $waypoints, ?callable $onChunk = null): array
     {
         $cfg = config('route_geometry.ors');
         $max = max(2, (int) $cfg['max_waypoints']);
@@ -228,6 +353,9 @@ class RouteGeometryGenerator
 
             foreach ($part as $point) {
                 $line[] = [(float) $point[0], (float) $point[1]];
+            }
+            if ($onChunk) {
+                $onChunk(intdiv($start, $max - 1) + 1);
             }
         }
 

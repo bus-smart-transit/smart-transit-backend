@@ -277,8 +277,13 @@ class TripController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        return $this->success(
-            $this->tripService->getDriverTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all')),
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        return $this->paginated(
+            $this->tripService->getDriverTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all'), (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 100)),
             'Assigned trips retrieved successfully'
         );
     }
@@ -291,8 +296,13 @@ class TripController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        return $this->success(
-            $this->tripService->getConductorTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all')),
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        return $this->paginated(
+            $this->tripService->getConductorTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all'), (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 100)),
             'Assigned trips retrieved successfully'
         );
     }

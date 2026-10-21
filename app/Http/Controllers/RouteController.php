@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateRouteCustomDropoffRequest;
 use App\Http\Requests\UpdateRouteStopExpressRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
 use App\Models\Route;
+use App\Services\RouteGeometryGenerator;
 use App\Services\RouteService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -67,7 +68,7 @@ class RouteController extends Controller
 
         $this->routeService->queueManualGeometryRegeneration($routeId);
 
-        return $this->success(['queued' => true], 'Route line redraw queued');
+        return $this->success(['queued' => true, 'redraw' => RouteGeometryGenerator::redrawStatus($routeId)], 'Route line redraw queued');
     }
 
     // Operator/admin: stop_type is editable per route stop.

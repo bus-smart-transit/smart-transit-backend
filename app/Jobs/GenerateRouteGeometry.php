@@ -43,16 +43,19 @@ class GenerateRouteGeometry implements ShouldBeUnique, ShouldQueue
 
         if (! $result['ok'] && $result['retryable'] && $this->attempts() < $this->tries) {
             $delay = $this->backoff[$this->attempts() - 1] ?? $this->backoff[array_key_last($this->backoff)];
+            $generator->markRetrying($this->routeId);
             $this->release($delay);
 
             return;
         }
 
+        $generator->finishRedraw($this->routeId, $result['ok'], $result['message']);
         Cache::forget($pendingKey);
     }
 
     public function failed(?\Throwable $exception): void
     {
+        app(RouteGeometryGenerator::class)->finishRedraw($this->routeId, false, 'The redraw could not be completed. The previous route line was kept.');
         Cache::forget(RouteGeometryGenerator::pendingCacheKey($this->routeId));
     }
 }

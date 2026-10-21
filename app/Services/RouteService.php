@@ -11,7 +11,6 @@ use App\Repositories\StopRepository;
 use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class RouteService
@@ -33,16 +32,15 @@ class RouteService
     public function listRoutes(?User $user = null): object
     {
         $routes = $this->routeRepository->all();
-        $ownedRouteIds = $this->ownedRouteIds($user);
 
-        return $routes->each(fn (Route $route) => $this->attachGeometryState($route, $user, $ownedRouteIds));
+        return $routes->each(fn (Route $route) => $this->attachGeometryState($route, $user));
     }
 
     public function getRouteWithStops(int $routeId, ?User $user = null): ?object
     {
         $route = $this->routeRepository->findWithStops($routeId);
 
-        return $route ? $this->attachGeometryState($route, $user, $this->ownedRouteIds($user)) : null;
+        return $route ? $this->attachGeometryState($route, $user) : null;
     }
 
     /**
@@ -108,9 +106,10 @@ class RouteService
         ];
     }
 
+    // Routes are shared network data, so every operator and admin may redraw any route (cooldown, throttle and audit log still apply).
     public function canRegenerateGeometry(int $routeId, ?User $user): bool
     {
-        return $this->canRegenerateFromOwnedRoutes($routeId, $user, $this->ownedRouteIds($user));
+        return in_array($user?->role, ['admin', 'operator'], true);
     }
 
     public function queueManualGeometryRegeneration(int $routeId): void
@@ -143,31 +142,11 @@ class RouteService
         }
     }
 
-    private function ownedRouteIds(?User $user): array
-    {
-        if (! $user || $user->role !== 'operator' || ! $user->companyProfile?->company_user_id) {
-            return [];
-        }
-
-        return DB::table('fleets_routes as fr')
-            ->join('fleets as f', 'f.fleet_id', '=', 'fr.fleet_id')
-            ->where('f.company_user_id', (int) $user->companyProfile->company_user_id)
-            ->distinct()
-            ->pluck('fr.route_id')
-            ->map(fn ($routeId) => (int) $routeId)
-            ->all();
-    }
-
-    private function canRegenerateFromOwnedRoutes(int $routeId, ?User $user, array $ownedRouteIds): bool
-    {
-        return $user?->role === 'admin'
-            || ($user?->role === 'operator' && in_array($routeId, $ownedRouteIds, true));
-    }
-
-    private function attachGeometryState(Route $route, ?User $user, array $ownedRouteIds): Route
+    private function attachGeometryState(Route $route, ?User $user): Route
     {
         $route->setAttribute('geometry_regeneration_pending', Cache::has(RouteGeometryGenerator::pendingCacheKey((int) $route->route_id)));
-        $route->setAttribute('can_regenerate_geometry', $this->canRegenerateFromOwnedRoutes((int) $route->route_id, $user, $ownedRouteIds));
+        $route->setAttribute('redraw', RouteGeometryGenerator::redrawStatus((int) $route->route_id));
+        $route->setAttribute('can_regenerate_geometry', $this->canRegenerateGeometry((int) $route->route_id, $user));
 
         return $route;
     }

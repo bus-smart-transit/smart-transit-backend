@@ -17,6 +17,9 @@ class TripRepository
 
     private const ACTIVE_STATUSES = ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'];
 
+    // How far back a staff member's "all trips" list reaches; older trips are in the "completed" history.
+    private const ASSIGNED_RECENT_DAYS = 30;
+
     public function create(array $payload): Trip
     {
         return Trip::create($payload);
@@ -82,32 +85,41 @@ class TripRepository
         return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
-    public function listByDriver(int $driverCompanyUserId, string $statusFilter = 'all'): Collection
+    // A staff member's own trips, one page at a time. Upcoming work reads earliest first. "All" is the recent past plus
+    // everything ahead, earliest first, so today is always on page 1; older history is the "completed" filter, newest first.
+    public function paginateByDriver(int $driverCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): LengthAwarePaginator
     {
-        $today = $this->serviceToday();
-
-        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
-            ->where('driver_id', $driverCompanyUserId)
-            ->orderBy('trip_date', 'asc')
-            ->orderBy('departure_time', 'asc');
-
-        $this->applyStatusFilter($query, $statusFilter, $today);
-
-        return $query->get();
+        return $this->paginateAssigned('driver_id', $driverCompanyUserId, ['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'], $statusFilter, $page, $perPage);
     }
 
-    public function listByConductor(int $conductorCompanyUserId, string $statusFilter = 'all'): Collection
+    public function paginateByConductor(int $conductorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): LengthAwarePaginator
+    {
+        return $this->paginateAssigned('conductor_id', $conductorCompanyUserId, ['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'], $statusFilter, $page, $perPage);
+    }
+
+    private function paginateAssigned(string $column, int $staffId, array $with, string $statusFilter, int $page, int $perPage): LengthAwarePaginator
     {
         $today = $this->serviceToday();
+        $normalized = $this->normalizeStatusFilter($statusFilter);
+        $newestFirst = $normalized === 'completed';
+        $direction = $newestFirst ? 'desc' : 'asc';
 
-        $query = Trip::with(['fleetRoute.route.routeStops.stop', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
-            ->where('conductor_id', $conductorCompanyUserId)
-            ->orderBy('trip_date', 'asc')
-            ->orderBy('departure_time', 'asc');
+        $query = Trip::with($with)
+            ->where($column, $staffId)
+            ->orderBy('trip_date', $direction)
+            ->orderBy('departure_time', $direction);
 
         $this->applyStatusFilter($query, $statusFilter, $today);
+        if (in_array($normalized, ['all', 'upcoming'], true)) {
+            $query->whereDate('trip_date', '>=', $today->copy()->subDays(self::ASSIGNED_RECENT_DAYS)->toDateString());
+        }
 
-        return $query->get();
+        $result = $query->paginate($perPage, ['*'], 'page', $page);
+        if ($newestFirst) {
+            $result->setCollection($result->getCollection()->reverse()->values());
+        }
+
+        return $result;
     }
 
     public function findCurrentByDriver(int $driverCompanyUserId): ?Trip

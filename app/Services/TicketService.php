@@ -2,14 +2,19 @@
 
 namespace App\Services;
 
-use App\Models\Ticket;
 use App\Exceptions\FareUnavailableException;
-use App\Support\BusLabel;
-use App\Support\LegDistance;
-use App\Support\ServiceType;
+use App\Models\FareRule;
+use App\Models\RouteStop;
+use App\Models\Stop;
+use App\Models\Ticket;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\BusLabel;
+use App\Support\LegDistance;
+use App\Support\ServiceType;
+use App\Support\TicketBoarding;
+use App\Support\TripRunInfo;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +48,20 @@ class TicketService
      * a Chauffeur to sell while the bus is already moving.
      */
     public function reserveAndPrice(array $item): array
+    {
+        $reserved = $this->priceItem($item);
+
+        // Reserve seat/standing capacity now: throws if full. Same hold semantics whichever pricing path was used.
+        $this->tripService->recordBoarding((int) $item['trip_id'], $item['seat_type']);
+
+        return $reserved;
+    }
+
+    /**
+     * The ticket this item would be, with its fare, checked against every sale rule. Reserves nothing, so a quote can
+     * show the exact fare of a sale before it is made (the sale prices through this same method).
+     */
+    public function priceItem(array $item): array
     {
         $trip = $this->tripRepository->findById($item['trip_id']);
         $onsite = ($item['channel'] ?? null) === 'onsite';
@@ -99,10 +118,6 @@ class TicketService
         // Roundtrip: which of the two tickets this is (outbound | return). Null for a one-way ticket.
         $reserved['journey_leg'] = in_array($item['journey_leg'] ?? null, ['outbound', 'return'], true) ? $item['journey_leg'] : null;
 
-        // Reserve seat/standing capacity now — throws if full. Same hold
-        // semantics regardless of which pricing path was used.
-        $this->tripService->recordBoarding($trip->trip_id, $item['seat_type']);
-
         return $reserved;
     }
 
@@ -124,7 +139,6 @@ class TicketService
 
         return $reservedTemplate;
     }
-
 
     /**
      * Computed on the fly — no fare_matrix table. The distance between two
@@ -180,7 +194,7 @@ class TicketService
     }
 
     /** Both stops must be places this trip's bus stops at: pass-through points never are (Task 2). */
-    private function assertStopsServed(object $trip, \App\Models\RouteStop $origin, \App\Models\RouteStop $destination): void
+    private function assertStopsServed(object $trip, RouteStop $origin, RouteStop $destination): void
     {
         foreach (['origin' => $origin, 'destination' => $destination] as $field => $routeStop) {
             if (! ServiceType::isServed($trip->service_type, $routeStop)) {
@@ -198,7 +212,7 @@ class TicketService
      * Distance along the leg from the boarding point to a destination stop. A destination behind or at the
      * boarding point (for this leg's direction) is refused (Task 2).
      */
-    private function assertAheadAndMeasure(object $trip, float $boardingKm, \App\Models\RouteStop $destination): float
+    private function assertAheadAndMeasure(object $trip, float $boardingKm, RouteStop $destination): float
     {
         $km = LegDistance::alongLegKm($boardingKm, (float) $destination->distance_from_origin_km, $trip->leg_direction);
         if ($km <= 0) {
@@ -211,7 +225,7 @@ class TicketService
     }
 
     /** The fare rule that prices this trip: fleet override, then (route, class, service type, seat type), then (class, service type, seat type). */
-    private function ruleFor(object $trip, string $seatType): \App\Models\FareRule
+    private function ruleFor(object $trip, string $seatType): FareRule
     {
         $rule = $this->fareRuleResolver->resolve(
             $trip->fleetRoute->fleet,
@@ -242,10 +256,10 @@ class TicketService
             return null;
         }
 
-        $snapped = \App\Support\TicketBoarding::isSnapped($ticket);
+        $snapped = TicketBoarding::isSnapped($ticket);
         $destinationId = $ticket->origin_stop_id;
         if (! $destinationId && $snapped) {
-            $destinationId = \App\Support\TicketBoarding::precedingStopId(
+            $destinationId = TicketBoarding::precedingStopId(
                 $this->routeStopRepository->getOrderedStops((int) $trip->fleetRoute->route_id),
                 $ticket->boarding_distance_m,
                 $trip->leg_direction,
@@ -255,7 +269,7 @@ class TicketService
             return null;
         }
 
-        $stops = \App\Models\Stop::whereIn('stop_id', [(int) $ticket->destination_stop_id, (int) $destinationId])->get()->keyBy('stop_id');
+        $stops = Stop::whereIn('stop_id', [(int) $ticket->destination_stop_id, (int) $destinationId])->get()->keyBy('stop_id');
 
         return [
             'origin_stop_id' => (int) $ticket->destination_stop_id,
@@ -285,13 +299,12 @@ class TicketService
         return ValidationException::withMessages(['trip' => [FareUnavailableException::MESSAGE]]);
     }
 
-    private function routeStopMeters(\App\Models\RouteStop $routeStop): int
+    private function routeStopMeters(RouteStop $routeStop): int
     {
         return $routeStop->distance_from_origin_m !== null
             ? (int) $routeStop->distance_from_origin_m
             : LegDistance::toMeters((float) $routeStop->distance_from_origin_km);
     }
-
 
     /**
      * Task 6: Chauffeur cash sale to someone boarding between stops. The boarding point is the
@@ -482,13 +495,14 @@ class TicketService
             ) ?? 'Custom drop-off',
         ];
     }
+
     /**
      * Creates the actual ticket row for a previously reserved item. Called
      * only once payment is confirmed (online) or immediately (onsite/cash).
      * Does NOT call recordBoarding() again — capacity was already reserved
      * in reserveAndPrice().
      */
-    public function finalizeTicket(array $reserved, ?int $passengerId, int $paymentId): Ticket
+    public function finalizeTicket(array $reserved, ?int $passengerId, int $paymentId, bool $boarded = false): Ticket
     {
         $tracking = $this->trackingService->newCredentials();
         $ticket = $this->ticketRepository->create([
@@ -502,7 +516,9 @@ class TicketService
             'distance_km' => $reserved['distance_km'],
             'payment_id' => $paymentId,
             'passenger_id' => $passengerId,
-            'status' => 'valid',
+            // A cash sale is made on the bus, so the passenger is already aboard: boarded, not waiting to be scanned.
+            'status' => $boarded ? 'boarded' : 'valid',
+            'boarded_at' => $boarded ? now() : null,
             'amount' => $reserved['amount'],
             'seat_type' => $reserved['seat_type'],
             'origin_stop_id' => $reserved['origin_stop_id'] ?? null,
@@ -546,7 +562,7 @@ class TicketService
         return DB::transaction(function () use ($item, $passengerId, $paymentId) {
             $reserved = $this->reserveAndPrice($item);
 
-            return $this->finalizeTicket($reserved, $passengerId, $paymentId);
+            return $this->finalizeTicket($reserved, $passengerId, $paymentId, ($item['channel'] ?? null) === 'onsite');
         });
     }
 
@@ -681,7 +697,7 @@ class TicketService
                 : null);
 
         $originLabel = $boardedTicket->originStop?->stop_name
-            ?? (\App\Support\TicketBoarding::isSnapped($boardedTicket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : null);
+            ?? (TicketBoarding::isSnapped($boardedTicket) ? TicketBoarding::BETWEEN_STOPS : null);
 
         return (object) [
             'ticket_id' => $boardedTicket->ticket_id,
@@ -702,7 +718,7 @@ class TicketService
     {
         $tickets = $this->ticketRepository->findByPassenger($passengerId, $perPage, $page);
         $collection = $tickets->getCollection();
-        \App\Support\TripRunInfo::attach($collection->pluck('trip')->filter()->unique('trip_id'));
+        TripRunInfo::attach($collection->pluck('trip')->filter()->unique('trip_id'));
 
         $tickets->setCollection($collection->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket)));
 
@@ -714,7 +730,7 @@ class TicketService
         $facts = $this->ticketRepository->findPassengerDashboardFacts($passengerId);
         $featured = $facts['featured_ticket'];
         if ($featured) {
-            \App\Support\TripRunInfo::attach([$featured->trip]);
+            TripRunInfo::attach([$featured->trip]);
             $facts['featured_ticket'] = $this->appendValidityWindow($featured);
         }
 
@@ -746,7 +762,7 @@ class TicketService
         // waiting for a refund choice was still paid), minus the refunds that SUCCEEDED. The old figure only summed tickets
         // that were still valid, boarded or alighted, so a partial refund removed the whole fare and an expired ticket
         // vanished. A rebooked ticket is counted once, through its replacement.
-        $paid = \Illuminate\Support\Facades\DB::table('tickets')
+        $paid = DB::table('tickets')
             ->join('payments', 'payments.payment_id', '=', 'tickets.payment_id')
             ->where('tickets.trip_id', $tripId)
             ->where('payments.status', 'paid')
@@ -763,7 +779,7 @@ class TicketService
         // "Passengers" stays the tickets that are still good (valid, boarded, alighted).
         $passengerCount = $this->ticketRepository->findPaidTicketsWithPaymentForTrip($tripId)->count();
 
-        $refunds = \Illuminate\Support\Facades\DB::table('ticket_resolutions as res')
+        $refunds = DB::table('ticket_resolutions as res')
             ->join('tickets', 'tickets.ticket_id', '=', 'res.ticket_id')
             ->join('payments', 'payments.payment_id', '=', 'tickets.payment_id')
             ->where('tickets.trip_id', $tripId)
@@ -888,7 +904,7 @@ class TicketService
     public function findByTransactionAndEmail(string $transactionReference, ?string $email = null, ?int $paymentId = null): object
     {
         $tickets = $this->ticketRepository->findByTransactionAndEmail($transactionReference, $email, $paymentId);
-        \App\Support\TripRunInfo::attach($tickets->pluck('trip')->filter()->unique('trip_id'));
+        TripRunInfo::attach($tickets->pluck('trip')->filter()->unique('trip_id'));
 
         return $tickets->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket));
     }
@@ -939,8 +955,8 @@ class TicketService
 
         // A boarding taken between stops has no origin stop: say so, and give the stop to default a return trip to
         // (the nearest preceding stop, so "book the return" works without asking).
-        if (! $ticket->originStop?->stop_name && \App\Support\TicketBoarding::isSnapped($ticket)) {
-            $ticket->setAttribute('origin', \App\Support\TicketBoarding::BETWEEN_STOPS);
+        if (! $ticket->originStop?->stop_name && TicketBoarding::isSnapped($ticket)) {
+            $ticket->setAttribute('origin', TicketBoarding::BETWEEN_STOPS);
         }
         $ticket->setAttribute('return_journey', $this->returnJourneyFor($ticket));
 
@@ -954,7 +970,7 @@ class TicketService
         // Batch 28 Stage 3, item 8: the run pattern ("One-way run" / "Round-trip run") and the service (Regular, Express,
         // Express - Non-stop with the stops it serves) of this ticket's trip, from data.
         if ($ticket->trip) {
-            $ticket->setAttribute('run_info', $ticket->trip->getAttribute('run_info') ?? \App\Support\TripRunInfo::forTrip($ticket->trip));
+            $ticket->setAttribute('run_info', $ticket->trip->getAttribute('run_info') ?? TripRunInfo::forTrip($ticket->trip));
         }
         $fleet?->makeHidden(['plate_number']);
 

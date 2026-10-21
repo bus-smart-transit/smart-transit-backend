@@ -3,6 +3,8 @@
 namespace App\Repositories;
 
 use App\Models\ShiftBlock;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 class ShiftBlockRepository
@@ -79,12 +81,12 @@ class ShiftBlockRepository
     }
 
     /** When the block ended: its last completed leg, else the last time the row changed. */
-    public function blockEndedAt(ShiftBlock $block): ?\Illuminate\Support\Carbon
+    public function blockEndedAt(ShiftBlock $block): ?Carbon
     {
         $lastLeg = $block->legs->where('status', 'completed')->max(fn ($leg) => $leg->completed_at?->getTimestamp());
 
         return $lastLeg
-            ? \Illuminate\Support\Carbon::createFromTimestamp($lastLeg, config('app.timezone', 'Asia/Manila'))
+            ? Carbon::createFromTimestamp($lastLeg, config('app.timezone', 'Asia/Manila'))
             : $block->updated_at;
     }
 
@@ -114,7 +116,7 @@ class ShiftBlockRepository
             ->get();
     }
 
-    public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null): Collection
+    public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null, ?int $limit = null): Collection
     {
         $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
             ->where('company_user_id', $operatorCompanyUserId)
@@ -123,25 +125,39 @@ class ShiftBlockRepository
         if ($statusFilter && $statusFilter !== 'all') {
             $query->where('status', $statusFilter);
         }
+        if ($limit !== null) {
+            $query->limit($limit);
+        }
 
         return $query->get();
     }
 
-    public function listForDriver(int $driverCompanyUserId): Collection
+    public function paginateForOperator(int $operatorCompanyUserId, int $page, int $perPage): LengthAwarePaginator
+    {
+        return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
+            ->where('company_user_id', $operatorCompanyUserId)
+            ->orderByDesc('scheduled_date')
+            ->orderByDesc('shift_block_id')
+            ->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    public function paginateForDriver(int $driverCompanyUserId, int $page, int $perPage): LengthAwarePaginator
     {
         return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs.fleetRoute.route'])
             ->where('driver_id', $driverCompanyUserId)
             ->where('status', '!=', 'cancelled')
             ->orderByDesc('scheduled_date')
-            ->get();
+            ->orderByDesc('shift_block_id')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 
-    public function listForConductor(int $conductorCompanyUserId): Collection
+    public function paginateForConductor(int $conductorCompanyUserId, int $page, int $perPage): LengthAwarePaginator
     {
         return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs.fleetRoute.route'])
             ->where('conductor_id', $conductorCompanyUserId)
             ->where('status', '!=', 'cancelled')
             ->orderByDesc('scheduled_date')
-            ->get();
+            ->orderByDesc('shift_block_id')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 }

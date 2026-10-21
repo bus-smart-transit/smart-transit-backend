@@ -27,12 +27,18 @@ class ShiftBlockController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
         $blocks = $this->shiftBlockService->listForOperator(
             $companyUser->company_user_id,
             $request->query('status_filter'),
+            (int) ($pagination['page'] ?? 1),
+            (int) ($pagination['per_page'] ?? 100),
         );
 
-        return $this->success($blocks, 'Shift blocks retrieved successfully');
+        return $this->paginated($blocks, 'Shift blocks retrieved successfully');
     }
 
     public function show(Request $request, int $shiftBlockId)
@@ -176,7 +182,12 @@ class ShiftBlockController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        return $this->success($this->shiftBlockService->listForDriver($companyUser->company_user_id), 'Shift blocks retrieved successfully');
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        return $this->paginated($this->shiftBlockService->listForDriver($companyUser->company_user_id, (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 50)), 'Shift blocks retrieved successfully');
     }
 
     public function confirmTakeover(Request $request, int $shiftBlockId)
@@ -202,7 +213,12 @@ class ShiftBlockController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        return $this->success($this->shiftBlockService->listForConductor($companyUser->company_user_id), 'Shift blocks retrieved successfully');
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        return $this->paginated($this->shiftBlockService->listForConductor($companyUser->company_user_id, (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 50)), 'Shift blocks retrieved successfully');
     }
 
     public function handoffEligibility(Request $request, int $shiftBlockId)

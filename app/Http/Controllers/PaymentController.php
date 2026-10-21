@@ -7,6 +7,7 @@ use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
 use App\Exceptions\PayMongoNotConfigured;
 use App\Http\Requests\OnlineCheckoutRequest;
 use App\Http\Requests\OnsiteCheckoutRequest;
+use App\Http\Requests\OnsiteQuoteRequest;
 use App\Services\AuditLogger;
 use App\Services\ConductorShiftService;
 use App\Services\LegProgressionService;
@@ -154,6 +155,31 @@ class PaymentController extends Controller
         }
 
         return $this->success($result, 'Onsite sale recorded successfully');
+    }
+
+    // Conductor: the exact fare of a cash sale before it is made (nothing is reserved or recorded).
+    public function quoteOnsite(OnsiteQuoteRequest $request)
+    {
+        $conductor = $request->user()?->companyProfile;
+        if (! $conductor) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $activeTrip = $this->tripService->getCurrentTripForConductor($conductor->company_user_id);
+        if (! $activeTrip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        $item = $request->validated();
+        if ((int) $activeTrip->trip_id !== (int) $item['trip_id']) {
+            return $this->error('Your active shift is assigned to a different trip.', 422);
+        }
+
+        try {
+            return $this->success($this->paymentService->quoteOnsite($item), 'Fare quoted');
+        } catch (ValidationException $e) {
+            return $this->error(collect($e->errors())->flatten()->first() ?? 'This fare cannot be quoted.', 422, $e->errors());
+        }
     }
 
     public function passengerHistory(Request $request)

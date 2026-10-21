@@ -162,6 +162,49 @@ class PayMongoService
         return is_string($id) && $id !== '' ? $id : null;
     }
 
+    /**
+     * What PayMongo itself says about a checkout session, for when its webhook has not reached us.
+     * Null when PayMongo cannot be asked or does not know the session (the caller then keeps waiting).
+     *
+     * @return array{paid: bool, gateway_payment_id: string|null, payment_intent_id: string|null}|null
+     */
+    public function lookupCheckoutSession(string $sessionId): ?array
+    {
+        $this->requireSecretKey();
+        $startedAt = hrtime(true);
+        try {
+            $response = Http::withBasicAuth($this->secretKey, '')
+                ->withOptions(['verify' => $this->resolveVerifyOption()])
+                ->timeout(10)
+                ->connectTimeout(5)
+                ->get('https://api.paymongo.com/v1/checkout_sessions/'.urlencode($sessionId));
+        } catch (\Throwable $e) {
+            $this->recordProviderRequest('checkout_session.status', $startedAt, 'network_error');
+
+            return null;
+        }
+
+        $this->recordProviderRequest(
+            'checkout_session.status',
+            $startedAt,
+            $response->successful() ? 'success' : ($response->serverError() ? 'provider_error' : 'rejected'),
+            $response->status(),
+        );
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $payments = $response->json('data.attributes.payments');
+        $paid = collect(is_array($payments) ? $payments : [])->first(fn ($payment) => ($payment['attributes']['status'] ?? null) === 'paid');
+        $intentId = $response->json('data.attributes.payment_intent.id') ?? $response->json('data.attributes.payment_intent_id');
+
+        return [
+            'paid' => $paid !== null,
+            'gateway_payment_id' => is_string($paid['id'] ?? null) ? $paid['id'] : null,
+            'payment_intent_id' => is_string($intentId) ? $intentId : null,
+        ];
+    }
+
     private function recordProviderRequest(string $operation, int $startedAt, string $outcome, ?int $status = null): void
     {
         Log::info('payment.provider_request', [

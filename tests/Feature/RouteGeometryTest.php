@@ -21,6 +21,7 @@ use App\Services\StopCoordinateValidator;
 use App\Services\StopService;
 use App\Support\Geo\GeoLine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -364,21 +365,36 @@ it('allows an Operator to queue and audit a redraw for a route assigned to their
         ->assertJsonPath('data.geometry_regeneration_pending', true);
 });
 
-it('refuses an Operator redraw for a route assigned only to another company', function () {
+it('lets an Operator redraw any route, including a new route with no fleet and another company\'s route', function () {
     config(['cache.default' => 'array']);
     Cache::flush();
     Queue::fake();
     $operator = makeRouteRedrawStaff('operator');
     $otherOperator = makeRouteRedrawStaff('operator');
-    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
-    assignRouteRedrawFleet($route, $otherOperator);
+    $unassigned = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+    $othersRoute = makeRouteWithStops([['C', 7.1, 125.1, 0], ['D', 7.3, 125.1, 20]]);
+    assignRouteRedrawFleet($othersRoute, $otherOperator);
 
-    $this->actingAs($operator)
+    foreach ([$unassigned, $othersRoute] as $route) {
+        $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")
+            ->assertSuccessful()
+            ->assertJsonPath('data.can_regenerate_geometry', true);
+        $this->actingAs($operator)
+            ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
+            ->assertSuccessful();
+    }
+    Queue::assertPushed(GenerateRouteGeometry::class, 2);
+});
+
+it('does not offer a redraw to staff roles that cannot manage routes', function () {
+    config(['cache.default' => 'array']);
+    Cache::flush();
+    Queue::fake();
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+
+    $this->actingAs(makeRouteRedrawStaff('conductor'))
         ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
-        ->assertNotFound();
-    $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")
-        ->assertSuccessful()
-        ->assertJsonPath('data.can_regenerate_geometry', false);
+        ->assertForbidden();
     Queue::assertNothingPushed();
 });
 
@@ -401,4 +417,52 @@ it('allows Admin redraws and blocks another redraw during the configured per-rou
         ->postJson("/api/admin/routes/{$route->route_id}/geometry/regenerate")
         ->assertStatus(429);
     Queue::assertPushed(GenerateRouteGeometry::class, 1);
+});
+
+it('shows a redraw as queued, then how long it took and that it finished', function () {
+    config(['cache.default' => 'array', 'route_geometry.ors.api_key' => 'test-key', 'route_geometry.redraw_cooldown_minutes' => 15]);
+    Cache::flush();
+    Queue::fake();
+    $operator = makeRouteRedrawStaff('operator');
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+
+    $this->actingAs($operator)->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
+        ->assertSuccessful()
+        ->assertJsonPath('data.redraw.pending', true)
+        ->assertJsonPath('data.redraw.stage', 'queued')
+        ->assertJsonPath('data.redraw.percent', 5)
+        ->assertJsonPath('data.redraw.last', null);
+
+    Http::fake([
+        '*/v2/snap/*' => Http::response(['locations' => [['location' => [125.0, 7.0]], ['location' => [125.0, 7.2]]]]),
+        '*/v2/directions/*' => Http::response(['features' => [[
+            'properties' => ['segments' => [['distance' => 22000.0, 'duration' => 1500.0]]],
+            'geometry' => ['coordinates' => [[125.0, 7.0], [125.0, 7.1], [125.0, 7.2]]],
+        ]]]),
+    ]);
+    Carbon::setTestNow(now()->addSeconds(9));
+    (new GenerateRouteGeometry($route->route_id))->handle(app(RouteGeometryGenerator::class));
+
+    $redraw = $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")->assertSuccessful()->json('data.redraw');
+    Carbon::setTestNow();
+
+    expect($redraw['pending'])->toBeFalse()->and($redraw['percent'])->toBeNull();
+    expect($redraw['last']['ok'])->toBeTrue()->and($redraw['last']['duration_s'])->toBe(9)->and($redraw['last']['message'])->toContain('regenerated');
+    expect($redraw['typical_s'])->toBe(9);
+});
+
+it('says why a redraw did not finish, and keeps the page from waiting', function () {
+    config(['cache.default' => 'array', 'route_geometry.ors.api_key' => null, 'route_geometry.redraw_cooldown_minutes' => 15]);
+    Cache::flush();
+    Queue::fake();
+    $operator = makeRouteRedrawStaff('operator');
+    $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+
+    $this->actingAs($operator)->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")->assertSuccessful();
+    (new GenerateRouteGeometry($route->route_id))->handle(app(RouteGeometryGenerator::class));
+
+    $redraw = $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")->assertSuccessful()->json('data.redraw');
+    expect($redraw['pending'])->toBeFalse();
+    expect($redraw['last']['ok'])->toBeFalse()->and($redraw['last']['message'])->toContain('ORS_API_KEY');
+    expect($redraw['typical_s'])->toBeNull(); // only redraws that worked count toward the usual time
 });

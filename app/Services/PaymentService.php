@@ -2,19 +2,21 @@
 
 namespace App\Services;
 
-use App\Models\Payment;
 use App\Exceptions\CheckoutIdempotencyConflict;
 use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
+use App\Exceptions\PayMongoNotConfigured;
+use App\Models\Payment;
 use App\Repositories\OnlinePaymentRepository;
 use App\Repositories\OnsitePaymentRepository;
 use App\Repositories\PassengerRepository;
 use App\Repositories\PaymentRepository;
 use App\Repositories\TripRepository;
 use App\Support\Database\RlsContext;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -62,6 +64,7 @@ class PaymentService
             return null;
         }
 
+        $payment = $this->confirmFromProviderIfMissed($payment);
         $status = (string) $payment->status;
         $outcomeUnknown = $payment->idempotency_state === 'unknown';
         if (! $outcomeUnknown && $status === 'pending' && $payment->hold_expires_at && Carbon::parse($payment->hold_expires_at)->isPast()) {
@@ -80,6 +83,43 @@ class PaymentService
         return $result;
     }
 
+    /**
+     * The webhook normally confirms a payment, but it can miss us (tunnel down, URL not public, delivery failure).
+     * While the return page is waiting, ask PayMongo about the checkout session and, if it was paid, finish the
+     * payment through the same idempotent path the webhook uses. Asked at most once every few seconds per payment.
+     */
+    private function confirmFromProviderIfMissed(Payment $payment): Payment
+    {
+        if ($payment->status !== 'pending' || ! $payment->gateway_reference) {
+            return $payment;
+        }
+        if (! Cache::add('payment_status_provider_check:'.$payment->payment_id, 1, 4)) {
+            return $payment;
+        }
+
+        try {
+            $session = $this->payMongoService->lookupCheckoutSession((string) $payment->gateway_reference);
+        } catch (PayMongoNotConfigured) {
+            return $payment;
+        }
+        if (! ($session['paid'] ?? false)) {
+            return $payment;
+        }
+
+        $updates = array_filter([
+            'gateway_payment_id' => empty($payment->gateway_payment_id) ? $session['gateway_payment_id'] : null,
+            'payment_intent_id' => empty($payment->payment_intent_id) ? $session['payment_intent_id'] : null,
+        ]);
+        if ($updates !== []) {
+            $payment->forceFill($updates)->save();
+        }
+
+        $this->finalizeOnlinePayment($payment);
+        Log::info('Payment confirmed by asking PayMongo (webhook had not arrived).', ['payment_id' => $payment->payment_id]);
+
+        return $payment->fresh() ?? $payment;
+    }
+
     public function checkoutOnline(?int $passengerId, ?string $guestEmail, array $payload, ?string $idempotencyKey = null): array
     {
         return RlsContext::withBypass(function () use ($passengerId, $guestEmail, $payload, $idempotencyKey) {
@@ -96,185 +136,185 @@ class PaymentService
 
             try {
                 $prepared = DB::transaction(function () use ($passengerId, $guestEmail, $payload, $startedAt, $identity) {
-                // PostgreSQL only: bounded waits for row locks. (Other drivers, i.e. the SQLite test database, have no such setting.)
-                if (DB::getDriverName() === 'pgsql') {
-                    DB::statement("SET LOCAL lock_timeout TO '5s'");
-                    DB::statement("SET LOCAL statement_timeout TO '12s'");
-                }
-
-                if ($identity !== null) {
-                    $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
-                    if ($existing) {
-                        return ['idempotency_replay' => $existing];
-                    }
-                }
-
-                $pointsRequested = max(0, (int) ($payload['reward_points_to_use'] ?? 0));
-
-                if ($pointsRequested > 0 && ! $passengerId) {
-                    throw ValidationException::withMessages([
-                        'reward_points_to_use' => ['Reward points can only be used by signed-in passengers.'],
-                    ]);
-                }
-
-                $payment = $this->paymentRepository->create([
-                    'amount' => 0,
-                    'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
-                    'payment_method' => 'online',
-                    'payment_channel' => $payload['payment_channel'],
-                    'guest_email' => $guestEmail,
-                    'status' => 'pending',
-                    'is_valid' => true,
-                    'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
-                    'idempotency_key_hash' => $identity['key_hash'] ?? null,
-                    'idempotency_request_hash' => $identity['request_hash'] ?? null,
-                    'idempotency_state' => $identity !== null ? 'processing' : null,
-                ]);
-
-                // Keep one online_payment row per online transaction.
-                // Passenger ownership is persisted in items_payload, not
-                // in online_payment, so the table can stay minimal.
-                $this->onlinePaymentRepository->create([
-                    'payment_id' => $payment->payment_id,
-                ]);
-
-                $total = 0;
-                $reservedItems = [];
-                $lineItems = [];
-                $groupedItems = [];
-
-                foreach ($payload['items'] as $item) {
-                    // A roundtrip item carries its own date; a one-way item takes the booking's.
-                    $item['booking_date'] = $item['booking_date'] ?? $payload['booking_date'] ?? null;
-                    if (($payload['journey_type'] ?? 'one_way') !== 'roundtrip') {
-                        unset($item['journey_leg']);
+                    // PostgreSQL only: bounded waits for row locks. (Other drivers, i.e. the SQLite test database, have no such setting.)
+                    if (DB::getDriverName() === 'pgsql') {
+                        DB::statement("SET LOCAL lock_timeout TO '5s'");
+                        DB::statement("SET LOCAL statement_timeout TO '12s'");
                     }
 
-                    $itemKey = json_encode([
-                        'trip_id' => (int) ($item['trip_id'] ?? 0),
-                        'seat_type' => (string) ($item['seat_type'] ?? ''),
-                        'booking_date' => isset($item['booking_date']) ? (string) $item['booking_date'] : null,
-                        'journey_leg' => $item['journey_leg'] ?? null,
-                        'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
-                        'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
-                        'alighting_point_id' => isset($item['alighting_point_id']) ? (int) $item['alighting_point_id'] : null,
-                        'origin_lat' => isset($item['origin_lat']) ? (float) $item['origin_lat'] : null,
-                        'origin_lng' => isset($item['origin_lng']) ? (float) $item['origin_lng'] : null,
-                        'destination_lat' => isset($item['destination_lat']) ? (float) $item['destination_lat'] : null,
-                        'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
+                    if ($identity !== null) {
+                        $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
+                        if ($existing) {
+                            return ['idempotency_replay' => $existing];
+                        }
+                    }
+
+                    $pointsRequested = max(0, (int) ($payload['reward_points_to_use'] ?? 0));
+
+                    if ($pointsRequested > 0 && ! $passengerId) {
+                        throw ValidationException::withMessages([
+                            'reward_points_to_use' => ['Reward points can only be used by signed-in passengers.'],
+                        ]);
+                    }
+
+                    $payment = $this->paymentRepository->create([
+                        'amount' => 0,
+                        'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
+                        'payment_method' => 'online',
+                        'payment_channel' => $payload['payment_channel'],
+                        'guest_email' => $guestEmail,
+                        'status' => 'pending',
+                        'is_valid' => true,
+                        'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
+                        'idempotency_key_hash' => $identity['key_hash'] ?? null,
+                        'idempotency_request_hash' => $identity['request_hash'] ?? null,
+                        'idempotency_state' => $identity !== null ? 'processing' : null,
                     ]);
 
-                    if (! isset($groupedItems[$itemKey])) {
-                        $groupedItems[$itemKey] = [
-                            'item' => $item,
-                            'count' => 0,
-                        ];
-                    }
+                    // Keep one online_payment row per online transaction.
+                    // Passenger ownership is persisted in items_payload, not
+                    // in online_payment, so the table can stay minimal.
+                    $this->onlinePaymentRepository->create([
+                        'payment_id' => $payment->payment_id,
+                    ]);
 
-                    $groupedItems[$itemKey]['count']++;
-                }
+                    $total = 0;
+                    $reservedItems = [];
+                    $lineItems = [];
+                    $groupedItems = [];
 
-                foreach ($groupedItems as $group) {
-                    // Compute fare once per unique item and reserve remaining
-                    // repeated quantity as one batched capacity operation.
-                    $template = $this->ticketService->reserveAndPrice($group['item']);
+                    foreach ($payload['items'] as $item) {
+                        // A roundtrip item carries its own date; a one-way item takes the booking's.
+                        $item['booking_date'] = $item['booking_date'] ?? $payload['booking_date'] ?? null;
+                        if (($payload['journey_type'] ?? 'one_way') !== 'roundtrip') {
+                            unset($item['journey_leg']);
+                        }
 
-                    $extraCount = max(0, ((int) $group['count']) - 1);
-                    if ($extraCount > 0) {
-                        $this->ticketService->reserveFromTemplate($template, $extraCount);
-                    }
-
-                    for ($i = 0; $i < (int) $group['count']; $i++) {
-                        $reserved = $template;
-                        $total += $reserved['amount'];
-                        $reserved['passenger_id'] = $passengerId;
-                        $reservedItems[] = $reserved;
-                    }
-                }
-
-                Log::info('Checkout reservation stage completed', [
-                    'item_count' => count($payload['items'] ?? []),
-                    'payment_id' => $payment->payment_id,
-                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                ]);
-
-                $rewardPointsApplied = 0;
-                $rewardDiscount = 0.0;
-
-                if ($passengerId && $pointsRequested > 0) {
-                    $currentPoints = $this->rewardService->getPoints($passengerId);
-                    if ($currentPoints <= 0) {
-                        throw ValidationException::withMessages([
-                            'reward_points_to_use' => ['No reward points are available to redeem.'],
+                        $itemKey = json_encode([
+                            'trip_id' => (int) ($item['trip_id'] ?? 0),
+                            'seat_type' => (string) ($item['seat_type'] ?? ''),
+                            'booking_date' => isset($item['booking_date']) ? (string) $item['booking_date'] : null,
+                            'journey_leg' => $item['journey_leg'] ?? null,
+                            'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
+                            'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
+                            'alighting_point_id' => isset($item['alighting_point_id']) ? (int) $item['alighting_point_id'] : null,
+                            'origin_lat' => isset($item['origin_lat']) ? (float) $item['origin_lat'] : null,
+                            'origin_lng' => isset($item['origin_lng']) ? (float) $item['origin_lng'] : null,
+                            'destination_lat' => isset($item['destination_lat']) ? (float) $item['destination_lat'] : null,
+                            'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
                         ]);
+
+                        if (! isset($groupedItems[$itemKey])) {
+                            $groupedItems[$itemKey] = [
+                                'item' => $item,
+                                'count' => 0,
+                            ];
+                        }
+
+                        $groupedItems[$itemKey]['count']++;
                     }
 
-                    $perPoint = RewardService::REDEMPTION_PESOS_PER_POINT;
-                    $maxRedeemableByAmount = max(0, (int) floor(($total - 1) / $perPoint));
-                    $rewardPointsApplied = min($pointsRequested, $currentPoints, $maxRedeemableByAmount);
-                    $rewardDiscount = (float) ($rewardPointsApplied * $perPoint);
+                    foreach ($groupedItems as $group) {
+                        // Compute fare once per unique item and reserve remaining
+                        // repeated quantity as one batched capacity operation.
+                        $template = $this->ticketService->reserveAndPrice($group['item']);
 
-                    if ($rewardPointsApplied <= 0) {
-                        throw ValidationException::withMessages([
-                            'reward_points_to_use' => ['Requested reward points cannot be applied. Minimum payable amount is PHP 1.00 for online checkout.'],
-                        ]);
+                        $extraCount = max(0, ((int) $group['count']) - 1);
+                        if ($extraCount > 0) {
+                            $this->ticketService->reserveFromTemplate($template, $extraCount);
+                        }
+
+                        for ($i = 0; $i < (int) $group['count']; $i++) {
+                            $reserved = $template;
+                            $total += $reserved['amount'];
+                            $reserved['passenger_id'] = $passengerId;
+                            $reservedItems[] = $reserved;
+                        }
                     }
-                }
 
-                $netTotal = max(0.0, round($total - $rewardDiscount, 2));
+                    Log::info('Checkout reservation stage completed', [
+                        'item_count' => count($payload['items'] ?? []),
+                        'payment_id' => $payment->payment_id,
+                        'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    ]);
 
-                $remainingDiscount = $rewardDiscount;
-                foreach ($reservedItems as $idx => $reserved) {
-                    $grossAmount = (float) ($reserved['amount'] ?? 0);
-                    $itemDiscount = min($grossAmount, $remainingDiscount);
-                    $netAmount = max(0.0, round($grossAmount - $itemDiscount, 2));
-                    $remainingDiscount = max(0.0, round($remainingDiscount - $itemDiscount, 2));
+                    $rewardPointsApplied = 0;
+                    $rewardDiscount = 0.0;
 
-                    $reservedItems[$idx]['reward_earn_amount'] = $netAmount;
-                }
+                    if ($passengerId && $pointsRequested > 0) {
+                        $currentPoints = $this->rewardService->getPoints($passengerId);
+                        if ($currentPoints <= 0) {
+                            throw ValidationException::withMessages([
+                                'reward_points_to_use' => ['No reward points are available to redeem.'],
+                            ]);
+                        }
 
-                $targetCentavos = max(100, (int) round($netTotal * 100));
-                $lineItems = [[
-                    'name' => 'Smart Transit Ticket Purchase',
-                    'amount' => $targetCentavos,
-                    'currency' => 'PHP',
-                    'quantity' => 1,
-                ]];
+                        $perPoint = RewardService::REDEMPTION_PESOS_PER_POINT;
+                        $maxRedeemableByAmount = max(0, (int) floor(($total - 1) / $perPoint));
+                        $rewardPointsApplied = min($pointsRequested, $currentPoints, $maxRedeemableByAmount);
+                        $rewardDiscount = (float) ($rewardPointsApplied * $perPoint);
 
-                $payment->amount = $netTotal;
-                $payment->items_payload = $reservedItems;
-                // Matches PayMongo's default checkout session expiry window.
-                // Confirm against your PayMongo dashboard settings if you've
-                // customized session expiry.
-                $payment->hold_expires_at = Carbon::now()->addMinutes(15);
-                $payment->save();
-
-                // The points are taken here, in the same transaction as the hold and BEFORE the gateway is asked for a
-                // session, in one atomic statement. If they are gone (another checkout spent them a moment ago) the
-                // whole checkout, hold included, is undone and nobody gets a discount that was not paid for.
-                if ($passengerId && $rewardPointsApplied > 0) {
-                    $taken = $this->rewardService->redeemPoints(
-                        $passengerId,
-                        $rewardPointsApplied,
-                        'Redeemed during checkout: '.$payment->transaction_reference,
-                        $payment->payment_id,
-                    );
-
-                    if (! $taken) {
-                        throw ValidationException::withMessages([
-                            'reward_points_to_use' => ['Those reward points are no longer available. Please try again.'],
-                        ]);
+                        if ($rewardPointsApplied <= 0) {
+                            throw ValidationException::withMessages([
+                                'reward_points_to_use' => ['Requested reward points cannot be applied. Minimum payable amount is PHP 1.00 for online checkout.'],
+                            ]);
+                        }
                     }
-                }
 
-                return [
-                    'payment' => $payment,
-                    'line_items' => $lineItems,
-                    'gross_amount' => (float) $total,
-                    'reward_points_applied' => $rewardPointsApplied,
-                    'reward_discount' => $rewardDiscount,
-                    'net_amount' => (float) $payment->amount,
-                ];
+                    $netTotal = max(0.0, round($total - $rewardDiscount, 2));
+
+                    $remainingDiscount = $rewardDiscount;
+                    foreach ($reservedItems as $idx => $reserved) {
+                        $grossAmount = (float) ($reserved['amount'] ?? 0);
+                        $itemDiscount = min($grossAmount, $remainingDiscount);
+                        $netAmount = max(0.0, round($grossAmount - $itemDiscount, 2));
+                        $remainingDiscount = max(0.0, round($remainingDiscount - $itemDiscount, 2));
+
+                        $reservedItems[$idx]['reward_earn_amount'] = $netAmount;
+                    }
+
+                    $targetCentavos = max(100, (int) round($netTotal * 100));
+                    $lineItems = [[
+                        'name' => 'Smart Transit Ticket Purchase',
+                        'amount' => $targetCentavos,
+                        'currency' => 'PHP',
+                        'quantity' => 1,
+                    ]];
+
+                    $payment->amount = $netTotal;
+                    $payment->items_payload = $reservedItems;
+                    // Matches PayMongo's default checkout session expiry window.
+                    // Confirm against your PayMongo dashboard settings if you've
+                    // customized session expiry.
+                    $payment->hold_expires_at = Carbon::now()->addMinutes(15);
+                    $payment->save();
+
+                    // The points are taken here, in the same transaction as the hold and BEFORE the gateway is asked for a
+                    // session, in one atomic statement. If they are gone (another checkout spent them a moment ago) the
+                    // whole checkout, hold included, is undone and nobody gets a discount that was not paid for.
+                    if ($passengerId && $rewardPointsApplied > 0) {
+                        $taken = $this->rewardService->redeemPoints(
+                            $passengerId,
+                            $rewardPointsApplied,
+                            'Redeemed during checkout: '.$payment->transaction_reference,
+                            $payment->payment_id,
+                        );
+
+                        if (! $taken) {
+                            throw ValidationException::withMessages([
+                                'reward_points_to_use' => ['Those reward points are no longer available. Please try again.'],
+                            ]);
+                        }
+                    }
+
+                    return [
+                        'payment' => $payment,
+                        'line_items' => $lineItems,
+                        'gross_amount' => (float) $total,
+                        'reward_points_applied' => $rewardPointsApplied,
+                        'reward_discount' => $rewardDiscount,
+                        'net_amount' => (float) $payment->amount,
+                    ];
                 });
             } catch (QueryException $exception) {
                 if ($identity === null || ! $this->isUniqueConstraintViolation($exception)) {
@@ -487,62 +527,62 @@ class PaymentService
 
         try {
             $result = RlsContext::withBypass(fn () => DB::transaction(function () use ($conductorCompanyUserId, $payload, $identity) {
-            if ($identity !== null) {
-                $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
-                if ($existing) {
-                    return ['idempotency_replay' => $existing];
+                if ($identity !== null) {
+                    $existing = $this->paymentRepository->findByIdempotencyKey($identity['scope_hash'], $identity['key_hash'], true);
+                    if ($existing) {
+                        return ['idempotency_replay' => $existing];
+                    }
                 }
-            }
 
-            $payment = $this->paymentRepository->create([
-                'amount' => 0,
-                'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
-                'payment_method' => 'cash',
-                'payment_channel' => 'onsite',
-                'status' => 'paid',
-                'is_valid' => true,
-                'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
-                'idempotency_key_hash' => $identity['key_hash'] ?? null,
-                'idempotency_request_hash' => $identity['request_hash'] ?? null,
-                'idempotency_state' => $identity !== null ? 'processing' : null,
-            ]);
+                $payment = $this->paymentRepository->create([
+                    'amount' => 0,
+                    'transaction_reference' => 'TXN-'.strtoupper(bin2hex(random_bytes(8))),
+                    'payment_method' => 'cash',
+                    'payment_channel' => 'onsite',
+                    'status' => 'paid',
+                    'is_valid' => true,
+                    'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
+                    'idempotency_key_hash' => $identity['key_hash'] ?? null,
+                    'idempotency_request_hash' => $identity['request_hash'] ?? null,
+                    'idempotency_state' => $identity !== null ? 'processing' : null,
+                ]);
 
-            $issuedAt = \Illuminate\Support\Carbon::now('UTC');
+                $issuedAt = Carbon::now('UTC');
 
-            $this->onsitePaymentRepository->create([
-                'payment_id' => $payment->payment_id,
-                'conductor_id' => $conductorCompanyUserId,
-                // Batch 29: the Conductor shift this cash was collected in (a cash sale needs an open shift).
-                'conductor_shift_log_id' => $this->shiftCash->openShiftId($conductorCompanyUserId),
-                // Batch 27: explicit server time in UTC (the stored value is UTC).
-                'issued_at' => $issuedAt->format('Y-m-d H:i:s'),
-            ]);
+                $this->onsitePaymentRepository->create([
+                    'payment_id' => $payment->payment_id,
+                    'conductor_id' => $conductorCompanyUserId,
+                    // Batch 29: the Conductor shift this cash was collected in (a cash sale needs an open shift).
+                    'conductor_shift_log_id' => $this->shiftCash->openShiftId($conductorCompanyUserId),
+                    // Batch 27: explicit server time in UTC (the stored value is UTC).
+                    'issued_at' => $issuedAt->format('Y-m-d H:i:s'),
+                ]);
 
-            $total = 0;
-            $tickets = [];
+                $total = 0;
+                $tickets = [];
 
-            foreach ($payload['items'] as $item) {
-                $passengerId = $item['passenger_id'] ?? null;
-                // Set here, never read from the request: only the cash flow may sell while the bus is moving.
-                $item['channel'] = 'onsite';
-                $ticket = $this->ticketService->issueTicket($item, $passengerId, $payment->payment_id);
-                $total += $ticket->amount;
-                $tickets[] = $ticket;
-            }
+                foreach ($payload['items'] as $item) {
+                    $passengerId = $item['passenger_id'] ?? null;
+                    // Set here, never read from the request: only the cash flow may sell while the bus is moving.
+                    $item['channel'] = 'onsite';
+                    $ticket = $this->ticketService->issueTicket($item, $passengerId, $payment->payment_id);
+                    $total += $ticket->amount;
+                    $tickets[] = $ticket;
+                }
 
-            $payment->amount = $total;
-            if ($identity !== null) {
-                $payment->idempotency_state = 'completed';
-                $payment->idempotency_response = ['issued_at' => $issuedAt->toIso8601ZuluString()];
-            }
-            $payment->save();
+                $payment->amount = $total;
+                if ($identity !== null) {
+                    $payment->idempotency_state = 'completed';
+                    $payment->idempotency_response = ['issued_at' => $issuedAt->toIso8601ZuluString()];
+                }
+                $payment->save();
 
-            return [
-                'payment' => $payment,
-                'tickets' => $tickets,
-                // ISO 8601 with Z: clients convert to Asia/Manila for display.
-                'issued_at' => $issuedAt->toIso8601ZuluString(),
-            ];
+                return [
+                    'payment' => $payment,
+                    'tickets' => $tickets,
+                    // ISO 8601 with Z: clients convert to Asia/Manila for display.
+                    'issued_at' => $issuedAt->toIso8601ZuluString(),
+                ];
             }));
         } catch (QueryException $exception) {
             if ($identity === null || ! $this->isUniqueConstraintViolation($exception)) {
@@ -562,6 +602,25 @@ class PaymentService
         }
 
         return $result;
+    }
+
+    /**
+     * The fare a cash sale of this item would charge right now, for the Conductor to read out before selling. It prices
+     * through the same method the sale uses (same rules, same fare rule), and reserves and records nothing.
+     *
+     * @return array{amount: float, distance_km: float|null, seat_type: string}
+     */
+    public function quoteOnsite(array $item): array
+    {
+        // Set here, never read from the request, exactly as the sale does.
+        $item['channel'] = 'onsite';
+        $priced = $this->ticketService->priceItem($item);
+
+        return [
+            'amount' => round((float) $priced['amount'], 2),
+            'distance_km' => isset($priced['distance_km']) ? (float) $priced['distance_km'] : null,
+            'seat_type' => (string) $priced['seat_type'],
+        ];
     }
 
     private function replayOnsiteCheckout(Payment $payment, array $identity): array
@@ -614,6 +673,7 @@ class PaymentService
 
                 if ($locked->status === 'needs_refund') {
                     $this->settleUnknownCheckout($locked);
+
                     return 'needs_refund'; // already flagged: a redelivery must not issue tickets now
                 }
 
@@ -812,7 +872,7 @@ class PaymentService
         $this->fcmService->sendToUser(
             $passengerUser,
             'Payment Failed',
-            "Your payment of \u{20B1}".number_format((float) $payment->amount, 2)." could not be completed. Your reserved seat has been released — please try booking again.",
+            "Your payment of \u{20B1}".number_format((float) $payment->amount, 2).' could not be completed. Your reserved seat has been released — please try booking again.',
             ['type' => 'payment_failed', 'payment_id' => $payment->payment_id],
         );
     }

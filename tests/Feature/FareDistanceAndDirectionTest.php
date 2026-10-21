@@ -247,6 +247,6 @@ it('uses the same sold count for the sale block and the Chauffeur dashboard', fu
     expect($summary()['is_full'])->toBeTrue();
     $sell('standing')->assertStatus(422)->assertJsonValidationErrors(['capacity']);
 
-    // Scanning a ticket onto the bus changes "onboard", never the sold count the block uses.
-    expect($summary()['onboard']['total'])->toBe(0);
+    // Cash sales are made on the bus, so those passengers are aboard; "onboard" is a manifest count and never the sale block's.
+    expect($summary()['onboard']['total'])->toBe(3)->and($summary()['sold']['total'])->toBe(3);
 });

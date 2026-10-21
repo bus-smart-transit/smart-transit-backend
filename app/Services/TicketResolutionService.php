@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Payment;
+use App\Models\RouteStop;
 use App\Models\Ticket;
 use App\Models\TicketResolution;
 use App\Models\Trip;
@@ -11,6 +12,7 @@ use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Support\LegDistance;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -40,8 +42,11 @@ use Illuminate\Validation\ValidationException;
 class TicketResolutionService
 {
     public const REVIEW = 'refund_review';
+
     public const PENDING = 'refund_pending';
+
     public const REFUNDED = 'refunded';
+
     public const REBOOKED = 'rebooked';
 
     public function __construct(
@@ -249,7 +254,7 @@ class TicketResolutionService
     public function submitToGateway(TicketResolution $resolution): void
     {
         // One sender at a time per refund: two taps at once must not create two refunds at the provider.
-        $lock = \Illuminate\Support\Facades\Cache::lock('ticket-refund-submit-'.$resolution->id, 60);
+        $lock = Cache::lock('ticket-refund-submit-'.$resolution->id, 60);
         if (! $lock->get()) {
             return;
         }
@@ -393,8 +398,9 @@ class TicketResolutionService
         $base = ['fare_paid' => $paid, 'ridden_fare' => null, 'needs_review' => false, 'review_reason' => null];
 
         $boarded = $ticket->boarded_at !== null;
-        if (! $boarded) {
-            return array_merge($base, ['amount' => $paid, 'ridden_fare' => 0.0, 'basis' => ['type' => 'full_fare', 'stage' => $cancellation->stage, 'boarded' => false]]);
+        // Cancelled before the bus left: nobody has ridden anywhere, boarded (a cash sale on the bus is) or not.
+        if (! $boarded || $cancellation->stage === TripCancellation::STAGE_BEFORE_DEPARTURE) {
+            return array_merge($base, ['amount' => $paid, 'ridden_fare' => 0.0, 'basis' => ['type' => 'full_fare', 'stage' => $cancellation->stage, 'boarded' => $boarded]]);
         }
 
         // Boarded on a trip cancelled mid-route: the fare for the part already travelled stays with the operator.
@@ -505,7 +511,6 @@ class TicketResolutionService
 
     // ----------------------------------------------------------------------------------------------------------------
 
-    /** @return TicketResolution */
     private function rebook(Ticket $ticket, TripCancellation $cancellation, array $input, array $actor): TicketResolution
     {
         if ($ticket->boarded_at !== null) {
@@ -688,7 +693,7 @@ class TicketResolutionService
         return $isFull ? null : Carbon::now($tz)->addDay()->startOfDay()->utc();
     }
 
-    private function meters(\App\Models\RouteStop $routeStop): int
+    private function meters(RouteStop $routeStop): int
     {
         return $routeStop->distance_from_origin_m !== null
             ? (int) $routeStop->distance_from_origin_m

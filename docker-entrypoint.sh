@@ -35,12 +35,26 @@ php artisan migrate --force
 php artisan sanctum:prune-expired --hours=24
 
 echo "[entrypoint] Starting queue worker (route geometry regeneration)..."
-php artisan queue:work --sleep=3 --tries=1 --max-time=3600 &
+# queue:work exits on purpose after --max-time (and on a fatal error); without this loop nothing queued would ever run
+# again, and a route redraw would wait forever.
+(
+  while true; do
+    php artisan queue:work --sleep=3 --tries=1 --max-time=3600
+    echo "[entrypoint] Queue worker stopped (exit $?), restarting in 3 seconds..."
+    sleep 3
+  done
+) &
 
 # The scheduled jobs in routes/console.php (delayed-trip push, release of expired payment holds, deferred refunds,
 # nightly reports) only run if something calls the scheduler every minute. Without this they never ran in the container.
 echo "[entrypoint] Starting scheduler (routes/console.php)..."
-php artisan schedule:work &
+(
+  while true; do
+    php artisan schedule:work
+    echo "[entrypoint] Scheduler stopped (exit $?), restarting in 3 seconds..."
+    sleep 3
+  done
+) &
 
 echo "[entrypoint] Starting Laravel on 0.0.0.0:8000..."
 exec php artisan serve --host=0.0.0.0 --port=8000

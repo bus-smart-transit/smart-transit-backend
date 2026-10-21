@@ -12,6 +12,7 @@ use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
 use App\Support\Notifications\NotificationLink;
 use App\Support\ServiceType;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -188,21 +189,27 @@ class ShiftBlockService
         return $block;
     }
 
-    public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null)
+    // The status filter works on the derived status, which needs each block's legs, so it looks at the newest blocks only.
+    private const DERIVED_FILTER_WINDOW = 300;
+
+    public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null, int $page = 1, int $perPage = 100): LengthAwarePaginator
     {
         // Batch 29: the filter works on the same derived status the cards show, not on the stored workflow column.
-        $blocks = $this->shiftBlockRepository->listForOperator($operatorCompanyUserId, null);
         $groups = [
             'scheduled' => ['scheduled', 'delayed'],
             'in_progress' => ['boarding', 'departed', 'in-progress'],
             'completed' => ['completed'],
             'cancelled' => ['cancelled'],
         ];
-        if ($statusFilter && isset($groups[$statusFilter])) {
-            $blocks = $blocks->filter(fn (ShiftBlock $block) => in_array($block->lifecycle_status, $groups[$statusFilter], true))->values();
+        if (! ($statusFilter && isset($groups[$statusFilter]))) {
+            return $this->shiftBlockRepository->paginateForOperator($operatorCompanyUserId, $page, $perPage);
         }
 
-        return $blocks;
+        $blocks = $this->shiftBlockRepository->listForOperator($operatorCompanyUserId, null, self::DERIVED_FILTER_WINDOW)
+            ->filter(fn (ShiftBlock $block) => in_array($block->lifecycle_status, $groups[$statusFilter], true))
+            ->values();
+
+        return new LengthAwarePaginator($blocks->forPage($page, $perPage)->values(), $blocks->count(), $perPage, $page);
     }
 
     public function listPendingReview(int $operatorCompanyUserId)
@@ -210,14 +217,14 @@ class ShiftBlockService
         return $this->shiftBlockRepository->findPendingReview($operatorCompanyUserId);
     }
 
-    public function listForDriver(int $driverCompanyUserId)
+    public function listForDriver(int $driverCompanyUserId, int $page = 1, int $perPage = 50): LengthAwarePaginator
     {
-        return $this->shiftBlockRepository->listForDriver($driverCompanyUserId);
+        return $this->shiftBlockRepository->paginateForDriver($driverCompanyUserId, $page, $perPage);
     }
 
-    public function listForConductor(int $conductorCompanyUserId)
+    public function listForConductor(int $conductorCompanyUserId, int $page = 1, int $perPage = 50): LengthAwarePaginator
     {
-        return $this->shiftBlockRepository->listForConductor($conductorCompanyUserId);
+        return $this->shiftBlockRepository->paginateForConductor($conductorCompanyUserId, $page, $perPage);
     }
 
     /**
