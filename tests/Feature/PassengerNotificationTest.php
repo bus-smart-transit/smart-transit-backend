@@ -1,5 +1,6 @@
 <?php
 
+use App\Mail\TripCancelledRefundMail;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\PassengerUser;
@@ -13,6 +14,8 @@ use App\Services\FcmService;
 use App\Services\PaymentService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -24,8 +27,8 @@ uses(RefreshDatabase::class);
 function makePassengerForNotificationTest(): PassengerUser
 {
     $user = User::create([
-        'username' => 'passenger_' . uniqid(),
-        'email' => 'passenger+' . uniqid() . '@smarttransit.test',
+        'username' => 'passenger_'.uniqid(),
+        'email' => 'passenger+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'passenger',
     ]);
@@ -43,8 +46,8 @@ function makePassengerForNotificationTest(): PassengerUser
 function makeOperatorForPassengerNotificationTest(): StaffUser
 {
     $user = User::create([
-        'username' => 'operator_' . uniqid(),
-        'email' => 'operator+' . uniqid() . '@smarttransit.test',
+        'username' => 'operator_'.uniqid(),
+        'email' => 'operator+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'operator',
     ]);
@@ -63,7 +66,7 @@ function makeTripWithTicketForNotificationTest(int $operatorCompanyUserId, Passe
     $route = Route::create(['route_name' => 'Passenger Notification Route', 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create([
         'company_user_id' => $operatorCompanyUserId,
-        'plate_number' => 'PSGR-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'PSGR-'.fake()->unique()->numerify('###'),
         'capacity' => 40,
         'seated_capacity' => 30,
         'standing_capacity' => 10,
@@ -91,7 +94,7 @@ function makeTripWithTicketForNotificationTest(int $operatorCompanyUserId, Passe
     $payment = Payment::create([
         'amount' => 80,
         'payment_created' => now(),
-        'transaction_reference' => 'txn-' . uniqid(),
+        'transaction_reference' => 'txn-'.uniqid(),
         'payment_method' => 'online',
         'payment_channel' => 'gcash',
         'status' => 'paid',
@@ -112,19 +115,23 @@ function makeTripWithTicketForNotificationTest(int $operatorCompanyUserId, Passe
     return $trip;
 }
 
-test('cancelling a trip notifies the affected passenger', function () {
+// 2026-10-26: an ONLINE ticket of a cancelled trip is refunded at once and its buyer is emailed (no rebook-or-refund
+// push any more); a cash ticket still gets the push (OperatorCancelledTripTest).
+test('cancelling a trip emails the affected online passenger about the refund', function () {
+    config(['services.paymongo.secret_key' => 'sk_test_dummy', 'mail.intercept_email' => null]);
+    Http::fake(['api.paymongo.com/v1/refunds' => fn () => Http::response(['data' => ['id' => 'ref_'.Str::random(8), 'type' => 'refund', 'attributes' => ['status' => 'pending', 'amount' => 0]]])]);
+    Mail::fake();
     $operator = makeOperatorForPassengerNotificationTest();
     $passenger = makePassengerForNotificationTest();
     $trip = makeTripWithTicketForNotificationTest($operator->company_user_id, $passenger);
 
-    $this->mock(FcmService::class, function ($mock) use ($passenger) {
-        $mock->shouldReceive('sendToUser')
-            ->once()
-            ->withArgs(fn ($user, $title) => $user->user_id === $passenger->user_id && $title === 'Trip Cancelled')
-            ->andReturn(true);
+    $this->mock(FcmService::class, function ($mock) {
+        $mock->shouldNotReceive('sendToUser');
     });
 
     app(TripService::class)->overrideStatus($trip->trip_id, 'cancelled', 'admin');
+
+    Mail::assertQueued(TripCancelledRefundMail::class, fn ($mail) => $mail->hasTo($passenger->user->email));
 });
 
 test('cancelling a trip does not notify a passenger whose ticket already expired', function () {
@@ -147,7 +154,7 @@ test('a failed online payment notifies the passenger who attempted it', function
     $payment = Payment::create([
         'amount' => 80,
         'payment_created' => now(),
-        'transaction_reference' => 'txn-fail-' . uniqid(),
+        'transaction_reference' => 'txn-fail-'.uniqid(),
         'payment_method' => 'online',
         'payment_channel' => 'gcash',
         'status' => 'pending',

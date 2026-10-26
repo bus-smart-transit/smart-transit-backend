@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\FleetRoute;
+use App\Models\PendingBoarding;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
@@ -203,6 +204,8 @@ class TripService
         // staff member. Auto-close it here instead of relying on the
         // driver/conductor remembering to press "End Shift".
         $this->closeShiftLogsForTrip($tripId);
+        // Passenger In: check-ins still waiting at End Trip were never paid (the leakage list).
+        app(PendingBoardingService::class)->closeOpenForTrip($tripId, PendingBoarding::UNPAID);
 
         return $this->tripRepository->findById($tripId);
     }
@@ -265,6 +268,8 @@ class TripService
         // 'completed' or 'cancelled'.
         if (in_array($newStatus, ['completed', 'cancelled'], true)) {
             $this->closeShiftLogsForTrip($tripId);
+            // Passenger In: unpaid at completion (leakage list); closed without blame when the trip is cancelled.
+            app(PendingBoardingService::class)->closeOpenForTrip($tripId, $newStatus === 'completed' ? PendingBoarding::UNPAID : PendingBoarding::CANCELLED);
         }
 
         // Batch 28 Stage 3, item 6: the paid, unused tickets of a cancelled trip are marked "awaiting choice"
@@ -712,24 +717,32 @@ class TripService
      * concurrent reservations against the same trip can't both read stale
      * capacity and both pass the "would exceed" check.
      */
-    public function recordBoarding(int $tripId, string $seatType): object
+    /**
+     * $seatsFirst: a new sale may take a standing place only once every seat is sold. A rebook after an Operator
+     * cancellation keeps the ticket's own seat type, so it passes false.
+     */
+    public function recordBoarding(int $tripId, string $seatType, bool $seatsFirst = false): object
     {
-        return $this->recordBoardingMultiple($tripId, $seatType, 1);
+        return $this->recordBoardingMultiple($tripId, $seatType, 1, $seatsFirst);
     }
 
     /**
      * Batched variant of recordBoarding() that reserves multiple seats/slots
      * in one locked transaction, reducing lock churn for multi-ticket checkout.
      */
-    public function recordBoardingMultiple(int $tripId, string $seatType, int $count): object
+    public function recordBoardingMultiple(int $tripId, string $seatType, int $count, bool $seatsFirst = false): object
     {
         $count = max(1, $count);
 
-        $execute = function () use ($tripId, $seatType, $count) {
+        $execute = function () use ($tripId, $seatType, $count, $seatsFirst) {
             $trip = $this->tripRepository->findByIdForUpdate($tripId);
 
             if (! $trip) {
                 throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+            }
+
+            if ($seatsFirst && $seatType === 'standing' && ! TripCapacity::standingOpen($trip)) {
+                throw ValidationException::withMessages(['seat_type' => ['Seats are still available. Sell a seated ticket first.']]);
             }
 
             $fleet = $trip->fleetRoute->fleet;

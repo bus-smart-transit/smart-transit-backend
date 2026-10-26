@@ -39,7 +39,7 @@
               @foreach($items as $item)
               <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:12px;">
                 <p style="margin:0;font-size:14px;font-weight:700;color:#0f172a;">{{ $item['from'] }} &rarr; {{ $item['to'] }}</p>
-                <p style="margin:4px 0 12px;font-size:13px;color:#475569;">{{ $item['route'] }} &middot; {{ $item['date'] }} &middot; {{ $item['time'] }}</p>
+                <p style="margin:4px 0 12px;font-size:13px;color:#475569;">{{ $item['route'] }} &middot; {{ $item['date'] }} &middot; {{ $item['time'] }}@if(($item['tickets'] ?? '1') !== '1') &middot; {{ $item['tickets'] }} tickets, one bus @endif</p>
                 <p style="margin:0 0 8px;">
                   <a href="{{ $item['link'] }}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:10px 22px;border-radius:8px;">Track this bus</a>
                 </p>
@@ -47,10 +47,28 @@
               </div>
               @endforeach
 
+              @if(count($qrCodes) > 0)
+              <p style="margin:20px 0 8px;font-size:15px;font-weight:700;color:#0f172a;">Your boarding QR</p>
+              <p style="margin:0 0 12px;font-size:13px;color:#475569;line-height:1.5;">
+                Show {{ count($qrCodes) > 1 ? 'each QR' : 'this QR' }} to the Chauffeur when you board.
+                @if(count($qrCodes) === 1 && str_starts_with($qrCodes[0]['label'], 'Group QR'))
+                  One scan boards everyone in this purchase, so travel together. If some of you will arrive separately, book them as separate tickets.
+                @endif
+              </p>
+              @foreach($qrCodes as $qr)
+              <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;text-align:center;">
+                <img src="{{ isset($message) ? $message->embedData(base64_decode($qr['png']), 'ticket-qr-'.$loop->index.'.png', 'image/png') : 'data:image/png;base64,'.$qr['png'] }}" alt="{{ $qr['label'] }}" width="200" height="200" style="display:block;margin:0 auto;">
+                <p style="margin:8px 0 0;font-size:13px;color:#0f172a;">{{ $qr['label'] }}</p>
+              </div>
+              @endforeach
+              @endif
+
               <p style="margin:16px 0 0;font-size:13px;color:#6b7280;line-height:1.5;">
                 Anyone who has a link can see where that bus is, so please do not share it. If a link gets out, sign in to your
                 account, open the ticket and choose <strong>New tracking link</strong>: the old link stops working.
-                This email does not contain your ticket QR code.
+                @if(count($qrCodes) > 0)
+                Anyone who has the QR in this email can board with it, so keep this email to yourself.
+                @endif
               </p>
             </td>
           </tr>

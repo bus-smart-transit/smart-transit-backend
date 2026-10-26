@@ -64,7 +64,8 @@ class PaymentController extends Controller
 
             return $this->success($result, 'Checkout initiated');
         } catch (CheckoutIdempotencyConflict $e) {
-            return $this->error($e->getMessage(), 409);
+            // §12: the earlier attempt is over and released; the client starts a fresh checkout with a new key.
+            return $this->error($e->getMessage(), 409, $e->retryWithNewKey ? ['checkout' => ['retry_with_new_key']] : null);
         } catch (PayMongoCheckoutOutcomeUnknown $e) {
             return $this->error(
                 'The payment outcome is not confirmed. Check transaction '.$e->transactionReference.' before retrying.',

@@ -3,9 +3,25 @@
 namespace App\Repositories;
 
 use App\Models\DriverShiftLog;
+use Illuminate\Support\Collection;
 
 class DriverShiftLogRepository
 {
+    /**
+     * §4.8: the shifts (time in = started_at, time out = ended_at) started on one Manila date on buses the Operator
+     * owns. Read only.
+     *
+     * @return Collection<int, DriverShiftLog>
+     */
+    public function forOperatorOnDate(int $operatorCompanyUserId, string $date): Collection
+    {
+        return DriverShiftLog::with(['driver.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet'])
+            ->whereDate('shift_date', $date)
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->orderBy('started_at')
+            ->get();
+    }
+
     public function findOpenByDriver(int $driverCompanyUserId): ?DriverShiftLog
     {
         return DriverShiftLog::with(['trip.fleetRoute.route', 'fleet'])

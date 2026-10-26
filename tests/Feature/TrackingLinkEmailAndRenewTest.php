@@ -62,14 +62,14 @@ function tlkFixture(): array
 }
 
 /** Checks out one seated ticket B -> D (as the passenger, or as a guest with an email) and pays it by the signed webhook. */
-function tlkBuy($test, array $f, ?PassengerUser $pax = null, string $guestEmail = 'guest@example.com', int $quantity = 1): Payment
+function tlkBuy($test, array $f, ?PassengerUser $pax = null, string $guestEmail = 'guest@example.com', int $quantity = 1, array $extra = []): Payment
 {
     $item = ['trip_id' => $f['trip']->trip_id, 'seat_type' => 'seated', 'origin_stop_id' => $f['stops']['B']->stop_id, 'destination_stop_id' => $f['stops']['D']->stop_id];
     $call = $pax ? $test->actingAs($pax->user) : $test;
     $paymentId = $call->postJson('/api/checkout', array_filter([
         'booking_date' => '2026-10-05', 'payment_channel' => 'gcash', 'guest_email' => $pax ? null : $guestEmail,
         'items' => array_fill(0, $quantity, $item),
-    ]))->assertSuccessful()->json('data.payment.payment_id');
+    ]) + $extra)->assertSuccessful()->json('data.payment.payment_id');
     $payment = Payment::findOrFail($paymentId);
 
     tlkPay($test, $payment);
@@ -132,15 +132,21 @@ it('emails a passenger the tracking link of the ticket they bought', function ()
     Mail::assertQueuedCount(1);
 });
 
-it('emails a guest at the address they paid with, with one link per ticket', function () {
+it('emails a guest at the address they paid with, with one link for the tickets on one bus (§4.10)', function () {
     $f = tlkFixture();
     $payment = tlkBuy($this, $f, null, 'walkin@example.com', 2);
-    $tokens = Ticket::where('payment_id', $payment->payment_id)->get()->map(fn ($t) => tlkToken($t))->all();
+    $first = Ticket::where('payment_id', $payment->payment_id)->orderBy('ticket_id')->firstOrFail();
 
-    Mail::assertQueued(TicketTrackingMail::class, function (TicketTrackingMail $mail) use ($tokens) {
+    $html = null;
+    Mail::assertQueued(TicketTrackingMail::class, function (TicketTrackingMail $mail) use ($first, &$html) {
+        $html = $mail->render();
+
         return $mail->hasTo('walkin@example.com')
-            && collect($mail->items)->pluck('link')->sort()->values()->all() === collect($tokens)->map(fn ($t) => 'https://app.example.test/track/'.$t)->sort()->values()->all();
+            && count($mail->items) === 1
+            && $mail->items[0]['link'] === 'https://app.example.test/track/'.tlkToken($first)
+            && $mail->items[0]['tickets'] === '2';
     });
+    expect($html)->toContain('2 tickets, one bus')->and(substr_count($html, 'Track this bus'))->toBe(1);
 });
 
 it('sends to the redirect address in the demo setup and says which account it was for', function () {
@@ -171,20 +177,44 @@ it('never lets a failed email undo or delay the payment', function () {
     expect(Ticket::where('payment_id', $payment->payment_id)->count())->toBe(1);
 });
 
-it('does not carry the QR code or the ticket id, only the tracking link', function () {
+// §4.10 (2026-10-26): the email carries the boarding QR as an image (drawn on the server), never the ticket id as text.
+it('carries a single ticket boarding QR as an image, never the ticket id as text', function () {
     $f = tlkFixture();
     $payment = tlkBuy($this, $f, tlkPassenger());
     $ticket = Ticket::where('payment_id', $payment->payment_id)->firstOrFail();
 
     $html = null;
-    Mail::assertQueued(TicketTrackingMail::class, function (TicketTrackingMail $mail) use (&$html) {
+    $qrCodes = null;
+    Mail::assertQueued(TicketTrackingMail::class, function (TicketTrackingMail $mail) use (&$html, &$qrCodes) {
         $html = $mail->render();
+        $qrCodes = $mail->qrCodes;
 
         return true;
     });
 
-    expect($html)->toContain('/track/'.tlkToken($ticket))->toContain('New tracking link');
+    expect($qrCodes)->toHaveCount(1)->and($qrCodes[0]['label'])->toBe('Your ticket');
+    expect(bin2hex(substr(base64_decode($qrCodes[0]['png']), 0, 8)))->toBe('89504e470d0a1a0a'); // a real PNG image
+    expect($html)->toContain('Your boarding QR')->toContain('keep this email to yourself')->toContain('/track/'.tlkToken($ticket));
     expect($html)->not->toContain($ticket->ticket_uuid);
+});
+
+it('sends one group QR for a purchase of several tickets by default', function () {
+    $f = tlkFixture();
+    $payment = tlkBuy($this, $f, null, 'walkin@example.com', 3);
+
+    expect($payment->email_group_qr)->toBeTrue();
+    Mail::assertQueued(TicketTrackingMail::class, fn (TicketTrackingMail $mail) => count($mail->qrCodes) === 1
+        && $mail->qrCodes[0]['label'] === 'Group QR: boards all 3 tickets in one scan'
+        && str_contains($mail->render(), 'One scan boards everyone'));
+});
+
+it('sends one QR per ticket when the buyer unticks the group QR', function () {
+    $f = tlkFixture();
+    $payment = tlkBuy($this, $f, null, 'walkin@example.com', 2, ['email_group_qr' => false]);
+
+    expect($payment->email_group_qr)->toBeFalse();
+    Mail::assertQueued(TicketTrackingMail::class, fn (TicketTrackingMail $mail) => collect($mail->qrCodes)->pluck('label')->all() === ['Ticket 1 of 2', 'Ticket 2 of 2']
+        && count($mail->items) === 1); // still one tracking link
 });
 
 it('sends nothing for a payment that could not become tickets', function () {

@@ -67,7 +67,7 @@ class TripRepository
             $timezone = config('app.timezone', 'Asia/Manila');
             $today = $this->serviceToday()->toDateString();
             $currentTime = Carbon::now($timezone)->format('H:i:s');
-            $scheduledTime = "COALESCE(trips.departure_time, (SELECT start_time FROM fleets_routes WHERE fleets_routes.fleet_route_id = trips.fleet_route_id))";
+            $scheduledTime = 'COALESCE(trips.departure_time, (SELECT start_time FROM fleets_routes WHERE fleets_routes.fleet_route_id = trips.fleet_route_id))';
 
             $query->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
                 ->where(function ($upcoming) use ($today, $currentTime, $scheduledTime) {
@@ -78,7 +78,7 @@ class TripRepository
                                     $departure->whereRaw("{$scheduledTime} IS NULL")
                                         ->orWhereRaw("{$scheduledTime} >= ?", [$currentTime]);
                                 });
-                            });
+                        });
                 });
         }
 
@@ -274,6 +274,27 @@ class TripRepository
         }
 
         return $query->exists();
+    }
+
+    /**
+     * Phase B rest-day rule: the dates (Y-m-d) between $from and $to on which this person has any trip that is not
+     * cancelled. Shift block legs are trips, so blocks count too, the same way hasAnySameDayAssignment() counts them.
+     *
+     * @return list<string>
+     */
+    public function assignedDatesBetween(string $role, int $companyUserId, string $from, string $to): array
+    {
+        $column = $role === 'driver' ? 'driver_id' : 'conductor_id';
+
+        return Trip::where($column, $companyUserId)
+            ->whereDate('trip_date', '>=', $from)
+            ->whereDate('trip_date', '<=', $to)
+            ->whereNotIn('status', ['cancelled'])
+            ->pluck('trip_date')
+            ->map(fn ($date) => Carbon::parse($date)->toDateString())
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**

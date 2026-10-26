@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\RefundCancelledTripTickets;
 use App\Models\Payment;
 use App\Models\Ticket;
 use App\Models\Trip;
@@ -81,6 +82,11 @@ class TripCancellationService
         ]);
 
         $this->notifyPassengers($trip, $cancellation);
+        // 2026-10-26: online tickets are refunded at once (cash tickets keep the choice). After the commit, in the queue,
+        // so the Operator's cancel answers at once however many gateway refunds follow.
+        if (self::autoRefundsOnline()) {
+            RefundCancelledTripTickets::dispatch((int) $trip->trip_id)->afterCommit();
+        }
 
         return $cancellation;
     }
@@ -105,7 +111,17 @@ class TripCancellationService
             if ($trip) {
                 $this->notifyPassengers($trip, $cancellation, $group->pluck('ticket_id')->all());
             }
+            // A late online payment for a cancelled trip is refunded like the others.
+            if (self::autoRefundsOnline()) {
+                RefundCancelledTripTickets::dispatch((int) $tripId, $group->pluck('ticket_id')->map(fn ($id) => (int) $id)->all())->afterCommit();
+            }
         }
+    }
+
+    /** config refunds.auto_refund_online_on_cancel (default on): online tickets of a cancelled trip are refunded at once. */
+    public static function autoRefundsOnline(): bool
+    {
+        return (bool) config('refunds.auto_refund_online_on_cancel', true);
     }
 
     /** Paid, unused tickets become "trip cancelled, awaiting choice". */
@@ -185,10 +201,13 @@ class TripCancellationService
         $trip->loadMissing('fleetRoute.route');
         $routeName = $trip->fleetRoute?->route?->route_name ?? 'Your trip';
 
+        // With automatic refunds on, only cash tickets still choose rebook or refund; online tickets are refunded and
+        // emailed (RefundCancelledTripTickets).
         $query = Ticket::with('passenger.user')
             ->where('trip_id', $trip->trip_id)
             ->where('status', self::AWAITING_CHOICE)
-            ->whereNotNull('passenger_id');
+            ->whereNotNull('passenger_id')
+            ->when(self::autoRefundsOnline(), fn ($q) => $q->whereHas('payment', fn ($p) => $p->where('payment_method', '!=', 'online')));
         if ($onlyTicketIds !== null) {
             $query->whereIn('ticket_id', $onlyTicketIds);
         }

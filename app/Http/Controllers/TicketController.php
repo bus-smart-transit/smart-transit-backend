@@ -1,35 +1,46 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\TicketService;
-use App\Services\OccupancyService;
-use App\Services\QRCodeService;
-use App\Services\TripService;
-use App\Services\ConductorShiftService;
-use App\Http\Requests\ScanTicketRequest;
+
 use App\Http\Requests\GuestTicketLookupRequest;
 use App\Http\Requests\ScanGroupRequest;
+use App\Http\Requests\ScanTicketRequest;
+use App\Repositories\RouteStopRepository;
+use App\Services\AuditLogger;
+use App\Services\ConductorShiftService;
+use App\Services\LegProgressionService;
+use App\Services\MidTripBoardingService;
+use App\Services\OccupancyService;
+use App\Services\PendingBoardingService;
+use App\Services\QRCodeService;
+use App\Services\ShiftCashService;
+use App\Services\TicketService;
+use App\Services\TicketTrackingService;
+use App\Services\TripService;
+use App\Support\LegDistance;
+use App\Support\ServiceType;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class TicketController extends Controller
 {
     use ApiResponse;
+
     public function __construct(
         private TicketService $ticketService,
         private OccupancyService $occupancyService,
         private QRCodeService $qrCodeService,
         private TripService $tripService,
-    )
-    {
-    }
+    ) {}
 
     // Passenger: view their own ticket history
     public function myTickets(Request $request)
     {
         $passenger = $request->user()->passengerProfile;
 
-        if (!$passenger) {
+        if (! $passenger) {
             return $this->error('Passenger profile not found.', 404);
         }
 
@@ -52,7 +63,9 @@ class TicketController extends Controller
     public function scan(ScanTicketRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
         $guard = $this->assertConductorShiftForCurrentTrip($request);
         if ($guard !== null) {
@@ -63,6 +76,7 @@ class TicketController extends Controller
             $request->validated(),
             $companyUser->company_user_id
         );
+
         return $this->success($ticket, 'Ticket validated and boarded successfully');
     }
 
@@ -70,7 +84,9 @@ class TicketController extends Controller
     public function scanGroup(ScanGroupRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
         $guard = $this->assertConductorShiftForCurrentTrip($request);
         if ($guard !== null) {
@@ -89,16 +105,19 @@ class TicketController extends Controller
         if ($boardedCount === 0 && $totalCount > 0) {
             $allUsedOrRescanned = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
                 $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+
                 return str_contains($reason, 'not valid or has already been used');
             });
 
             $allFutureDated = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
                 $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+
                 return str_contains($reason, 'not yet active') || str_contains($reason, 'scheduled for');
             });
 
             $allInvalid = count($tickets) > 0 && collect($tickets)->every(function ($ticket) {
                 $reason = strtolower((string) ($ticket['skip_reason'] ?? ''));
+
                 return str_contains($reason, 'this ticket is invalid.');
             });
 
@@ -134,6 +153,7 @@ class TicketController extends Controller
 
         $result['scan_outcome'] = 'success';
         $msg = "{$boardedCount} of {$totalCount} ticket(s) boarded successfully.";
+
         return $this->success($result, $msg);
     }
 
@@ -163,14 +183,17 @@ class TicketController extends Controller
     public function currentTripOccupancy(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 
         $occupancy = $this->occupancyService->getTripOccupancy($trip->trip_id);
+
         return $this->success($occupancy, 'Trip occupancy retrieved successfully');
     }
 
@@ -181,14 +204,17 @@ class TicketController extends Controller
     public function occupancyByStop(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 
         $breakdown = $this->occupancyService->getOccupancyByStop($trip->trip_id);
+
         return $this->success($breakdown, 'Occupancy by stop retrieved successfully');
     }
 
@@ -199,14 +225,17 @@ class TicketController extends Controller
     public function currentPassengers(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 
         $passengers = $this->occupancyService->getCurrentPassengers($trip->trip_id);
+
         return $this->success($passengers, 'Current passengers retrieved successfully');
     }
 
@@ -218,11 +247,16 @@ class TicketController extends Controller
     {
         // Only tickets of the conductor's own current trip can be alighted (no cross-trip ids).
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
         $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
-        if (!$trip) return $this->error('No active trip found.', 404);
+        if (! $trip) {
+            return $this->error('No active trip found.', 404);
+        }
 
         $this->occupancyService->recordAlighting($ticketId, (int) $trip->trip_id);
+
         return $this->success(null, 'Passenger alighting recorded successfully');
     }
 
@@ -235,6 +269,48 @@ class TicketController extends Controller
      * the position is the bus's own latest accepted fix. When it is not reliable the state says
      * why and the Chauffeur picks the boarding stop instead; no destinations are offered then.
      */
+    /**
+     * Passenger In (2026-10-26): POST conductor/trips/current/check-ins. The bus position now, snapped back to the last
+     * stop passed, is kept until the fare is collected. The request carries nothing: the server reads the bus position.
+     */
+    public function checkIn(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+        if ($guard = $this->assertConductorShiftForCurrentTrip($request)) {
+            return $guard;
+        }
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (! $trip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        try {
+            $checkIn = app(PendingBoardingService::class)->checkIn($trip, (int) $companyUser->company_user_id);
+        } catch (ValidationException $e) {
+            return $this->error(collect($e->errors())->flatten()->first() ?? 'Passenger In is not available.', 422, $e->errors());
+        }
+
+        return $this->success($checkIn, 'Passenger checked in');
+    }
+
+    /** Passenger In: GET conductor/trips/current/check-ins. The check-ins of the current trip still waiting for their fare. */
+    public function checkIns(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (! $trip) {
+            return $this->success([], 'No active trip');
+        }
+
+        return $this->success(app(PendingBoardingService::class)->waitingFor((int) $trip->trip_id), 'Check-ins waiting for payment');
+    }
+
     public function boardingPoint(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
@@ -252,25 +328,25 @@ class TicketController extends Controller
             return $this->error('Boarding between stops is available once the trip is boarding or under way.', 422);
         }
 
-        $resolved = app(\App\Services\MidTripBoardingService::class)->resolve($trip);
+        $resolved = app(MidTripBoardingService::class)->resolve($trip);
 
         $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
         $routeId = (int) $trip->fleetRoute->route_id;
         $destinations = [];
         $dropoff = ['available' => false, 'reason' => null];
 
-        if ($resolved['state'] === \App\Services\MidTripBoardingService::STATE_GOOD) {
+        if ($resolved['state'] === MidTripBoardingService::STATE_GOOD) {
             $boardingKm = (float) $resolved['boarding_point']['distance_from_origin_km'];
             // Stored (outbound) distances, travelled in the leg's order: the same frame the sale prices in.
-            $stops = app(\App\Repositories\RouteStopRepository::class)->getOrderedStops($routeId);
+            $stops = app(RouteStopRepository::class)->getOrderedStops($routeId);
             if ($direction === 'reverse') {
                 $stops = $stops->reverse()->values();
             }
             foreach ($stops as $routeStop) {
-                if (! \App\Support\ServiceType::isServed($trip->service_type, $routeStop)) {
+                if (! ServiceType::isServed($trip->service_type, $routeStop)) {
                     continue;
                 }
-                $ahead = \App\Support\LegDistance::alongLegKm($boardingKm, (float) $routeStop->distance_from_origin_km, $direction);
+                $ahead = LegDistance::alongLegKm($boardingKm, (float) $routeStop->distance_from_origin_km, $direction);
                 if ($ahead <= 0) {
                     continue;
                 }
@@ -282,12 +358,12 @@ class TicketController extends Controller
             }
 
             $route = $trip->fleetRoute->route;
-            $dropoff = ($route?->allow_custom_dropoff && ! \App\Support\ServiceType::isExpress($trip->service_type))
+            $dropoff = ($route?->allow_custom_dropoff && ! ServiceType::isExpress($trip->service_type))
                 ? ['available' => true, 'reason' => null]
                 : ['available' => false, 'reason' => null];
         }
 
-        \App\Services\AuditLogger::log('boarding_point.resolved', 'Trip', (int) $trip->trip_id, [
+        AuditLogger::log('boarding_point.resolved', 'Trip', (int) $trip->trip_id, [
             'state' => $resolved['state'],
             'age_seconds' => $resolved['age_seconds'],
             'accuracy_m' => $resolved['accuracy_m'],
@@ -300,7 +376,7 @@ class TicketController extends Controller
             'destinations' => $destinations,
             'custom_dropoff' => $dropoff,
             // Tells the client what to do when the state is not good.
-            'fallback' => $resolved['state'] === \App\Services\MidTripBoardingService::STATE_GOOD ? null : 'manual_boarding_stop',
+            'fallback' => $resolved['state'] === MidTripBoardingService::STATE_GOOD ? null : 'manual_boarding_stop',
         ]), 'Boarding point resolved.');
     }
 
@@ -312,11 +388,34 @@ class TicketController extends Controller
     public function currentTripEarnings(Request $request)
     {
         $user = $request->user();
-        if (!$user?->companyProfile) return $this->error('Staff profile not found.', 404);
+        if (! $user?->companyProfile) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        // §4.12 / §10: the Chauffeur's Shift Summary covers every leg of the open shift (it used to show only the leg
+        // under way, so a finished leg's money dropped out). The paired-session middleware still decides when this
+        // answers: after the last leg there is no current trip, and the End Shift dialog shows the shift's cash.
+        if (($user->role ?? null) === 'conductor') {
+            $companyUserId = (int) $user->companyProfile->company_user_id;
+            $openShift = app(ConductorShiftService::class)->getStatusForConductor($companyUserId)['open_shift'] ?? null;
+            $shiftTrip = $openShift?->trip;
+            if ($shiftTrip) {
+                $legs = $shiftTrip->shift_block_id
+                    ? app(LegProgressionService::class)->legsOfBlock((int) $shiftTrip->shift_block_id)
+                    : collect([$shiftTrip]);
+                $earnings = $this->ticketService->getShiftEarnings($legs);
+                $earnings['trip_id'] = $this->tripService->getCurrentTripForUser($user)?->trip_id;
+                // Passenger In leakage check: check-ins of this shift's ended legs that were never paid.
+                $earnings['unpaid_check_ins'] = app(PendingBoardingService::class)->unpaidFor($legs->pluck('trip_id')->map(fn ($id) => (int) $id)->all());
+                $earnings['shift'] = app(ShiftCashService::class)->summaryForOpenShift($companyUserId);
+
+                return $this->success($earnings, 'Shift earnings retrieved successfully');
+            }
+        }
 
         $trip = $this->tripService->getCurrentTripForUser($user);
 
-        if (!$trip) {
+        if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
 
@@ -325,7 +424,7 @@ class TicketController extends Controller
         // Batch 29: a Chauffeur also sees the cash of their open shift (opening + cash sales - cash refunds). The shift's
         // cash is the Conductor's own, so it is never added for a Driver or an Operator.
         if (($user->role ?? null) === 'conductor') {
-            $earnings['shift'] = app(\App\Services\ShiftCashService::class)->summaryForOpenShift((int) $user->companyProfile->company_user_id);
+            $earnings['shift'] = app(ShiftCashService::class)->summaryForOpenShift((int) $user->companyProfile->company_user_id);
         }
 
         return $this->success($earnings, 'Trip earnings retrieved successfully');
@@ -340,7 +439,7 @@ class TicketController extends Controller
         $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
 
         $passengerProfile = $request->user()->passengerProfile;
-        if (!$passengerProfile) {
+        if (! $passengerProfile) {
             return $this->error('Passenger profile not found.', 404);
         }
 
@@ -351,6 +450,7 @@ class TicketController extends Controller
         }
 
         $qrData = $this->qrCodeService->generateQRData($ticket);
+
         return $this->success($qrData, 'QR code generated successfully');
     }
 
@@ -359,7 +459,7 @@ class TicketController extends Controller
      * token is returned (only to the owner, like the ticket's own tracking_token). A guest ticket has no owner account,
      * so it is refused here. Another passenger's ticket is a 403, as for the QR.
      */
-    public function renewTrackingLink(Request $request, string $ticketUuid, \App\Services\TicketTrackingService $tracking)
+    public function renewTrackingLink(Request $request, string $ticketUuid, TicketTrackingService $tracking)
     {
         $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
 
@@ -372,7 +472,7 @@ class TicketController extends Controller
         }
 
         $token = $tracking->renew($ticket);
-        \App\Services\AuditLogger::log('ticket.tracking_link_renewed', 'Ticket', (int) $ticket->ticket_id);
+        AuditLogger::log('ticket.tracking_link_renewed', 'Ticket', (int) $ticket->ticket_id);
 
         return $this->success(['tracking_token' => $token], 'Tracking link replaced. The old link no longer works.');
     }
@@ -391,7 +491,7 @@ class TicketController extends Controller
             return $this->error('Ticket not found.', 404);
         }
 
-        \App\Services\AuditLogger::log('ticket.passenger_cancel_refused', 'Ticket', (int) $ticket->ticket_id, [
+        AuditLogger::log('ticket.passenger_cancel_refused', 'Ticket', (int) $ticket->ticket_id, [
             'journey_leg' => $ticket->journey_leg,
             'status' => $ticket->status,
         ]);
@@ -403,12 +503,12 @@ class TicketController extends Controller
     {
         $user = $request->user();
         $role = strtolower((string) data_get($user, 'role', data_get($user, 'role_name', '')));
-        if (!$user || $role === '' || $role !== 'conductor') {
+        if (! $user || $role === '' || $role !== 'conductor') {
             return null;
         }
 
         $companyUser = $user->companyProfile;
-        if (!$companyUser) {
+        if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
@@ -416,16 +516,16 @@ class TicketController extends Controller
         $openShift = $shiftStatus['open_shift'] ?? null;
         $hasOpenShift = (bool) ($shiftStatus['has_open_shift'] ?? false);
 
-        if (!$hasOpenShift || !$openShift) {
+        if (! $hasOpenShift || ! $openShift) {
             return $this->error('Start your shift first.', 422);
         }
 
         $activeTrip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
-        if (!$activeTrip) {
+        if (! $activeTrip) {
             return $this->error('No active trip found.', 404);
         }
 
-        if (! app(\App\Services\LegProgressionService::class)->sameShift($openShift->trip ?? $openShift, $activeTrip)) {
+        if (! app(LegProgressionService::class)->sameShift($openShift->trip ?? $openShift, $activeTrip)) {
             return $this->error('Your active shift is assigned to a different trip.', 422);
         }
 

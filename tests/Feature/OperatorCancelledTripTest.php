@@ -1,5 +1,7 @@
 <?php
 
+use App\Jobs\RefundCancelledTripTickets;
+use App\Mail\TripCancelledRefundMail;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
@@ -14,12 +16,15 @@ use App\Models\TicketResolution;
 use App\Models\Trip;
 use App\Models\TripCancellation;
 use App\Models\User;
+use App\Services\ShiftBlockService;
 use App\Services\TicketResolutionService;
+use App\Services\TripCancellationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -122,7 +127,9 @@ function rfChoose($test, PassengerUser $pax, Ticket $ticket, array $body)
 beforeEach(function () {
     Carbon::setTestNow(Carbon::parse('2026-10-04 07:00:00', 'Asia/Manila'));
     Cache::flush();
-    config(['services.paymongo.secret_key' => 'sk_test_dummy', 'services.paymongo.webhook_secret' => RF_SECRET, 'refunds.choice_deadline_days' => null]);
+    // These tests drive the passenger/staff choice path (rebook or refund) with online tickets, which runs only when
+    // automatic refunds are off; cash tickets always use it. The automatic path is AutoRefundOnCancelTest.
+    config(['services.paymongo.secret_key' => 'sk_test_dummy', 'services.paymongo.webhook_secret' => RF_SECRET, 'refunds.choice_deadline_days' => null, 'refunds.auto_refund_online_on_cancel' => false]);
 });
 afterEach(fn () => Carbon::setTestNow());
 
@@ -310,7 +317,7 @@ it('uses the later of the last stop and the last usable GPS position, and ignore
     $trip = $f['mk']('2026-10-04', '06:00', 'outbound', 'departed');
     $trip->forceFill(['last_acknowledged_stop_id' => $f['stops']['B']->stop_id, 'last_acknowledged_at' => now()->subMinutes(10)])->save();
 
-    $service = app(\App\Services\TripCancellationService::class);
+    $service = app(TripCancellationService::class);
     $point = $service->resolveLastPoint($trip->fresh());
     expect($point['source'])->toBe('stop_ack')->and($point['distance_m'])->toBe(10000)->and($point['stop_id'])->toBe($f['stops']['B']->stop_id);
 
@@ -538,7 +545,7 @@ it('cancels every leg of a shift block through the same flow', function () {
     $pax = rfPassenger();
     $driver = rfStaff('driver');
     $conductor = rfStaff('conductor');
-    $block = app(\App\Services\ShiftBlockService::class)->createBlock([
+    $block = app(ShiftBlockService::class)->createBlock([
         'fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'driver_id' => $driver->companyProfile->company_user_id, 'conductor_id' => $conductor->companyProfile->company_user_id,
         'company_user_id' => $f['operator']->companyProfile->company_user_id, 'block_type' => 'morning', 'scheduled_date' => '2026-10-08', 'leg_departure_times' => ['06:00', '09:00', '12:00', '15:00'],
     ]);
@@ -549,4 +556,74 @@ it('cancels every leg of a shift block through the same flow', function () {
 
     expect($ticket->fresh()->status)->toBe('trip_cancelled');
     expect(TripCancellation::whereIn('trip_id', $block->legs->pluck('trip_id'))->count())->toBe($block->legs->count());
+});
+
+// ---------------------------------------------------------------- 2026-10-26: automatic refund of online tickets
+
+/** A gateway that answers every refund with its own id (Http::fake keeps the first stub, so the id is made per call). */
+function rfFakeGatewayEachRefund(): void
+{
+    Http::fake(['api.paymongo.com/v1/refunds' => fn () => Http::response(['data' => ['id' => 'ref_'.Str::random(10), 'type' => 'refund', 'attributes' => ['status' => 'pending', 'amount' => 0]]])]);
+}
+
+it('refunds the online tickets at once when the operator cancels before departure, and emails the buyer once', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $first = rfTicket($f, $f['trip'], [], 'gcash', $pax);
+    $second = rfTicket($f, $f['trip'], [], 'gcash', $pax, $first->payment);
+    $first->payment->update(['amount' => 94]); // one purchase of two 47.00 tickets
+    $cashPax = rfPassenger();
+    $cash = rfTicket($f, $f['trip'], [], 'onsite', $cashPax);
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    // Both online tickets: a refund of the full fare, sent to PayMongo, waiting for its webhook.
+    foreach ([$first, $second] as $ticket) {
+        $resolution = TicketResolution::where('ticket_id', $ticket->ticket_id)->firstOrFail();
+        expect([$resolution->resolution, $resolution->method, (float) $resolution->amount, $resolution->actor_role])->toBe(['refund', 'gateway', 47.0, 'system']);
+        expect($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
+    }
+    expect(collect(rfRefundCalls())->pluck('amount')->all())->toBe([4700, 4700]);
+
+    // The cash ticket keeps the choice: nothing is refunded for it automatically.
+    expect($cash->fresh()->status)->toBe('trip_cancelled')->and(TicketResolution::where('ticket_id', $cash->ticket_id)->exists())->toBeFalse();
+
+    Mail::assertQueued(TripCancelledRefundMail::class, 1);
+    Mail::assertQueued(TripCancelledRefundMail::class, fn ($mail) => $mail->hasTo($pax->user->email)
+        && $mail->tickets === 2 && $mail->amount === 94.0 && $mail->wallet === 'GCash' && $mail->needsReview === false
+        && str_contains($mail->render(), 'You do not need to do anything'));
+});
+
+it('sends a running trip\'s refund to operator review when the last point is unknown, and says so in the email', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $ticket = rfTicket($f, $f['trip'], ['status' => 'boarded', 'boarded_at' => now()], 'gcash', $pax);
+    $f['trip']->update(['status' => 'departed']); // no GPS and no acknowledged stop: the ridden part is not known
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    expect(TicketResolution::where('ticket_id', $ticket->ticket_id)->value('status'))->toBe(TicketResolution::NEEDS_REVIEW);
+    expect(rfRefundCalls())->toBe([]); // nothing guessed, nothing sent
+    Mail::assertQueued(TripCancelledRefundMail::class, fn ($mail) => $mail->needsReview === true
+        && str_contains($mail->render(), 'being checked by the operator'));
+});
+
+it('never refunds a ticket twice when the refund job runs again', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'maya', rfPassenger());
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    RefundCancelledTripTickets::dispatchSync((int) $f['trip']->trip_id);
+
+    expect(TicketResolution::where('ticket_id', $ticket->ticket_id)->count())->toBe(1);
+    expect(rfRefundCalls())->toHaveCount(1);
 });

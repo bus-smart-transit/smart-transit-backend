@@ -14,6 +14,7 @@ use App\Support\BusLabel;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
 use App\Support\TicketBoarding;
+use App\Support\TripCapacity;
 use App\Support\TripRunInfo;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
@@ -34,7 +35,7 @@ class TicketService
         private ReverseGeocodingService $reverseGeocodingService,
         private CustomDropoffService $customDropoffService,
         private TicketTrackingService $trackingService,
-        private MidTripBoardingService $midTripBoardingService,
+        private PendingBoardingService $pendingBoardings,
     ) {}
 
     /**
@@ -51,8 +52,18 @@ class TicketService
     {
         $reserved = $this->priceItem($item);
 
+        // 2026-10-26: a cash sale carries the fare the Chauffeur was shown; if the server's fare is different now (a fare
+        // rule changed since the quote), nothing is sold and the new fare is given back to confirm.
+        if (isset($item['quoted_amount']) && abs((float) $reserved['amount'] - (float) $item['quoted_amount']) >= 0.005) {
+            throw ValidationException::withMessages(['quoted_amount' => [sprintf(
+                'The fare is now PHP %s, not PHP %s. Tell the passenger the new fare and make the sale again.',
+                number_format((float) $reserved['amount'], 2), number_format((float) $item['quoted_amount'], 2),
+            )]]);
+        }
+
         // Reserve seat/standing capacity now: throws if full. Same hold semantics whichever pricing path was used.
-        $this->tripService->recordBoarding((int) $item['trip_id'], $item['seat_type']);
+        // A sale re-checks "seats full first" under the row lock (priceItem checked it without one).
+        $this->tripService->recordBoarding((int) $item['trip_id'], $item['seat_type'], seatsFirst: true);
 
         return $reserved;
     }
@@ -93,19 +104,36 @@ class TicketService
             ]);
         }
 
+        // Online tickets are for seats. Standing is sold by the Chauffeur on the bus, and only once the seats are full.
+        if ($seatType === 'standing' && ! $onsite) {
+            throw ValidationException::withMessages([
+                'seat_type' => ['Online tickets are for seats only. Standing places are sold on the bus.'],
+            ]);
+        }
+
+        if ($seatType === 'standing' && ! TripCapacity::standingOpen($trip)) {
+            throw ValidationException::withMessages([
+                'seat_type' => ['Seats are still available. Sell a seated ticket first.'],
+            ]);
+        }
+
         if ($seatType === 'standing' && $tripDate !== null && $tripDate > $today) {
             throw ValidationException::withMessages([
                 'seat_type' => ['Standing bookings are available only on the trip date. Please choose seated for advance bookings.'],
             ]);
         }
 
+        // 2026-10-26, Passenger In and snap back: a check-in, or the bus position for a sale without one, becomes the last
+        // stop the leg has passed, and the ticket is priced from that stop like any stop sale (cash only).
+        if ($onsite && (isset($item['pending_boarding_id']) || ($item['boarding_mode'] ?? null) === 'gps')) {
+            $item = $this->pendingBoardings->forSale($trip, $item);
+        }
+
         // Batch 28 Stage 3, item 10: a designated drop-off point is named by id only; its coordinates and label are the
         // stored point's, never the request's.
         $item = $this->customDropoffService->normaliseItem($item, (int) $trip->fleetRoute->route_id);
 
-        if ($onsite && ($item['boarding_mode'] ?? null) === 'gps') {
-            $reserved = $this->priceFromBoardingPoint($trip, $item);
-        } elseif (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
+        if (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
             $reserved = $this->priceByStops($trip, $item);
         } elseif (isset($item['origin_stop_id'], $item['destination_lat'], $item['destination_lng'])) {
             $reserved = $this->priceByCustomDropoff($trip, $item);
@@ -114,6 +142,10 @@ class TicketService
                 'item' => ['Provide origin_stop_id with either destination_stop_id or a custom drop-off (destination_lat/lng).'],
             ]);
         }
+
+        // Passenger In: which check-in this sale settles, and how the boarding stop was found (stop | check_in | bus_position).
+        $reserved['pending_boarding_id'] = isset($item['pending_boarding_id']) ? (int) $item['pending_boarding_id'] : null;
+        $reserved['boarding_source'] = $item['boarding_source'] ?? 'stop';
 
         // Roundtrip: which of the two tickets this is (outbound | return). Null for a one-way ticket.
         $reserved['journey_leg'] = in_array($item['journey_leg'] ?? null, ['outbound', 'return'], true) ? $item['journey_leg'] : null;
@@ -307,122 +339,6 @@ class TicketService
     }
 
     /**
-     * Task 6: Chauffeur cash sale to someone boarding between stops. The boarding point is the
-     * bus's own latest accepted position snapped to the route (MidTripBoardingService); the
-     * request carries only the destination. A weak, old, imprecise or off-route position is a
-     * 422 that tells the Chauffeur to pick the boarding stop instead: no guessing, no fallback fare.
-     * The destination must be ahead in the leg's direction; the fare uses the same shared formula
-     * and the ticket stores the snapped boarding point plus the distance snapshot (origin_stop_id null).
-     */
-    private function priceFromBoardingPoint(object $trip, array $item): array
-    {
-        $resolved = $this->midTripBoardingService->resolve($trip);
-        if ($resolved['state'] !== MidTripBoardingService::STATE_GOOD) {
-            throw ValidationException::withMessages([
-                'boarding' => [($resolved['message'] ?? 'The bus position is not reliable.').' Choose the boarding stop instead.'],
-            ]);
-        }
-
-        $point = $resolved['boarding_point'];
-        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
-        $routeId = (int) $trip->fleetRoute->route_id;
-        $boardingKm = (float) $point['distance_from_origin_km'];
-
-        $base = [
-            'fleet_route_id' => $trip->fleet_route_id,
-            'trip_id' => $trip->trip_id,
-            'seat_type' => $item['seat_type'],
-            'origin_stop_id' => null,
-            'origin_lat' => $point['latitude'],
-            'origin_lng' => $point['longitude'],
-            'boarding_distance_m' => $point['distance_from_origin_m'],
-        ];
-
-        if (isset($item['destination_stop_id'])) {
-            $destination = $this->routeStopRepository->findByRouteAndStop($routeId, (int) $item['destination_stop_id']);
-            if (! $destination) {
-                throw ValidationException::withMessages([
-                    'stop' => ['The destination is not on this trip\'s route.'],
-                ]);
-            }
-
-            if (! ServiceType::isServed($trip->service_type, $destination)) {
-                $name = $destination->stop?->stop_name ?? 'that point';
-                throw ValidationException::withMessages([
-                    'destination' => [ServiceType::isExpress($trip->service_type)
-                        ? "This express trip does not stop at {$name}."
-                        : "Buses do not stop at {$name}. Choose a stop."],
-                ]);
-            }
-
-            $distanceKm = $this->assertAheadAndMeasure($trip, $boardingKm, $destination);
-            $rule = $this->ruleFor($trip, $item['seat_type']);
-
-            return $base + [
-                'fare_rule_id' => $rule->fare_rule_id,
-                'rounding_mode' => $rule->rounding_mode,
-                'distance_km' => $distanceKm,
-                'amount' => $this->fareCalculationService->priceWithRule($rule, $distanceKm),
-                'destination_stop_id' => (int) $item['destination_stop_id'],
-                'alighting_distance_m' => $this->routeStopMeters($destination),
-            ];
-        }
-
-        if (! isset($item['destination_lat'], $item['destination_lng'])) {
-            throw ValidationException::withMessages([
-                'destination' => ['Choose where the passenger gets off.'],
-            ]);
-        }
-
-        if (ServiceType::isExpress($trip->service_type)) {
-            throw ValidationException::withMessages([
-                'destination' => ['A custom drop-off is not available on an express trip.'],
-            ]);
-        }
-
-        $dropoff = isset($item['alighting_point_id'])
-            ? $this->customDropoffService->evaluatePoint($routeId, $direction, null, (float) $point['distance_along_leg_m'], (int) $item['alighting_point_id'])
-            : $this->customDropoffService->evaluateFrom(
-                $routeId,
-                $direction,
-                null,
-                (float) $point['distance_along_leg_m'],
-                (float) $item['destination_lat'],
-                (float) $item['destination_lng'],
-            );
-
-        $quote = $this->quoteCoordinates(
-            $trip,
-            $routeId,
-            [
-                'origin_lat' => $point['latitude'],
-                'origin_lng' => $point['longitude'],
-                'destination_lat' => $dropoff['snapped_latitude'],
-                'destination_lng' => $dropoff['snapped_longitude'],
-                'seat_type' => $item['seat_type'],
-                'on' => $trip->trip_date?->toDateString(),
-            ]
-        );
-
-        $label = trim(strip_tags((string) ($item['destination_label'] ?? '')));
-
-        return $base + [
-            'fare_rule_id' => $quote['fare_rule_id'],
-            'rounding_mode' => $quote['rounding_mode'] ?? null,
-            'distance_km' => $quote['distance_km'],
-            'amount' => $quote['amount'],
-            'alighting_distance_m' => $quote['alighting_distance_m'] ?? null,
-            'alighting_point_id' => $dropoff['alighting_point']['id'] ?? null,
-            'destination_lat' => $dropoff['snapped_latitude'],
-            'destination_lng' => $dropoff['snapped_longitude'],
-            'destination_label' => mb_substr($label, 0, 255) ?: $this->reverseGeocodingService->resolvePlaceName(
-                $dropoff['snapped_latitude'],
-                $dropoff['snapped_longitude'],
-            ) ?? 'Custom drop-off',
-        ];
-    }
-
-    /**
      * D5 custom drop-off: boarding is a known stop (B7), the drop-off is a pin.
      * The pin is re-validated and snapped server-side (route flag, region,
      * threshold, direction, spacing) and the fare is re-derived from the
@@ -560,9 +476,20 @@ class TicketService
     public function issueTicket(array $item, ?int $passengerId, int $paymentId): Ticket
     {
         return DB::transaction(function () use ($item, $passengerId, $paymentId) {
-            $reserved = $this->reserveAndPrice($item);
+            $onsite = ($item['channel'] ?? null) === 'onsite';
+            // Passenger In: one check-in pays for one ticket. Locked first, so a second sale of it waits and is refused.
+            $checkIn = $onsite && isset($item['pending_boarding_id'])
+                ? $this->pendingBoardings->claim((int) $item['pending_boarding_id'], (int) $item['trip_id'])
+                : null;
 
-            return $this->finalizeTicket($reserved, $passengerId, $paymentId, ($item['channel'] ?? null) === 'onsite');
+            $reserved = $this->reserveAndPrice($item);
+            $ticket = $this->finalizeTicket($reserved, $passengerId, $paymentId, $onsite);
+
+            if ($checkIn) {
+                $this->pendingBoardings->markSold($checkIn, (int) $ticket->ticket_id);
+            }
+
+            return $ticket;
         });
     }
 
@@ -805,6 +732,50 @@ class TicketService
             'onsite_net' => round($onsiteAmount - $cashRefunds, 2),
             'online_net' => round($onlineAmount - $onlineRefunds, 2),
         ];
+    }
+
+    /**
+     * Shift Summary (smarttransit_prompt.md §4.12 / §10): the Chauffeur's whole shift, not only the leg under way. It
+     * adds getTripEarnings() over every leg (a standalone trip is a one-leg shift), so the money rules are the same,
+     * and gives the per-leg rows the Trip Breakdown table reads. Times are the Manila wall clock ("H:i").
+     *
+     * @param  iterable<Trip>  $legs  the shift's legs in order
+     * @return array<string, mixed>
+     */
+    public function getShiftEarnings(iterable $legs): array
+    {
+        $sumKeys = ['total_fare', 'onsite_amount', 'online_amount', 'passenger_count', 'paid_tickets', 'onsite_refunds', 'online_refunds', 'refunded_amount', 'net_total', 'onsite_net', 'online_net'];
+        $totals = array_fill_keys($sumKeys, 0);
+        $rows = [];
+
+        foreach ($legs as $leg) {
+            $leg->loadMissing('fleetRoute.route');
+            $earnings = $this->getTripEarnings((int) $leg->trip_id);
+            foreach ($sumKeys as $key) {
+                $totals[$key] += $earnings[$key];
+            }
+
+            $route = $leg->fleetRoute?->route;
+            $reverse = $leg->leg_direction === 'reverse';
+            $rows[] = [
+                'trip_id' => (int) $leg->trip_id,
+                'status' => $leg->status,
+                'origin' => $reverse ? $route?->destination : $route?->origin,
+                'destination' => $reverse ? $route?->origin : $route?->destination,
+                'scheduled_time' => substr((string) $leg->departure_time, 0, 5),
+                'entry_time' => $leg->departed_at?->format('H:i'),
+                'exit_time' => $leg->completed_at?->format('H:i'),
+                'fare' => $earnings['net_total'],
+                'passenger_count' => $earnings['passenger_count'],
+            ];
+        }
+
+        foreach (['total_fare', 'onsite_amount', 'online_amount', 'onsite_refunds', 'online_refunds', 'refunded_amount', 'net_total', 'onsite_net', 'online_net'] as $money) {
+            $totals[$money] = round($totals[$money], 2);
+        }
+        $totals['average_fare'] = $totals['paid_tickets'] > 0 ? round($totals['total_fare'] / $totals['paid_tickets'], 2) : 0.0;
+
+        return $totals + ['trips' => $rows];
     }
 
     public function scanGroup(array $payload, ?int $conductorCompanyUserId = null): array

@@ -6,9 +6,9 @@ use App\Services\AddressSearchService;
 use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
 use App\Services\TripResolverService;
+use App\Support\BookingWindow;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 
 /**
  * Public, read-only passenger booking helpers: destinations computed from data
@@ -41,7 +41,7 @@ class BookingController extends Controller
 
         $result = $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null);
         // What the date picker needs: today in Manila and how far ahead a date may be chosen.
-        $result['meta'] = \App\Support\BookingWindow::describe() + [
+        $result['meta'] = BookingWindow::describe() + [
             'home_preview_limit' => (int) config('booking.home_preview_limit'),
             'trips_per_page' => (int) config('booking.trips_per_page'),
         ];
@@ -55,7 +55,7 @@ class BookingController extends Controller
      */
     public function window()
     {
-        return $this->success(\App\Support\BookingWindow::describe(), 'Booking window retrieved successfully');
+        return $this->success(BookingWindow::describe(), 'Booking window retrieved successfully');
     }
 
     // Available trips for a Manila date (default today), optionally for one journey, paginated.
@@ -67,7 +67,7 @@ class BookingController extends Controller
             'from' => 'nullable|string|max:64',
             'to' => 'nullable|string|max:64',
             'date' => 'nullable|string|max:10',
-            'seat_type' => 'nullable|in:seated,standing',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:'.(int) config('booking.trips_max_per_page'),
         ]);
@@ -90,27 +90,10 @@ class BookingController extends Controller
             'origin_stop_id' => 'required|integer|exists:stops,stop_id',
             'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
             'date' => 'required|date_format:Y-m-d',
-            'seat_type' => 'nullable|in:seated,standing',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
         ]);
 
         return $this->success($this->tripResolverService->departures($data), 'Departures retrieved');
-    }
-
-    // Roundtrip (Batch 28, item 4): both legs resolved, with fares and bus labels, before anything is paid.
-    public function roundtrip(Request $request)
-    {
-        $data = $request->validate([
-            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
-            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
-            'outbound_mode' => 'required|in:now,later',
-            'outbound_date' => 'nullable|date_format:Y-m-d|required_if:outbound_mode,later',
-            'outbound_time' => 'nullable|date_format:H:i|required_if:outbound_mode,later',
-            'return_date' => 'required|date_format:Y-m-d',
-            'return_time' => 'required|date_format:H:i',
-            'seat_type' => 'nullable|in:seated,standing',
-        ]);
-
-        return $this->success($this->tripResolverService->resolveRoundtrip($data), 'Roundtrip resolved');
     }
 
     public function resolve(Request $request)
@@ -121,7 +104,7 @@ class BookingController extends Controller
             'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
             'date' => 'nullable|date_format:Y-m-d|required_if:mode,later',
             'time' => 'nullable|date_format:H:i|required_if:mode,later',
-            'seat_type' => 'nullable|in:seated,standing',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
         ]);
 
         return $this->success($this->tripResolverService->resolve($data), 'Trip resolved');

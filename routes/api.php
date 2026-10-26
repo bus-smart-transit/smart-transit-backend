@@ -5,6 +5,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
+use App\Http\Controllers\CrewShiftLogController;
 use App\Http\Controllers\DriverShiftController;
 use App\Http\Controllers\DropoffOptionsController;
 use App\Http\Controllers\DropoffRulesController;
@@ -111,7 +112,6 @@ Route::get('booking/link', [BookingController::class, 'link'])->middleware('thro
 Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:60,1');
 Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:60,1');
 Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:60,1');
-Route::get('booking/roundtrip', [BookingController::class, 'roundtrip'])->middleware('throttle:60,1');
 Route::get('booking/address-search', [BookingController::class, 'addressSearch'])->middleware('throttle:20,1');
 
 // Remove:
@@ -172,6 +172,8 @@ Route::prefix('operator')
         Route::post('accounts', [StaffAuthController::class, 'createAccount']);
         Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
+        // §4.8: the crew's time in / time out (Start Shift / End Shift) on this Operator's buses, read only.
+        Route::get('crew-shifts', [CrewShiftLogController::class, 'index'])->middleware('throttle:60,1');
 
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
@@ -237,6 +239,9 @@ Route::prefix('operator')
         // Batch 18: Shift Block Hand-off System
         Route::get('shift-blocks', [ShiftBlockController::class, 'index']);
         Route::post('shift-blocks', [ShiftBlockController::class, 'store']);
+        // Phase B (§4.13): the same block on every day of a From..To range; preview first, then create.
+        Route::post('shift-blocks/range/preview', [ShiftBlockController::class, 'previewRange'])->middleware('throttle:30,1');
+        Route::post('shift-blocks/range', [ShiftBlockController::class, 'storeRange'])->middleware('throttle:10,1');
         // Batch 28 Stage 3, item 7: suggested leg times (previous leg's expected end + the turnaround buffer); the operator may override.
         Route::get('shift-blocks/plan-legs', [RouteDurationFactorController::class, 'planLegs'])->middleware('throttle:30,1');
         Route::get('shift-blocks/pending-review', [ShiftBlockController::class, 'pendingReview']);
@@ -383,6 +388,9 @@ Route::prefix('conductor')
             Route::get('trips/current/passengers', [TicketController::class, 'currentPassengers']);
             Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
             Route::get('trips/current/boarding-point', [TicketController::class, 'boardingPoint'])->middleware('throttle:30,1');
+            // 2026-10-26: Passenger In (check-in snapped back to the last stop passed) and the check-ins waiting for their fare.
+            Route::post('trips/current/check-ins', [TicketController::class, 'checkIn'])->middleware('throttle:60,1');
+            Route::get('trips/current/check-ins', [TicketController::class, 'checkIns'])->middleware('throttle:120,1');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
         });
 

@@ -192,6 +192,28 @@ class TicketRepository
     }
 
     /**
+     * §4.7: passengers on board now, per trip, for many trips in one query. Same definition as countBoardedByType():
+     * a ticket whose status is `boarded` (scanned on, or sold on the bus, and not yet marked as alighted).
+     *
+     * @param  list<int>  $tripIds
+     * @return array<int, int> trip_id => count (trips with nobody on board are left out)
+     */
+    public function countBoardedByTrips(array $tripIds): array
+    {
+        if ($tripIds === []) {
+            return [];
+        }
+
+        return Ticket::whereIn('trip_id', $tripIds)
+            ->where('status', 'boarded')
+            ->groupBy('trip_id')
+            ->selectRaw('trip_id, count(*) as onboard')
+            ->pluck('onboard', 'trip_id')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+    }
+
+    /**
      * Count passengers boarding at a specific stop
      */
     public function countBoardingAtStop(int $tripId, int $stopId): int

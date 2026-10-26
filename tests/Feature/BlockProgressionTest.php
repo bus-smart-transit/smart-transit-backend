@@ -15,9 +15,11 @@ use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\FleetLocationRepository;
+use App\Repositories\RouteStopRepository;
 use App\Services\FleetPairingService;
 use App\Services\LegProgressionService;
 use App\Services\ShiftBlockService;
+use App\Support\TripTiming;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
@@ -79,12 +81,37 @@ function bpPair($test, array $crew): void
     $test->actingAs($crew['conductor'])->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
 }
 
-/** Runs one leg end to end as the driver: boarding, depart, complete. */
+/**
+ * Runs one leg end to end as the driver: boarding, depart, the final stop, complete. Phase A: the clock moves to the
+ * leg's departure (never back), because Start Boarding and Depart wait for it.
+ */
 function bpRunLeg($test, User $driver, Trip $leg): void
 {
+    bpAtDeparture($leg);
     $test->actingAs($driver)->patchJson("/api/driver/trips/{$leg->trip_id}/boarding")->assertSuccessful();
     $test->actingAs($driver)->patchJson("/api/driver/trips/{$leg->trip_id}/depart")->assertSuccessful();
+    bpAcknowledgeFinalStop($test, $driver, $leg);
     $test->actingAs($driver)->patchJson("/api/driver/trips/{$leg->trip_id}/complete")->assertSuccessful();
+}
+
+/** Moves the test clock to the leg's scheduled departure, unless it is already later. */
+function bpAtDeparture(Trip $leg): void
+{
+    $departure = TripTiming::departureAt($leg->fresh());
+    if ($departure && Carbon::now()->lt($departure)) {
+        Carbon::setTestNow($departure);
+    }
+}
+
+/** The driver acknowledges the leg's last stop in travel order, which End Trip requires. */
+function bpAcknowledgeFinalStop($test, User $driver, Trip $leg): void
+{
+    $leg = $leg->fresh('fleetRoute');
+    $final = app(RouteStopRepository::class)->getOrderedStopsForDirection($leg->fleetRoute->route_id, $leg->leg_direction)->last();
+    if (! $final) {
+        return; // a route without stops has nothing to acknowledge, and End Trip does not wait for one
+    }
+    $test->actingAs($driver)->postJson("/api/driver/trips/current/stops/{$final->stop_id}/acknowledge")->assertSuccessful();
 }
 
 beforeEach(fn () => Carbon::setTestNow(Carbon::parse('2026-10-04 07:00:00', 'Asia/Manila')));
@@ -147,7 +174,7 @@ it('runs a four-leg block with even (reverse) legs in order on one shift and one
 });
 
 it('refuses an out-of-order start: leg N+1 only after leg N is completed or cancelled', function () {
-    [, $legs, $crew, ] = bpBlock($this, 4);
+    [, $legs, $crew] = bpBlock($this, 4);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
     bpPair($this, $crew);
@@ -161,6 +188,7 @@ it('refuses an out-of-order start: leg N+1 only after leg N is completed or canc
 
     // A cancelled leg counts as finished.
     $legs[0]->update(['status' => 'cancelled']);
+    bpAtDeparture($legs[1]);
     $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[1]->trip_id}/boarding")->assertSuccessful();
 });
 
@@ -185,6 +213,7 @@ it('requires the bus at the leg origin terminal from the second leg on, for the 
     $this->actingAs($crew['driver'])->patchJson($url)->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Omega'));
 
     app(FleetLocationRepository::class)->upsertLocation(['fleet_id' => $fleetId, 'trip_id' => $legs[0]->trip_id, 'latitude' => 7.0901, 'longitude' => 125.0]);
+    bpAtDeparture($legs[1]);
     $this->actingAs($crew['driver'])->patchJson($url)->assertSuccessful();
 });
 
@@ -197,6 +226,7 @@ it('lets the Operator, as dispatcher, start a leg without the location check but
 
     $this->actingAs($crew['operator'])->patchJson("/api/operator/trips/{$legs[1]->trip_id}/boarding")->assertStatus(422); // order
     $legs[0]->update(['status' => 'completed']);
+    bpAtDeparture($legs[1]);
     $this->actingAs($crew['operator'])->patchJson("/api/operator/trips/{$legs[1]->trip_id}/boarding")->assertSuccessful(); // no GPS needed
 });
 

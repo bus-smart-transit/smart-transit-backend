@@ -30,6 +30,11 @@ return [
         'max_options' => (int) env('REFUND_REBOOK_MAX_OPTIONS', 5),
     ],
 
+    // 2026-10-26: when the Operator cancels a trip, ONLINE tickets are refunded at once (RefundCancelledTripTickets) and
+    // the buyer is emailed, instead of choosing rebook or refund. Cash tickets keep the choice. A switch, so automatic
+    // refunds can be paused (the passenger choice then applies to online tickets again).
+    'auto_refund_online_on_cancel' => filter_var(env('REFUND_AUTO_ONLINE_ON_CANCEL', true), FILTER_VALIDATE_BOOLEAN),
+
     // PayMongo: the reason code sent with a refund (its documented values are duplicate, fraudulent, others).
     'gateway_reason' => env('REFUND_GATEWAY_REASON', 'others'),
 ];

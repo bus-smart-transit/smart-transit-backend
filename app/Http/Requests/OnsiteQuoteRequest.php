@@ -19,7 +19,8 @@ class OnsiteQuoteRequest extends FormRequest
             'seat_type' => 'required|string|in:seated,standing',
             // `gps` = boarding between stops: the server resolves the boarding point from the bus's own position.
             'boarding_mode' => 'nullable|string|in:gps',
-            'origin_stop_id' => 'required_unless:boarding_mode,gps|nullable|integer|exists:stops,stop_id',
+            'pending_boarding_id' => 'nullable|integer|exists:pending_boardings,id',
+            'origin_stop_id' => 'required_without_all:boarding_mode,pending_boarding_id|nullable|integer|exists:stops,stop_id',
             'destination_stop_id' => 'required|integer|exists:stops,stop_id',
         ];
     }

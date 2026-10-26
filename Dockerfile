@@ -10,6 +10,7 @@ RUN apk add --no-cache \
         zip \
         unzip \
         oniguruma-dev \
+        libpng-dev \
     && docker-php-ext-install \
         pdo \
         pdo_pgsql \
@@ -17,6 +18,7 @@ RUN apk add --no-cache \
         zip \
         mbstring \
         pcntl \
+        gd \
     && rm -rf /var/cache/apk/*
 
 # ── Composer ─────────────────────────────────────────────────────

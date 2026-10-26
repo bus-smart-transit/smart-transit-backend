@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\RouteStop;
 use App\Models\Trip;
 use App\Repositories\FleetLocationRepository;
+use App\Support\ServiceType;
 
 /**
  * Batch 27 Part 2, Task 6: where is the bus right now, as a boarding point on the trip's route?
@@ -18,10 +20,15 @@ use App\Repositories\FleetLocationRepository;
 class MidTripBoardingService
 {
     public const STATE_GOOD = 'good';
+
     public const STATE_NONE = 'none';
+
     public const STATE_STALE = 'stale';
+
     public const STATE_POOR_ACCURACY = 'poor_accuracy';
+
     public const STATE_OFF_ROUTE = 'off_route';
+
     public const STATE_NO_GEOMETRY = 'no_geometry';
 
     public function __construct(
@@ -92,6 +99,26 @@ class MidTripBoardingService
                 'distance_to_route_m' => $snap['distance_to_route_m'],
             ],
         ];
+    }
+
+    /**
+     * Snap back (2026-10-26): the last stop this trip SERVES that the bus has already passed on its leg, for a point
+     * $routeKm from the route's first stop. Outbound the bus travels up the route (the stop at or before the point);
+     * reverse it travels down (the stop at or after it). A cash fare is counted from this stop, the usual stage-fare
+     * rule, so collecting the fare later never lowers it. Null only if no served stop is behind the point.
+     */
+    public function lastStopPassed(Trip $trip, float $routeKm): ?RouteStop
+    {
+        $reverse = $trip->leg_direction === 'reverse';
+        $served = RouteStop::with('stop')
+            ->where('route_id', (int) $trip->fleetRoute->route_id)
+            ->get()
+            ->filter(fn (RouteStop $routeStop) => ServiceType::isServed($trip->service_type, $routeStop));
+        $tolerance = 0.001; // a stop the bus is standing at counts as passed
+
+        return $reverse
+            ? $served->filter(fn ($s) => (float) $s->distance_from_origin_km >= $routeKm - $tolerance)->sortBy('distance_from_origin_km')->first()
+            : $served->filter(fn ($s) => (float) $s->distance_from_origin_km <= $routeKm + $tolerance)->sortByDesc('distance_from_origin_km')->first();
     }
 
     private function weak(string $state, string $message, ?int $age = null, ?float $accuracy = null): array

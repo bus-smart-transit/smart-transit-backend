@@ -7,9 +7,15 @@ use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
+
+// Phase A (2026-10-26): pairing opens 60 minutes before the departure, so the clock is fixed inside that window for the
+// 08:00 trip below (the test used the real time, and before 07:00 the pairing code is rightly refused).
+beforeEach(fn () => Carbon::setTestNow(Carbon::parse('2026-10-06 07:30:00', 'Asia/Manila')));
+afterEach(fn () => Carbon::setTestNow());
 
 function pairingStaff(string $role): User
 {

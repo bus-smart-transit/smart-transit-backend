@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\Trip;
+use App\Support\BookingWindow;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Validator;
@@ -17,16 +18,16 @@ class OnlineCheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            // One-way: one booking_date for every item. Roundtrip (Batch 28, item 4): each item carries its own
-            // booking_date (outbound and return are different days) and a journey_leg; both dates are future-only and
-            // inside the booking window.
-            'booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(\App\Support\BookingWindow::lastDateString() ?? '9999-12-31')],
-            'journey_type' => 'nullable|string|in:one_way,roundtrip',
+            // One booking_date for the purchase (an item may repeat it). Future-only and inside the booking window.
+            'booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
+            // Roundtrip booking is retired (2026-10-26): a return journey is a separate purchase.
+            'journey_type' => 'nullable|string|in:one_way',
             'items' => 'required|array|min:1',
-            'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(\App\Support\BookingWindow::lastDateString() ?? '9999-12-31')],
-            'items.*.journey_leg' => 'nullable|string|in:outbound,return',
+            'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
+            'items.*.journey_leg' => 'prohibited',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
-            'items.*.seat_type' => 'required|string|in:seated,standing',
+            // Online tickets are for seats; standing places are sold only on the bus (TicketService::priceItem).
+            'items.*.seat_type' => 'required|string|in:seated',
 
             // Boarding is always a known stop (B7). The drop-off is either a stop, or a
             // custom drop-off pin (validated and snapped server-side, D5).
@@ -43,60 +44,42 @@ class OnlineCheckoutRequest extends FormRequest
             'return_base_url' => ['nullable', 'url', 'max:255'],
             'reward_points_to_use' => ['nullable', 'integer', 'min:1'],
             'idempotency_key' => ['nullable', 'string', 'min:16', 'max:128'],
+            // §4.10: one group QR for the purchase in the email (default), or one QR per ticket.
+            'email_group_qr' => ['sometimes', 'boolean'],
         ];
     }
 
     /**
-     * Roundtrip: one booking, two kinds of item. Every item names its leg; the outbound and return counts match
-     * (one return ticket per outbound ticket); the return trip departs after the outbound trip does. A one-way
-     * booking carries no leg at all. Stops, fares and capacity of each leg are checked by the pricing path.
+     * One purchase is one journey (smarttransit_prompt.md §4.10, 2026-10-26): every ticket is for the same trip, the
+     * same boarding stop and the same destination (stop, designated drop-off point, or drop-off pin), so the purchase
+     * has one tracking link and can have one group QR. Another journey, a return included, is a separate purchase.
      */
-    private function validateRoundtrip(Validator $validator, array $items): void
+    private function validateOneJourney(Validator $validator, array $items): void
     {
-        $roundtrip = $this->input('journey_type') === 'roundtrip';
-        $legs = collect($items)->map(fn ($item) => $item['journey_leg'] ?? null);
+        $journeyOf = fn ($item) => implode('|', [
+            (int) ($item['trip_id'] ?? 0),
+            (int) ($item['origin_stop_id'] ?? 0),
+            (int) ($item['destination_stop_id'] ?? 0),
+            (int) ($item['alighting_point_id'] ?? 0),
+            isset($item['destination_lat']) ? round((float) $item['destination_lat'], 6) : '',
+            isset($item['destination_lng']) ? round((float) $item['destination_lng'], 6) : '',
+        ]);
 
-        if (! $roundtrip) {
-            if ($legs->filter()->isNotEmpty()) {
-                $validator->errors()->add('journey_type', 'A journey leg is only for a roundtrip booking.');
-            }
-
-            return;
+        if (collect($items)->filter(fn ($item) => is_array($item))->map($journeyOf)->unique()->count() > 1) {
+            $validator->errors()->add('items', 'All tickets in one purchase must be for the same trip, boarding stop and destination. Buy another journey separately.');
         }
+    }
 
-        if ($roundtrip && collect($items)->contains(fn ($item) => ! empty($item['alighting_point_id']))) {
-            $validator->errors()->add('items', 'A drop-off point is for one-way tickets. Choose a stop to book a roundtrip.');
-
-            return;
-        }
-
-        if ($legs->contains(null)) {
-            $validator->errors()->add('items', 'Every roundtrip item must say whether it is the outbound or the return leg.');
-
-            return;
-        }
-
-        $outbound = collect($items)->where('journey_leg', 'outbound')->values();
-        $return = collect($items)->where('journey_leg', 'return')->values();
-        if ($outbound->isEmpty() || $return->isEmpty() || $outbound->count() !== $return->count()) {
-            $validator->errors()->add('items', 'A roundtrip needs the same number of outbound and return tickets.');
-
-            return;
-        }
-
-        $departure = function (array $item): ?Carbon {
-            $trip = Trip::find((int) ($item['trip_id'] ?? 0));
-            if (! $trip || ! $trip->trip_date) {
-                return null;
-            }
-
-            return Carbon::parse($trip->trip_date->toDateString().' '.($trip->departure_time ?: '00:00'), config('app.timezone'));
-        };
-        $out = $departure($outbound->first());
-        $back = $departure($return->first());
-        if ($out && $back && $back->lte($out)) {
-            $validator->errors()->add('items', 'The return trip must depart after the outbound trip.');
-        }
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'items.*.seat_type.in' => 'Online tickets are for seats only. Standing places are sold on the bus.',
+            'journey_type.in' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
+            'items.*.journey_leg.prohibited' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
+        ];
     }
 
     protected function prepareForValidation(): void
@@ -123,7 +106,7 @@ class OnlineCheckoutRequest extends FormRequest
             }
 
             $errorsBefore = $validator->errors()->count();
-            $this->validateRoundtrip($validator, $items);
+            $this->validateOneJourney($validator, $items);
             if ($validator->errors()->count() > $errorsBefore) {
                 return;
             }

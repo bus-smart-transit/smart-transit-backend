@@ -169,6 +169,8 @@ class PaymentService
                         'idempotency_key_hash' => $identity['key_hash'] ?? null,
                         'idempotency_request_hash' => $identity['request_hash'] ?? null,
                         'idempotency_state' => $identity !== null ? 'processing' : null,
+                        // §4.10: one group QR in the email (default) or one QR per ticket.
+                        'email_group_qr' => (bool) ($payload['email_group_qr'] ?? true),
                     ]);
 
                     // Keep one online_payment row per online transaction.
@@ -184,17 +186,15 @@ class PaymentService
                     $groupedItems = [];
 
                     foreach ($payload['items'] as $item) {
-                        // A roundtrip item carries its own date; a one-way item takes the booking's.
+                        // An item takes the booking's date. Roundtrip booking is retired, so no item carries a journey leg
+                        // (OnlineCheckoutRequest refuses one); old roundtrip tickets keep the leg they were sold with.
                         $item['booking_date'] = $item['booking_date'] ?? $payload['booking_date'] ?? null;
-                        if (($payload['journey_type'] ?? 'one_way') !== 'roundtrip') {
-                            unset($item['journey_leg']);
-                        }
+                        unset($item['journey_leg']);
 
                         $itemKey = json_encode([
                             'trip_id' => (int) ($item['trip_id'] ?? 0),
                             'seat_type' => (string) ($item['seat_type'] ?? ''),
                             'booking_date' => isset($item['booking_date']) ? (string) $item['booking_date'] : null,
-                            'journey_leg' => $item['journey_leg'] ?? null,
                             'origin_stop_id' => isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null,
                             'destination_stop_id' => isset($item['destination_stop_id']) ? (int) $item['destination_stop_id'] : null,
                             'alighting_point_id' => isset($item['alighting_point_id']) ? (int) $item['alighting_point_id'] : null,
@@ -453,11 +453,39 @@ class PaymentService
             if ($payment->idempotency_state === 'settled') {
                 throw new CheckoutIdempotencyConflict('This checkout has been settled. Check its payment status before starting another checkout.');
             }
+            if ($this->releaseIfAttemptIsOver($payment)) {
+                throw new CheckoutIdempotencyConflict('Your last attempt did not go through, and its seats were released. Try again.', retryWithNewKey: true);
+            }
             throw new CheckoutIdempotencyConflict('A checkout with this key is still processing or did not complete. Check its status before trying again.');
         }
 
         return ['payment' => $this->paymentRepository->findById($payment->payment_id) ?? $payment]
             + $payment->idempotency_response;
+    }
+
+    /**
+     * §12 (checkout "lockout"): a retry of the same checkout used to be refused until the 15-minute hold ran out.
+     *  - `failed`: the gateway refused it and its seats are already released; nothing is waiting.
+     *  - `unknown`: the gateway did not answer in time, so no checkout link ever reached the passenger and nobody can
+     *    pay that session. After payments.unknown_outcome_release_minutes it is released like a failed one.
+     * A checkout whose link was delivered (`completed`) keeps its 15-minute hold: the passenger may still be paying.
+     */
+    private function releaseIfAttemptIsOver(Payment $payment): bool
+    {
+        if ($payment->idempotency_state === 'failed') {
+            return true;
+        }
+
+        $releaseAfter = (int) config('payments.unknown_outcome_release_minutes', 2);
+        $startedAt = $payment->created_at ?? $payment->payment_created;
+        if ($payment->idempotency_state !== 'unknown' || ! $startedAt || Carbon::parse($startedAt)->gt(now()->subMinutes($releaseAfter))) {
+            return false;
+        }
+
+        $this->failOnlinePaymentWithReleases($payment);
+        Log::info('Checkout with an unknown gateway outcome released on retry.', ['payment_id' => $payment->payment_id]);
+
+        return true;
     }
 
     private function isUniqueConstraintViolation(QueryException $exception): bool

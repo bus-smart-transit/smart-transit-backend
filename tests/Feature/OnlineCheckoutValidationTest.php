@@ -15,8 +15,8 @@ uses(RefreshDatabase::class);
 function makePassengerUserForCheckoutTest(): User
 {
     $user = User::create([
-        'username' => 'passenger_' . uniqid(),
-        'email' => 'passenger+' . uniqid() . '@smarttransit.test',
+        'username' => 'passenger_'.uniqid(),
+        'email' => 'passenger+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'passenger',
     ]);
@@ -36,8 +36,8 @@ function makePassengerUserForCheckoutTest(): User
 function makeOperatorForCheckoutTest(): User
 {
     $user = User::create([
-        'username' => 'operator_' . uniqid(),
-        'email' => 'operator+' . uniqid() . '@smarttransit.test',
+        'username' => 'operator_'.uniqid(),
+        'email' => 'operator+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'operator',
     ]);
@@ -63,7 +63,7 @@ function makeTripForCheckoutTest(int $operatorCompanyUserId): Trip
 
     $fleet = Fleet::create([
         'company_user_id' => $operatorCompanyUserId,
-        'plate_number' => 'CHK-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'CHK-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -115,5 +115,43 @@ test('checkout rejects booking_date that does not match trip scheduled date', fu
     $response
         ->assertStatus(422)
         ->assertJsonValidationErrors(['items.0.trip_id'])
-        ->assertJsonFragment(['This trip is scheduled for ' . $expectedDateLabel . '.']);
+        ->assertJsonFragment(['This trip is scheduled for '.$expectedDateLabel.'.']);
+});
+
+test('online checkout refuses standing for a passenger and a guest', function () {
+    $passenger = makePassengerUserForCheckoutTest();
+    $operator = makeOperatorForCheckoutTest();
+    $trip = makeTripForCheckoutTest($operator->companyProfile->company_user_id);
+    $payload = [
+        'payment_channel' => 'gcash',
+        'guest_name' => 'Guest Standing',
+        'guest_email' => 'guest-standing@smarttransit.test',
+        'items' => [[
+            'trip_id' => $trip->trip_id,
+            'seat_type' => 'standing',
+            'origin_lat' => 7.1000,
+            'origin_lng' => 125.6000,
+            'destination_lat' => 7.2000,
+            'destination_lng' => 125.7000,
+        ]],
+    ];
+    $message = 'Online tickets are for seats only. Standing places are sold on the bus.';
+
+    $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload)
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['items.0.seat_type'])
+        ->assertJsonFragment([$message]);
+
+    app('auth')->forgetGuards();
+    $this->postJson('/api/checkout', $payload)
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['items.0.seat_type'])
+        ->assertJsonFragment([$message]);
+
+    expect($trip->fresh()->current_standing_capacity)->toBe(0);
+});
+
+test('passenger trip search accepts only the seated seat type', function () {
+    $this->getJson('/api/booking/trips?seat_type=standing')->assertStatus(422)->assertJsonValidationErrors(['seat_type']);
+    $this->getJson('/api/booking/trips?seat_type=seated')->assertSuccessful();
 });

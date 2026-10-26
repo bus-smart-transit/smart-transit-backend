@@ -5,6 +5,7 @@ use App\Models\CustomDropoffRestriction;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
+use App\Models\Payment;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
@@ -200,7 +201,7 @@ it('allows a designated point outside the area, prices it point to point in whol
         ->and($reserved['destination_label'])->toBe('Outside point');
 
     // The ticket row keeps the point, and the readers show its name and kind.
-    $payment = \App\Models\Payment::create(['amount' => 15, 'payment_created' => now(), 'transaction_reference' => 'TXN-DR-'.Str::upper(Str::random(8)), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => []]);
+    $payment = Payment::create(['amount' => 15, 'payment_created' => now(), 'transaction_reference' => 'TXN-DR-'.Str::upper(Str::random(8)), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => []]);
     $ticket = app(TicketService::class)->finalizeTicket($reserved, null, $payment->payment_id);
     expect(Ticket::find($ticket->ticket_id)->alighting_point_id)->toBe($outside->id);
 });
@@ -494,6 +495,7 @@ it('lets staff set the route mode, keeping the older flag in step', function () 
     $patch([])->assertStatus(422);
 });
 
+// Roundtrip booking is retired (2026-10-26): the same request is now refused as a roundtrip, before its drop-off point.
 it('refuses a drop-off point in a roundtrip booking', function () {
     [$route, $stops, , $makeTrip] = drFixture();
     $point = drPoint($route, 7.31);
@@ -502,7 +504,7 @@ it('refuses a drop-off point in a roundtrip booking', function () {
     $item = fn (string $leg) => ['trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'booking_date' => $date, 'journey_leg' => $leg, 'origin_stop_id' => $stops['Stop A']->stop_id, 'alighting_point_id' => $point->id];
 
     $this->postJson('/api/checkout', ['journey_type' => 'roundtrip', 'items' => [$item('outbound'), $item('return')], 'payment_channel' => 'gcash', 'guest_email' => 'guest@example.com'])
-        ->assertStatus(422)->assertJsonValidationErrors(['items']);
+        ->assertStatus(422)->assertJsonValidationErrors(['journey_type']);
 });
 
 it('creates a restriction from the command by route and stop ids, labelled pending, and can create it switched off', function () {

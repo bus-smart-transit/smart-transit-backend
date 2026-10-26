@@ -2,10 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\Ticket;
 use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
+use App\Support\BookingWindow;
 use App\Support\BusLabel;
 use App\Support\ServiceType;
+use App\Support\TripRunInfo;
+use App\Support\VehicleClass;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -114,7 +118,7 @@ class TripResolverService
     /** The first date after `$date`, inside the booking window, that has an eligible departure. */
     private function nextAvailableDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): ?string
     {
-        $last = \App\Support\BookingWindow::lastDate($now) ?? $now->copy()->startOfDay();
+        $last = BookingWindow::lastDate($now) ?? $now->copy()->startOfDay();
         $first = $date->copy()->startOfDay()->addDay();
         if ($first->gt($last)) {
             return null;
@@ -178,9 +182,9 @@ class TripResolverService
         if ($date->lt($now->copy()->startOfDay())) {
             throw ValidationException::withMessages(['date' => ['That date has already passed.']]);
         }
-        $last = \App\Support\BookingWindow::lastDate($now);
+        $last = BookingWindow::lastDate($now);
         if ($last !== null && $date->gt($last)) {
-            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($now)]]);
+            throw ValidationException::withMessages(['date' => [BookingWindow::aheadMessage($now)]]);
         }
 
         return $date;
@@ -230,105 +234,6 @@ class TripResolverService
     }
 
     /**
-     * Roundtrip (Batch 28, item 4): resolves BOTH legs for one booking and says whether it can be paid.
-     * The outbound leg is resolved like Book Now / Book Later; the return leg goes the other way from the
-     * outbound destination back to the outbound origin, on or after the chosen return date and time, and must
-     * depart after the outbound trip. Nothing is held or charged here. If either leg has no departure (or no
-     * fare) can_pay is false and the passenger is told which, so no checkout is started and nothing is charged.
-     *
-     * @param  array{origin_stop_id: int, destination_stop_id: int, outbound_mode: string, outbound_date?: string|null, outbound_time?: string|null, return_date: string, return_time: string, seat_type?: string|null}  $query
-     * @return array<string, mixed>
-     *
-     * @throws ValidationException
-     */
-    public function resolveRoundtrip(array $query): array
-    {
-        $timezone = config('app.timezone', 'Asia/Manila');
-        $now = Carbon::now($timezone);
-        $seatType = $query['seat_type'] ?? 'seated';
-        $originId = (int) $query['origin_stop_id'];
-        $destinationId = (int) $query['destination_stop_id'];
-
-        $outboundQuery = [
-            'mode' => $query['outbound_mode'],
-            'origin_stop_id' => $originId,
-            'destination_stop_id' => $destinationId,
-            'date' => $query['outbound_date'] ?? null,
-            'time' => $query['outbound_time'] ?? null,
-            'seat_type' => $seatType,
-        ];
-        $outboundTarget = $this->targetTime($outboundQuery, $now, $timezone);
-
-        // Future-only, inside the booking window, and after the outbound departure: all by Manila time.
-        $returnTarget = $this->targetTime(['mode' => 'later', 'date' => $query['return_date'], 'time' => $query['return_time']], $now, $timezone);
-        if ($returnTarget->lte($outboundTarget)) {
-            throw ValidationException::withMessages(['return_date' => ['The return must be after your departure.']]);
-        }
-
-        $outbound = $this->resolve($outboundQuery);
-        $return = $this->resolve([
-            'mode' => 'later',
-            'origin_stop_id' => $destinationId,
-            'destination_stop_id' => $originId,
-            'date' => $query['return_date'],
-            'time' => $query['return_time'],
-            'seat_type' => $seatType,
-        ]);
-
-        $outboundTrip = $outbound['trip'];
-        $returnTrip = $return['trip'];
-        if ($outboundTrip && $returnTrip && Carbon::parse($returnTrip['boarding_at'])->lte(Carbon::parse($outboundTrip['boarding_at']))) {
-            $returnTrip = null;
-            $return['message'] = 'No return departure leaves after your outbound trip at that time.';
-        }
-
-        $outboundLeg = $outboundTrip ? $this->roundtripLeg($outboundTrip, 'outbound', $originId, $destinationId, $seatType) : null;
-        $returnLeg = $returnTrip ? $this->roundtripLeg($returnTrip, 'return', $destinationId, $originId, $seatType) : null;
-
-        $message = null;
-        if (! $outboundLeg) {
-            $message = 'No outbound departure matches your journey at that date and time.';
-        } elseif (! $returnLeg) {
-            $message = $returnTrip === null && $return['trip'] !== null
-                ? 'No return departure leaves after your outbound trip at that time.'
-                : 'No return departure matches your journey at that date and time.';
-        } elseif ($outboundLeg['fare'] === null || $returnLeg['fare'] === null) {
-            $message = 'Fare unavailable for '.($outboundLeg['fare'] === null ? 'the outbound' : 'the return').' trip.';
-        }
-
-        $canPay = $message === null;
-
-        return [
-            'journey_type' => 'roundtrip',
-            'outbound' => $outboundLeg,
-            'return' => $returnLeg,
-            'can_pay' => $canPay,
-            'total_fare' => $canPay ? round($outboundLeg['fare'] + $returnLeg['fare'], 2) : null,
-            'message' => $message,
-            // The return ticket's stops default to the outbound ones, swapped; both stay editable.
-            'return_defaults' => ['origin_stop_id' => $destinationId, 'destination_stop_id' => $originId],
-            'cancellation_notice' => (string) config('booking.cancellation_notice'),
-        ];
-    }
-
-    /** @return array<string, mixed> one leg of a roundtrip summary: its own trip, fare and bus label */
-    private function roundtripLeg(array $presented, string $leg, int $originId, int $destinationId, string $seatType): array
-    {
-        $trip = Trip::with(['fleetRoute.fleet'])->find($presented['trip_id']);
-        $fare = $trip ? $this->fareFor($trip, $originId, $destinationId, $seatType) : null;
-
-        return $presented + [
-            'journey_leg' => $leg,
-            'origin_stop_id' => $originId,
-            'destination_stop_id' => $destinationId,
-            'fare' => $fare,
-            // Each ticket carries the label of its OWN trip's bus (never assumed to be the outbound bus).
-            // null label = the bus has no passenger label yet: the screen says so, never the plate.
-            'bus_state' => $presented['bus_label'] === null ? 'label_unavailable' : 'ready',
-        ];
-    }
-
-    /**
      * Book Later: every eligible departure on one Manila date, earliest first, for the
      * passenger to choose from. Today lists only departures that have not yet left.
      *
@@ -372,7 +277,7 @@ class TripResolverService
             'service_type' => ServiceType::normalize($best['trip']->service_type),
             // Batch 28 Stage 3, item 8: how the bus runs (a block of several legs is a "Round-trip run"; deliberately not worded
             // like a passenger's roundtrip booking) and, on an express, which stops it serves ("Non-stop" when only terminals).
-            'run_pattern' => \App\Support\TripRunInfo::runPattern(
+            'run_pattern' => TripRunInfo::runPattern(
                 $best['trip']->trip_type,
                 $best['trip']->shift_block_id ? (int) $best['trip']->shift_block_id : null,
                 $best['trip']->shift_block_id ? Trip::where('shift_block_id', $best['trip']->shift_block_id)->count() : null,
@@ -401,9 +306,9 @@ class TripResolverService
             throw ValidationException::withMessages(['date' => ['Choose a date and time in the future.']]);
         }
 
-        $latest = \App\Support\BookingWindow::lastDate($now)?->endOfDay();
+        $latest = BookingWindow::lastDate($now)?->endOfDay();
         if ($latest !== null && $target->gt($latest)) {
-            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($now)]]);
+            throw ValidationException::withMessages(['date' => [BookingWindow::aheadMessage($now)]]);
         }
 
         return $target;
@@ -468,7 +373,7 @@ class TripResolverService
 
         return [
             'trip' => $trip, 'boards_at' => $boardsAt, 'has_offset' => $offset !== null, 'seats_left' => $seatsLeft, 'arrives_at' => $arrivesAt, 'duration_min' => $duration,
-            'service_info' => \App\Support\TripRunInfo::service($service, $stops),
+            'service_info' => TripRunInfo::service($service, $stops),
             'origin' => $this->stopSummary($stops[$originIndex]),
             'destination' => $this->stopSummary($stops[$destinationIndex]),
         ];
@@ -483,6 +388,7 @@ class TripResolverService
             'name' => $routeStop->stop?->stop_name,
         ];
     }
+
     /**
      * Batch 28 Stage 3, item 6: the later departures a ticket of an operator-cancelled trip can be rebooked onto.
      * Same route, direction, service type and vehicle class; the ticket's own boarding and alighting stops (a ticket
@@ -495,7 +401,7 @@ class TripResolverService
      *
      * @return array<int, array>
      */
-    public function rebookOptions(\App\Models\Ticket $ticket, int $limit): array
+    public function rebookOptions(Ticket $ticket, int $limit): array
     {
         $original = $ticket->trip;
         if (! $original || ! $ticket->origin_stop_id || ! $ticket->destination_stop_id) {
@@ -508,7 +414,7 @@ class TripResolverService
         $routeId = (int) $original->fleetRoute->route_id;
         $direction = $original->leg_direction === 'reverse' ? 'reverse' : 'outbound';
         $service = ServiceType::normalize($original->service_type);
-        $class = \App\Support\VehicleClass::normalize($original->fleetRoute->fleet?->vehicle_class);
+        $class = VehicleClass::normalize($original->fleetRoute->fleet?->vehicle_class);
         $seatType = (string) ($ticket->seat_type ?: 'seated');
         $originId = (int) $ticket->origin_stop_id;
         $destinationId = (int) $ticket->destination_stop_id;
@@ -540,7 +446,7 @@ class TripResolverService
         foreach ($candidates as $candidate) {
             if (ServiceType::normalize($candidate->service_type) !== $service
                 || ($candidate->leg_direction === 'reverse' ? 'reverse' : 'outbound') !== $direction
-                || \App\Support\VehicleClass::normalize($candidate->fleetRoute->fleet?->vehicle_class) !== $class) {
+                || VehicleClass::normalize($candidate->fleetRoute->fleet?->vehicle_class) !== $class) {
                 continue;
             }
             // The booking rule for standing places: only on the day itself.

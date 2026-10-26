@@ -29,6 +29,13 @@ return [
     // one block and starting their next (across different blocks/days).
     'rest_threshold_hours' => (int) env('SHIFT_BLOCK_REST_THRESHOLD_HOURS', 12),
 
+    // Phase B (smarttransit_prompt.md §4.13): the Operator schedules the same block over a From..To range of dates.
+    // range_max_days: longest range accepted (confirmed: 31). max_consecutive_work_days: a range day is skipped when
+    // the Driver or Chauffeur would work more days in a row than this without a rest day (Labor Code Art. 91 and
+    // DO 118-12 reference: a rest day after 6 work days; a reference for planning, not a legal determination).
+    'range_max_days' => (int) env('SHIFT_BLOCK_RANGE_MAX_DAYS', 31),
+    'max_consecutive_work_days' => (int) env('SHIFT_BLOCK_MAX_CONSECUTIVE_WORK_DAYS', 6),
+
     // Location Match Rule: default geofence radius (metres) used when a
     // Stop doesn't have its own `geofence_radius_m` set.
     'default_geofence_radius_m' => (int) env('SHIFT_BLOCK_DEFAULT_GEOFENCE_RADIUS_M', 150),

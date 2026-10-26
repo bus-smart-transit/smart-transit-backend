@@ -4,6 +4,7 @@ use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
+use App\Models\Payment;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
@@ -15,6 +16,7 @@ use App\Repositories\FareRuleRepository;
 use App\Services\FareCalculationService;
 use App\Services\FareRuleService;
 use App\Services\TicketService;
+use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -207,7 +209,7 @@ it('refuses a second fare rule that overlaps one in force for the same fleet and
 
 it('leaves tickets that were issued before the snapshot columns exist untouched', function () {
     [, $trip, $stops, , $fare] = fdFixture();
-    $payment = \App\Models\Payment::create([
+    $payment = Payment::create([
         'amount' => 55, 'payment_created' => now(), 'transaction_reference' => 'TXN-FD-'.Str::upper(Str::random(8)), 'payment_method' => 'online',
         'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => [],
     ]);
@@ -249,4 +251,49 @@ it('uses the same sold count for the sale block and the Chauffeur dashboard', fu
 
     // Cash sales are made on the bus, so those passengers are aboard; "onboard" is a manifest count and never the sale block's.
     expect($summary()['onboard']['total'])->toBe(3)->and($summary()['sold']['total'])->toBe(3);
+});
+
+// ---------------------------------------------------------------- Standing is onsite only, once the seats are full
+
+it('lets a Chauffeur quote and sell standing only once every seat is sold', function () {
+    [$conductor, $trip, $stops, $fleet] = fdFixture();
+    $fleet->update(['seated_capacity' => 1, 'standing_capacity' => 2, 'capacity' => 3]);
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+    $body = fn (string $seat) => ['trip_id' => $trip->trip_id, 'seat_type' => $seat, 'origin_stop_id' => $stops['B']->stop_id, 'destination_stop_id' => $stops['D']->stop_id];
+    $sell = fn (string $seat) => $this->actingAs($conductor)->postJson('/api/conductor/checkout', ['items' => [$body($seat)]]);
+    $quote = fn (string $seat) => $this->actingAs($conductor)->postJson('/api/conductor/checkout/quote', $body($seat));
+
+    $quote('standing')->assertStatus(422)->assertJsonFragment(['Seats are still available. Sell a seated ticket first.']);
+    $sell('standing')->assertStatus(422)->assertJsonValidationErrors(['seat_type']);
+    expect($trip->fresh()->current_standing_capacity)->toBe(0); // the refused sale took no place
+
+    $sell('seated')->assertSuccessful(); // the only seat
+
+    $quote('standing')->assertSuccessful();
+    $sell('standing')->assertSuccessful();
+    expect($trip->fresh()->current_standing_capacity)->toBe(1);
+});
+
+it('re-checks seats-first under the lock for a sale but not for a rebook', function () {
+    [, $trip, , $fleet] = fdFixture();
+    $fleet->update(['seated_capacity' => 1, 'standing_capacity' => 2, 'capacity' => 3]);
+    $tripService = app(TripService::class);
+
+    expect(fn () => $tripService->recordBoarding($trip->trip_id, 'standing', seatsFirst: true))->toThrow(ValidationException::class);
+
+    // A rebook after an Operator cancellation keeps the ticket's own standing place.
+    $tripService->recordBoarding($trip->trip_id, 'standing');
+    expect($trip->fresh()->current_standing_capacity)->toBe(1);
+});
+
+it('refuses a standing item that does not come from the cash sale', function () {
+    [, $trip, $stops] = fdFixture();
+    $item = ['trip_id' => $trip->trip_id, 'seat_type' => 'standing', 'origin_stop_id' => $stops['B']->stop_id, 'destination_stop_id' => $stops['D']->stop_id];
+
+    try {
+        app(TicketService::class)->priceItem($item);
+        $this->fail('A standing item without the onsite channel was priced.');
+    } catch (ValidationException $e) {
+        expect($e->errors()['seat_type'][0])->toBe('Online tickets are for seats only. Standing places are sold on the bus.');
+    }
 });

@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
+use App\Support\TripTiming;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -22,8 +24,12 @@ use Illuminate\Http\Request;
  * | depart               | scheduled, delayed, boarding   | departed  | as boarding, plus crew paired (423) and both PINs verified once for the block (TripService)                          |
  * | acknowledge stop     | departed, in-progress          | (same)    | driver (assigned); repeats and older stops are ignored                                                              |
  * | complete (End Trip)  | departed, in-progress          | completed | driver (assigned), operator (owns trip), admin. Closes the leg only: the shift logs stay open for a block's next leg |
+ * |                      |                                |           | Phase A: the driver only after acknowledging the leg's final stop (operator/admin override)                          |
  * | End Shift            | n/a                            | n/a       | driver and conductor/Chauffeur; only when every leg of the shift block is completed or cancelled (a standalone trip  |
  * |                      |                                |           | closes the driver's log at End Trip, as before)                                                                     |
+ *
+ * Phase A timing (App\Support\TripTiming, config/trip_timing.php), for every role: boarding opens
+ * boarding_window_minutes before the leg's departure; depart is allowed at or after the departure, also when late.
  *
  * A repeat of an event whose target state is already reached is a no-op that
  * succeeds (double taps, retries). Driver hand-off (Batch 18) is separate:
@@ -44,8 +50,8 @@ class TripActionGuard
         private FleetPairingService $pairingService,
         private DriverShiftService $driverShiftService,
         private LegProgressionService $legs,
-    ) {
-    }
+        private RouteStopRepository $routeStops,
+    ) {}
 
     /**
      * Operator ownership check shared by every operator-facing trip action.
@@ -134,7 +140,36 @@ class TripActionGuard
             return [$this->deny("Cannot {$event} a trip that is {$trip->status}.", 422), false];
         }
 
+        // Phase A (§4.11): Start Boarding opens shortly before the departure and Depart waits for it, for every role.
+        $tooEarly = match ($event) {
+            'boarding' => TripTiming::boardingBlockedReason($trip),
+            'depart' => TripTiming::departBlockedReason($trip),
+            default => null,
+        };
+        if ($tooEarly) {
+            return [$this->deny($tooEarly, 422), false];
+        }
+
+        // The Driver ends a trip only after acknowledging the route's final stop. An Operator or Admin may still end
+        // it (the dispatcher override, as for the leg location rule), e.g. when the Driver's phone is lost on the road.
+        if ($event === 'complete' && $role === 'driver' && ! $this->finalStopAcknowledged($trip)) {
+            return [$this->deny('Acknowledge the final stop before ending the trip.', 422), false];
+        }
+
         return [null, false];
+    }
+
+    /** True when the leg's last stop (in travel order) is the stop the Driver last acknowledged, or the route has no stops. */
+    private function finalStopAcknowledged(object $trip): bool
+    {
+        $routeId = $trip->fleetRoute?->route_id;
+        if (! $routeId) {
+            return true;
+        }
+
+        $finalStop = $this->routeStops->getOrderedStopsForDirection((int) $routeId, $trip->leg_direction)->last();
+
+        return ! $finalStop || (int) $trip->last_acknowledged_stop_id === (int) $finalStop->stop_id;
     }
 
     private function deny(string $message, int $code): JsonResponse

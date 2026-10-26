@@ -1,9 +1,11 @@
 <?php
 
+use App\Models\AlightingPoint;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
+use App\Models\PendingBoarding;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
@@ -13,10 +15,23 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteGeometryRepository;
+use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
+use App\Services\AlightingPointService;
+use App\Services\CashRemittanceService;
+use App\Services\CustomDropoffService;
+use App\Services\DropoffRestrictionService;
+use App\Services\PendingBoardingService;
+use App\Services\QRCodeService;
 use App\Services\TicketService;
+use App\Services\TicketTrackingService;
+use App\Services\TripService;
+use App\Support\TicketBoarding;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -132,7 +147,9 @@ it('resolves the boarding point from the bus position and offers only the stops 
     $this->assertDatabaseHas('audit_logs', ['action' => 'boarding_point.resolved', 'subject_id' => $trip->trip_id]);
 });
 
-it('sells a ticket priced from the snapped boarding point and stores the snapshot', function () {
+// 2026-10-26, snap back: a sale from the bus position is counted from the last stop the leg has passed, so collecting the
+// fare later never lowers it. At 15 km outbound that is Stop B (10 km); pass-through Stop C is never a boarding stop.
+it('sells a bus-position ticket from the last stop passed (snap back) and stores the snapshot', function () {
     [$conductor, $trip, $stops, $fleet] = midFixture();
     midOnTheRoad($this, $conductor, $trip);
     midFix($fleet, $trip, 7.135);
@@ -140,12 +157,11 @@ it('sells a ticket priced from the snapped boarding point and stores the snapsho
     $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->assertSuccessful();
 
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect($ticket->origin_stop_id)->toBeNull();
+    expect($ticket->origin_stop_id)->toBe($stops['Stop B']->stop_id);
     expect($ticket->destination_stop_id)->toBe($stops['Stop D']->stop_id);
-    expect((float) $ticket->origin_lat)->toEqualWithDelta(7.135, 0.0001);
-    expect((float) $ticket->distance_km)->toEqualWithDelta(15.0, 0.1);
-    expect((float) $ticket->amount)->toEqualWithDelta(15 + 15 * 2.35, 0.51);
-    expect($ticket->boarding_distance_m)->toBeBetween(14900, 15100);
+    expect((float) $ticket->distance_km)->toEqualWithDelta(20.0, 0.01);
+    expect((float) $ticket->amount)->toEqualWithDelta(15 + 20 * 2.35, 0.51);
+    expect($ticket->boarding_distance_m)->toBe(10000);
     expect($ticket->alighting_distance_m)->toBe(30000);
     expect($ticket->fare_rule_id)->not->toBeNull();
 });
@@ -162,8 +178,7 @@ it('ignores coordinates and fares sent by the client', function () {
     ])->assertSuccessful();
 
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect($ticket->origin_stop_id)->toBeNull();
-    expect((float) $ticket->origin_lat)->toEqualWithDelta(7.135, 0.0001);
+    expect($ticket->origin_stop_id)->toBe($stops['Stop B']->stop_id); // the server's stop, not the tampered Stop D
     expect((float) $ticket->amount)->toBeGreaterThan(40);
 });
 
@@ -214,12 +229,13 @@ it('measures along the reverse leg and offers the stops ahead in that direction'
     expect(array_column($data['destinations'], 'stop_name'))->toBe(['Stop B', 'Stop A']);
     expect($data['destinations'][0]['distance_km'])->toEqualWithDelta(5.0, 0.1);
 
+    // Snap back on the reverse leg: the bus at 15 km heading down has passed Stop D (30 km), so the fare runs from D.
     $ok = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop B']->stop_id])->assertSuccessful();
-    expect((float) $ok->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 5 * 2.35, 0.51);
+    expect((float) $ok->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 20 * 2.35, 0.51);
+    expect(Ticket::find($ok->json('data.tickets.0.ticket_id'))->origin_stop_id)->toBe($stops['Stop D']->stop_id);
 
-    // A destination behind the bus for this direction is a 422.
-    midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])
-        ->assertStatus(422)->assertJsonValidationErrors(['destination']);
+    // The stop the bus has already passed (its boarding stop) is no destination.
+    midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->assertStatus(422);
     // Pass-through stops are never a destination.
     midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop C']->stop_id])
         ->assertStatus(422)->assertJsonValidationErrors(['destination']);
@@ -282,10 +298,10 @@ it('sells a custom drop-off from the bus position and lists the requested stop',
     ])->assertSuccessful();
 
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect($ticket->origin_stop_id)->toBeNull()->and($ticket->destination_stop_id)->toBeNull();
+    expect($ticket->origin_stop_id)->toBe($stops['Stop B']->stop_id)->and($ticket->destination_stop_id)->toBeNull(); // snapped back to B
     expect($ticket->destination_label)->toBe('Near the chapel');
     expect(abs((float) $ticket->destination_lng - 125.0))->toBeLessThan(0.00001); // snapped onto the line
-    expect((float) $ticket->distance_km)->toEqualWithDelta(9.45, 0.4); // 7.135 -> 7.22
+    expect((float) $ticket->distance_km)->toEqualWithDelta(14.45, 0.4); // Stop B (7.09) -> 7.22
     // The Driver's route details and the manifest are built from the ticket's drop-off point.
     expect(app(TicketRepository::class)->getRequestedStopsForTrip($trip->trip_id))->toHaveCount(1);
 
@@ -293,7 +309,6 @@ it('sells a custom drop-off from the bus position and lists the requested stop',
     midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_lat' => 7.05, 'destination_lng' => 125.0])
         ->assertStatus(422)->assertJsonValidationErrors(['dropoff']);
 });
-
 
 // Task 7: custom drop-off in the Chauffeur's cash flow (stop boarding + pin), and the geocoder gate.
 
@@ -323,9 +338,9 @@ it('sells a cash ticket from a boarding stop to a custom drop-off pin, priced an
 
 it('refuses a custom drop-off when the route has no generated path', function () {
     [, $trip, $stops, , $route] = midFixture(dropoff: true);
-    \Illuminate\Support\Facades\DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
+    DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
 
-    expect(fn () => app(\App\Services\CustomDropoffService::class)->evaluate($route->route_id, 'outbound', $stops['Stop B']->stop_id, 7.22, 125.0))
+    expect(fn () => app(CustomDropoffService::class)->evaluate($route->route_id, 'outbound', $stops['Stop B']->stop_id, 7.22, 125.0))
         ->toThrow(ValidationException::class, 'no generated path');
 });
 
@@ -333,13 +348,13 @@ it('refuses a custom drop-off whose boarding stop is not on the trip\'s route', 
     [, , , , $route] = midFixture(dropoff: true);
     $foreign = Stop::create(['stop_name' => 'Elsewhere', 'latitude' => 7.5, 'longitude' => 125.2, 'municipality' => 'Mati City']);
 
-    expect(fn () => app(\App\Services\CustomDropoffService::class)->evaluate($route->route_id, 'outbound', $foreign->stop_id, 7.22, 125.0))
+    expect(fn () => app(CustomDropoffService::class)->evaluate($route->route_id, 'outbound', $foreign->stop_id, 7.22, 125.0))
         ->toThrow(ValidationException::class, 'boarding stop is not on this trip');
 });
 
 it('limits address search to the configured country and spaces geocoder calls across everyone', function () {
     Carbon::setTestNow(); // lock waits use the real clock
-    \Illuminate\Support\Facades\Http::fake(['nominatim.openstreetmap.org/*' => \Illuminate\Support\Facades\Http::response([])]);
+    Http::fake(['nominatim.openstreetmap.org/*' => Http::response([])]);
     config(['timeline.address_search.min_interval_ms' => 400, 'timeline.address_search.max_wait_ms' => 3000]);
 
     $started = microtime(true);
@@ -350,22 +365,21 @@ it('limits address search to the configured country and spaces geocoder calls ac
 
     // Three different users' misses cannot be closer than 0.4 s apart: at least two gaps.
     expect($elapsed)->toBeGreaterThanOrEqual(0.75);
-    \Illuminate\Support\Facades\Http::assertSent(fn ($request) => str_contains($request->url(), 'countrycodes=ph'));
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'countrycodes=ph'));
 });
 
 it('reports the address search as unavailable when the geocoder queue is too long to wait for', function () {
     Carbon::setTestNow(); // lock waits use the real clock
-    \Illuminate\Support\Facades\Http::fake(['nominatim.openstreetmap.org/*' => \Illuminate\Support\Facades\Http::response([])]);
+    Http::fake(['nominatim.openstreetmap.org/*' => Http::response([])]);
     config(['timeline.address_search.min_interval_ms' => 5000, 'timeline.address_search.max_wait_ms' => 1000]);
 
     // The first caller takes the turn; the lock-wait is bounded, so a flooded gate answers 503 instead of hanging.
-    $lock = \Illuminate\Support\Facades\Cache::lock('nominatim:gate', 10);
+    $lock = Cache::lock('nominatim:gate', 10);
     expect($lock->get())->toBeTrue();
     test()->getJson('/api/booking/address-search?q='.urlencode('blocked query'))->assertStatus(503);
     $lock->release();
-    \Illuminate\Support\Facades\Http::assertNothingSent();
+    Http::assertNothingSent();
 });
-
 
 // Batch 28 Stage 2: the cash flow follows the fare key, and still refuses finished trips.
 
@@ -379,7 +393,7 @@ it('prices a bus-position sale from the class rule and ignores a tampered fare',
 
     $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id, 'amount' => 1, 'fare_rule_id' => 999])->assertSuccessful();
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect((float) $ticket->amount)->toEqualWithDelta(13 + (15 - 5) * 2.25, 0.51); // 15 km from the bus position, 5 km base
+    expect((float) $ticket->amount)->toEqualWithDelta(13 + (20 - 5) * 2.25, 0.51); // 20 km from Stop B (snap back), 5 km base
     expect($ticket->rounding_mode)->toBe('nearest')->and($ticket->fare_rule_id)->not->toBe(999);
 
     // The same bus without a class and without an override: nothing is sold.
@@ -405,8 +419,9 @@ it('refuses a cash sale on a completed or cancelled trip', function () {
     }
 });
 
-
 // Batch 28 Stage 2: every reader of tickets.origin_stop_id copes with a boarding point that is a snapped position.
+// Since 2026-10-26 a new sale is snapped back to a stop, but tickets sold before keep a position and no origin stop;
+// these tests turn their ticket into that older shape so the readers stay covered.
 
 it('shows a boarding between stops everywhere a ticket is read, and counts it at the nearest preceding stop', function () {
     [$conductor, $trip, $stops, $fleet] = midFixture();
@@ -414,9 +429,9 @@ it('shows a boarding between stops everywhere a ticket is read, and counts it at
     midFix($fleet, $trip, 7.135); // about 15 km along: after Stop B (10 km), before Stop D (30 km)
     $sold = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->assertSuccessful();
     $ticket = Ticket::find($sold->json('data.tickets.0.ticket_id'));
-    $ticket->update(['status' => 'boarded', 'boarded_at' => now()]);
-    expect($ticket->origin_stop_id)->toBeNull();
-    $label = \App\Support\TicketBoarding::BETWEEN_STOPS;
+    $ticket->update(['status' => 'boarded', 'boarded_at' => now(), 'origin_stop_id' => null, 'origin_lat' => 7.135, 'origin_lng' => 125.0, 'boarding_distance_m' => 15000]); // a ticket sold before snap back
+    expect($ticket->fresh()->origin_stop_id)->toBeNull();
+    $label = TicketBoarding::BETWEEN_STOPS;
 
     // Manifest (Chauffeur's passenger list): a label and a flag, never a blank or a stop id of 0.
     $row = collect($this->actingAs($conductor)->getJson('/api/conductor/trips/current/passengers')->assertSuccessful()->json('data.passengers') ?? $this->actingAs($conductor)->getJson('/api/conductor/trips/current/passengers')->json('data'))->first();
@@ -428,11 +443,11 @@ it('shows a boarding between stops everywhere a ticket is read, and counts it at
     expect($byStop['Stop C']['passengers_on_bus_after'])->toBe(1)->and($byStop['Stop D']['alighting_count'])->toBe(1); // its drop-off stop, counted as the other tickets are
 
     // Saved QR image and the ticket's own payload.
-    $qr = app(\App\Services\QRCodeService::class)->generateQRData($ticket->fresh()->load(['payment', 'trip.fleetRoute.fleet', 'passenger']));
+    $qr = app(QRCodeService::class)->generateQRData($ticket->fresh()->load(['payment', 'trip.fleetRoute.fleet', 'passenger']));
     expect($qr['origin'])->toBe($label)->and($qr['destination'])->toBe('Stop D');
 
     // Public tracking summary of the ticket: the boarding row says it, with no ETA invented for a point that is not a stop.
-    $view = app(\App\Services\TicketTrackingService::class)->viewFor($ticket->fresh());
+    $view = app(TicketTrackingService::class)->viewFor($ticket->fresh());
     expect($view['boarding']['name'] ?? null)->toBe($label);
 });
 
@@ -441,22 +456,24 @@ it('defaults a return trip to the nearest preceding stop when the outbound board
     midOnTheRoad($this, $conductor, $trip);
     midFix($fleet, $trip, 7.135);
     $ticket = Ticket::find(midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop D']->stop_id])->json('data.tickets.0.ticket_id'));
+    $ticket->update(['origin_stop_id' => null, 'origin_lat' => 7.135, 'origin_lng' => 125.0, 'boarding_distance_m' => 15000]); // a ticket sold before snap back
+    $ticket = $ticket->fresh();
 
     // The same stop-array helper the ticket payload uses: Stop B is the last stop passed before 15 km on an outbound leg.
-    $routeStops = app(\App\Repositories\RouteStopRepository::class)->getOrderedStops((int) $trip->fleetRoute->route_id);
-    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'outbound'))->toBe($stops['Stop B']->stop_id);
+    $routeStops = app(RouteStopRepository::class)->getOrderedStops((int) $trip->fleetRoute->route_id);
+    expect(TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'outbound'))->toBe($stops['Stop B']->stop_id);
     // On a reverse leg the stop passed before the same point is the one further along the route (Stop D).
-    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'reverse'))->toBe($stops['Stop D']->stop_id);
-    expect(\App\Support\TicketBoarding::precedingStopId($routeStops, null, 'outbound'))->toBeNull();
+    expect(TicketBoarding::precedingStopId($routeStops, $ticket->boarding_distance_m, 'reverse'))->toBe($stops['Stop D']->stop_id);
+    expect(TicketBoarding::precedingStopId($routeStops, null, 'outbound'))->toBeNull();
 });
 // Batch 28 Stage 3, item 10: the Chauffeur's cash flow with a designated drop-off point and a restricted area.
 it('sells a designated drop-off point from the bus position and from a stop, and refuses one inside a restricted area', function () {
     [$conductor, $trip, $stops, $fleet, $route] = midFixture(dropoff: true);
     $route->update(['custom_dropoff_mode' => 'designated_points']);
-    app(\App\Services\DropoffRestrictionService::class)->save([
+    app(DropoffRestrictionService::class)->save([
         'route_id' => $route->route_id, 'name' => 'Zone X', 'from_stop_id' => $stops['Stop B']->stop_id, 'to_stop_id' => $stops['Stop D']->stop_id,
     ]);
-    $point = fn (float $lat, string $name, string $kind) => \App\Models\AlightingPoint::create(app(\App\Services\AlightingPointService::class)->prepare([
+    $point = fn (float $lat, string $name, string $kind) => AlightingPoint::create(app(AlightingPointService::class)->prepare([
         'route_id' => $route->route_id, 'name' => $name, 'kind' => $kind, 'latitude' => $lat, 'longitude' => 125.0002, 'source' => 'test',
     ]));
     $inside = $point(7.20, 'Inside point', 'landmark');
@@ -471,7 +488,7 @@ it('sells a designated drop-off point from the bus position and from a stop, and
 
     $response = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'alighting_point_id' => $outside->id, 'destination_lat' => 7.10, 'destination_lng' => 125.0, 'destination_label' => 'Ignored'])->assertSuccessful();
     $ticket = Ticket::find($response->json('data.tickets.0.ticket_id'));
-    expect($ticket->alighting_point_id)->toBe($outside->id)->and($ticket->destination_label)->toBe('Outside point')->and($ticket->origin_stop_id)->toBeNull();
+    expect($ticket->alighting_point_id)->toBe($outside->id)->and($ticket->destination_label)->toBe('Outside point')->and($ticket->origin_stop_id)->toBe($stops['Stop A']->stop_id); // snapped back to A
     expect(round((float) $ticket->destination_lat, 2))->toBe(7.31);
 
     // From a stop, by the same point id, and the requested stop lists the point with its kind.
@@ -479,4 +496,109 @@ it('sells a designated drop-off point from the bus position and from a stop, and
     expect(Ticket::find($second->json('data.tickets.0.ticket_id'))->alighting_point_id)->toBe($outside->id);
     $requested = app(TicketRepository::class)->getRequestedStopsForTrip($trip->trip_id);
     expect($requested)->toHaveCount(2)->and($requested->first()->alightingPoint->kind)->toBe('barangay');
+});
+
+// ---------------------------------------------------------------- 2026-10-26: Passenger In, snap back, fare check, leakage
+
+function midCheckIn($test, User $conductor)
+{
+    return $test->actingAs($conductor)->postJson('/api/conductor/trips/current/check-ins');
+}
+
+it('keeps a checked-in passenger fare however far the bus goes before paying, where a late sale without one would charge less', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135); // 15 km: boards after Stop B
+
+    $checkIn = midCheckIn($this, $conductor)->assertSuccessful()->json('data');
+    expect($checkIn['stop_name'])->toBe('Stop B')->and($checkIn['status'])->toBe('pending');
+    expect($this->actingAs($conductor)->getJson('/api/conductor/trips/current/check-ins')->json('data'))->toHaveCount(1);
+
+    midFix($fleet, $trip, 7.30); // the bus drives on past Stop D before the fare is collected
+
+    $paid = midSell($this, $conductor, $trip, ['pending_boarding_id' => $checkIn['id'], 'destination_stop_id' => $stops['Stop E']->stop_id])->assertSuccessful();
+    $ticket = Ticket::find($paid->json('data.tickets.0.ticket_id'));
+    expect($ticket->origin_stop_id)->toBe($stops['Stop B']->stop_id)->and((float) $ticket->amount)->toEqualWithDelta(15 + 30 * 2.35, 0.51); // B -> E
+    $stored = PendingBoarding::find($checkIn['id']);
+    expect($stored->status)->toBe('sold')->and((int) $stored->ticket_id)->toBe((int) $ticket->ticket_id);
+
+    // The same ride sold now from the bus position (no check-in) would start at Stop D: the leak Passenger In closes.
+    $late = midSell($this, $conductor, $trip, ['boarding_mode' => 'gps', 'destination_stop_id' => $stops['Stop E']->stop_id])->assertSuccessful();
+    expect((float) $late->json('data.tickets.0.amount'))->toEqualWithDelta(15 + 10 * 2.35, 0.51); // D -> E
+});
+
+it('lets one check-in pay for one ticket only', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+    $id = midCheckIn($this, $conductor)->json('data.id');
+
+    midSell($this, $conductor, $trip, ['pending_boarding_id' => $id, 'destination_stop_id' => $stops['Stop D']->stop_id])->assertSuccessful();
+    midSell($this, $conductor, $trip, ['pending_boarding_id' => $id, 'destination_stop_id' => $stops['Stop D']->stop_id])
+        ->assertStatus(422)->assertJsonValidationErrors(['pending_boarding_id']);
+    expect(Ticket::where('trip_id', $trip->trip_id)->count())->toBe(1);
+});
+
+it('refuses a sale whose fare no longer matches the quote, sells nothing and keeps the check-in waiting', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+    $id = midCheckIn($this, $conductor)->json('data.id');
+    $body = ['trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'pending_boarding_id' => $id, 'destination_stop_id' => $stops['Stop D']->stop_id];
+
+    $quote = $this->actingAs($conductor)->postJson('/api/conductor/checkout/quote', $body)->assertSuccessful()->json('data.amount');
+    expect((float) $quote)->toEqualWithDelta(15 + 20 * 2.35, 0.51);
+
+    // The Operator raises the fare between the quote and the sale.
+    FareRule::where('fleet_id', $fleet->fleet_id)->update(['base_fare' => 20]);
+    midSell($this, $conductor, $trip, $body + ['quoted_amount' => $quote])
+        ->assertStatus(422)->assertJsonValidationErrors(['quoted_amount'])
+        ->assertJsonPath('errors.quoted_amount.0', fn ($m) => str_contains($m, 'The fare is now PHP 67.00'));
+    expect(Ticket::where('trip_id', $trip->trip_id)->count())->toBe(0)->and($trip->fresh()->total_occupancy)->toBe(0);
+    expect(PendingBoarding::find($id)->status)->toBe('pending');
+
+    $newQuote = $this->actingAs($conductor)->postJson('/api/conductor/checkout/quote', $body)->json('data.amount');
+    midSell($this, $conductor, $trip, $body + ['quoted_amount' => $newQuote])->assertSuccessful();
+});
+
+it('turns a check-in still waiting at End Trip into an unpaid one, listed for the shift and counted on the remittance', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+    $paidId = midCheckIn($this, $conductor)->json('data.id');
+    $unpaidId = midCheckIn($this, $conductor)->json('data.id');
+    midSell($this, $conductor, $trip, ['pending_boarding_id' => $paidId, 'destination_stop_id' => $stops['Stop D']->stop_id])->assertSuccessful();
+
+    app(TripService::class)->completeTrip($trip->trip_id);
+
+    expect(PendingBoarding::find($unpaidId)->status)->toBe('unpaid')->and(PendingBoarding::find($paidId)->status)->toBe('sold');
+    $unpaid = app(PendingBoardingService::class)->unpaidFor([$trip->trip_id]);
+    expect($unpaid)->toHaveCount(1)->and($unpaid[0]['stop_name'])->toBe('Stop B');
+
+    // The trip's end closed the Chauffeur's shift and opened its remittance batch: the Operator sees the unpaid check-in there.
+    $rows = app(CashRemittanceService::class)->paginate((int) $fleet->company_user_id, [])['data'];
+    expect($rows)->toHaveCount(1)->and($rows[0]['unpaid_check_ins'])->toBe(1);
+});
+
+it('closes the check-ins of a cancelled trip as cancelled, not as unpaid', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    midOnTheRoad($this, $conductor, $trip);
+    midFix($fleet, $trip, 7.135);
+    $id = midCheckIn($this, $conductor)->json('data.id');
+
+    app(TripService::class)->overrideStatus($trip->trip_id, 'cancelled', 'admin');
+
+    expect(PendingBoarding::find($id)->status)->toBe('cancelled');
+});
+
+it('refuses Passenger In without a reliable bus position, or before the bus has left', function () {
+    [$conductor, $trip, $stops, $fleet] = midFixture();
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+    midFix($fleet, $trip, 7.135);
+    midCheckIn($this, $conductor)->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Before departure'));
+
+    $trip->update(['status' => 'departed']);
+    midFix($fleet, $trip, 7.135, 125.0, 500.0); // a fix only accurate to 500 m
+    midCheckIn($this, $conductor)->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Pick the boarding stop'));
+    expect(PendingBoarding::count())->toBe(0);
 });

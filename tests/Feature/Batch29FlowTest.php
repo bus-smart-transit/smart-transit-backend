@@ -1,15 +1,15 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteStop;
-use App\Models\FareRule;
-use App\Models\ShiftBlock;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
+use App\Services\TicketService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -89,6 +89,8 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
     $token = $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
     $this->actingAs($conductor)->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
+    // Phase A: Start Boarding opens 30 minutes before the 08:00 departure.
+    Carbon::setTestNow(Carbon::parse('2026-10-05 07:30:00', 'Asia/Manila'));
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$legs[0]->trip_id}/boarding")->assertSuccessful();
 
     // ------------------------------------------------------------------ 4. the Chauffeur sells one cash ticket; the server prices it
@@ -120,7 +122,7 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     $this->actingAs($conductor)->getJson('/api/conductor/trips/current/earnings')->assertNotFound();
     $status = $this->actingAs($conductor)->getJson('/api/conductor/shift/status')->assertSuccessful()->json('data');
     expect([$status['shift_cash']['cash_sales'], $status['shift_cash']['cash_refunds'], $status['shift_cash']['expected_cash']])->toEqual([$fare, $refund, 100]);
-    $perTrip = app(\App\Services\TicketService::class)->getTripEarnings($legs[0]->trip_id);
+    $perTrip = app(TicketService::class)->getTripEarnings($legs[0]->trip_id);
     expect([$perTrip['refunded_amount'], $perTrip['net_total']])->toEqual([$refund, 0]);
 
     // ------------------------------------------------------------------ 6. the Chauffeur ends the shift with a count that is 10 short

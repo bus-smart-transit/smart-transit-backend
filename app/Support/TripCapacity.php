@@ -62,6 +62,17 @@ final class TripCapacity
         ];
     }
 
+    /**
+     * Standing places are sold only on the bus, and only once every seat is sold. The Operator sets how many standing
+     * places a bus has (fleets.standing_capacity); this only says whether standing may be offered yet.
+     */
+    public static function standingOpen(Trip $trip): bool
+    {
+        $fleet = $trip->fleetRoute->fleet;
+
+        return (int) $trip->current_seated_capacity >= (int) $fleet->seated_capacity;
+    }
+
     /** True when selling $count more tickets of this seat type would pass the bus's capacity for it. */
     public static function wouldExceed(Trip $trip, string $seatType, int $count): bool
     {

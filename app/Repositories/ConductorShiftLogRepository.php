@@ -3,9 +3,26 @@
 namespace App\Repositories;
 
 use App\Models\ConductorShiftLog;
+use App\Services\CashRemittanceService;
+use Illuminate\Support\Collection;
 
 class ConductorShiftLogRepository
 {
+    /**
+     * §4.8: the shifts (time in = started_at, time out = ended_at) started on one Manila date on buses the Operator
+     * owns. Read only.
+     *
+     * @return Collection<int, ConductorShiftLog>
+     */
+    public function forOperatorOnDate(int $operatorCompanyUserId, string $date): Collection
+    {
+        return ConductorShiftLog::with(['conductor.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet'])
+            ->whereDate('shift_date', $date)
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->orderBy('started_at')
+            ->get();
+    }
+
     public function findOpenByConductor(int $conductorCompanyUserId): ?ConductorShiftLog
     {
         return ConductorShiftLog::with(['trip.fleetRoute.route', 'fleet'])
@@ -40,7 +57,7 @@ class ConductorShiftLogRepository
         ]);
 
         $fresh = $log->fresh(['trip.fleetRoute.route', 'fleet']);
-        app(\App\Services\CashRemittanceService::class)->openForShift($fresh, $closingCash);
+        app(CashRemittanceService::class)->openForShift($fresh, $closingCash);
 
         return $fresh;
     }
@@ -62,7 +79,7 @@ class ConductorShiftLogRepository
         ]);
         // Batch 29: closed by the trip, not by the Conductor: a pending batch with no declared count.
         foreach (ConductorShiftLog::whereIn('shift_log_id', $open->pluck('shift_log_id'))->get() as $closed) {
-            app(\App\Services\CashRemittanceService::class)->openForShift($closed, null);
+            app(CashRemittanceService::class)->openForShift($closed, null);
         }
 
         return true;

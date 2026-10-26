@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ShiftBlock;
+use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Trip;
 use App\Repositories\FleetLocationRepository;
@@ -14,6 +15,7 @@ use App\Support\Notifications\NotificationLink;
 use App\Support\ServiceType;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -52,6 +54,143 @@ class ShiftBlockService
      * TripService::scheduleTrip() already requires for a single trip.
      */
     public function createBlock(array $payload): ShiftBlock
+    {
+        [$fleetRoute, $driver, $conductor, $legTimes] = $this->assertBlockCanBeCreated($payload);
+        $block = $this->persistBlock($payload, $fleetRoute, $legTimes);
+        $this->notifyBlockAssigned($block, $driver, $conductor, $fleetRoute, $payload);
+
+        return $this->shiftBlockRepository->findById($block->shift_block_id);
+    }
+
+    /**
+     * Phase B (smarttransit_prompt.md §4.13): what each day From..To would be, with nothing saved. Every day goes through
+     * the same checks as a single block (assertBlockCanBeCreated), plus the rest-day rule: nobody works more than
+     * shift_blocks.max_consecutive_work_days days in a row (existing work and the earlier days of this range count).
+     *
+     * @param  array<string, mixed>  $payload  the single-block fields with from_date and to_date instead of scheduled_date
+     * @return array{from_date: string, to_date: string, days: list<array{date: string, ok: bool, reason: ?string}>, create_count: int, skip_count: int}
+     */
+    public function previewRange(array $payload): array
+    {
+        $dates = $this->rangeDates((string) $payload['from_date'], (string) $payload['to_date']);
+        $windowFrom = Carbon::parse($dates[0])->subDays(self::restWindowDays())->toDateString();
+        $windowTo = Carbon::parse(end($dates))->addDays(self::restWindowDays())->toDateString();
+        $worked = [
+            'driver' => array_flip($this->tripRepository->assignedDatesBetween('driver', (int) $payload['driver_id'], $windowFrom, $windowTo)),
+            'conductor' => array_flip($this->tripRepository->assignedDatesBetween('conductor', (int) $payload['conductor_id'], $windowFrom, $windowTo)),
+        ];
+
+        $days = [];
+        foreach ($dates as $date) {
+            $reason = null;
+            try {
+                $this->assertBlockCanBeCreated(array_merge($payload, ['scheduled_date' => $date]));
+                $reason = $this->restDayReason($date, $worked['driver'], 'Driver') ?? $this->restDayReason($date, $worked['conductor'], 'Chauffeur');
+            } catch (ValidationException $e) {
+                $reason = (string) (collect($e->errors())->flatten()->first() ?? 'This day cannot be scheduled.');
+            }
+
+            if ($reason === null) {
+                $worked['driver'][$date] = true;
+                $worked['conductor'][$date] = true;
+            }
+            $days[] = ['date' => $date, 'ok' => $reason === null, 'reason' => $reason];
+        }
+
+        $created = count(array_filter($days, fn (array $day) => $day['ok']));
+
+        return ['from_date' => $dates[0], 'to_date' => end($dates), 'days' => $days, 'create_count' => $created, 'skip_count' => count($days) - $created];
+    }
+
+    /**
+     * Phase B: creates the clean days of previewRange() in one transaction (the server decides again; the client's
+     * preview is never trusted) and leaves the others out with their reason. Existing blocks are never changed. The
+     * Driver and Chauffeur rows are locked first, so a second submit of the same range waits and then finds every day
+     * taken ("already has a shift block"), creating nothing twice. Notifications go out after the commit.
+     *
+     * @return array{from_date: string, to_date: string, days: list<array{date: string, ok: bool, reason: ?string, shift_block_id?: int}>, create_count: int, skip_count: int}
+     */
+    public function createRange(array $payload): array
+    {
+        $created = [];
+        $result = DB::transaction(function () use ($payload, &$created) {
+            StaffUser::whereIn('company_user_id', [(int) $payload['driver_id'], (int) $payload['conductor_id']])->lockForUpdate()->get();
+
+            $preview = $this->previewRange($payload);
+            foreach ($preview['days'] as $i => $day) {
+                if (! $day['ok']) {
+                    continue;
+                }
+                $dayPayload = array_merge($payload, ['scheduled_date' => $day['date']]);
+                [$fleetRoute, $driver, $conductor, $legTimes] = $this->assertBlockCanBeCreated($dayPayload);
+                $block = $this->persistBlock($dayPayload, $fleetRoute, $legTimes);
+                $preview['days'][$i]['shift_block_id'] = (int) $block->shift_block_id;
+                $created[] = [$block, $driver, $conductor, $fleetRoute, $dayPayload];
+            }
+
+            return $preview;
+        });
+
+        foreach ($created as [$block, $driver, $conductor, $fleetRoute, $dayPayload]) {
+            $this->notifyBlockAssigned($block, $driver, $conductor, $fleetRoute, $dayPayload);
+        }
+
+        return $result;
+    }
+
+    /** @return list<string> the Manila dates From..To, at most shift_blocks.range_max_days of them */
+    private function rangeDates(string $from, string $to): array
+    {
+        $start = Carbon::parse($from)->startOfDay();
+        $end = Carbon::parse($to)->startOfDay();
+        $max = (int) config('shift_blocks.range_max_days', 31);
+        if ($end->lt($start)) {
+            throw ValidationException::withMessages(['to_date' => ['The To date must be on or after the From date.']]);
+        }
+        if ($start->diffInDays($end) + 1 > $max) {
+            throw ValidationException::withMessages(['to_date' => ["Choose at most {$max} days."]]);
+        }
+
+        $dates = [];
+        for ($day = $start->copy(); $day->lte($end); $day->addDay()) {
+            $dates[] = $day->toDateString();
+        }
+
+        return $dates;
+    }
+
+    private static function restWindowDays(): int
+    {
+        return (int) config('shift_blocks.max_consecutive_work_days', 6);
+    }
+
+    /**
+     * Labor Code Art. 91 / DO 118-12 reference (smarttransit_prompt.md section 5): a rest day after six consecutive
+     * work days. A day with any assignment counts as a work day. A reference for the planner, not a legal finding.
+     *
+     * @param  array<string, mixed>  $worked  dates (keys) this person already works, including earlier days of the range
+     */
+    private function restDayReason(string $date, array $worked, string $who): ?string
+    {
+        $max = self::restWindowDays();
+        $run = 1;
+        for ($d = Carbon::parse($date)->subDay(); isset($worked[$d->toDateString()]); $d->subDay()) {
+            $run++;
+        }
+        for ($d = Carbon::parse($date)->addDay(); isset($worked[$d->toDateString()]); $d->addDay()) {
+            $run++;
+        }
+
+        return $run > $max ? "The {$who} would work {$run} days in a row. A rest day is needed after {$max} work days." : null;
+    }
+
+    /**
+     * Every rule a new block must pass, checked before anything is written; the single block and each day of a range
+     * both use it, so a range cannot skip a rule.
+     *
+     * @return array{0: object, 1: object, 2: object, 3: list<string>} fleet route, driver, conductor, leg times
+     */
+    private function assertBlockCanBeCreated(array $payload): array
     {
         $fleetRoute = $this->fleetRouteRepository->findWithRoute($payload['fleet_route_id']);
         if (! $fleetRoute) {
@@ -127,6 +266,13 @@ class ShiftBlockService
             );
         }
 
+        return [$fleetRoute, $driver, $conductor, $legTimes];
+    }
+
+    /** Writes the block, its legs and the assignment cards. The caller has run assertBlockCanBeCreated(). */
+    private function persistBlock(array $payload, object $fleetRoute, array $legTimes): ShiftBlock
+    {
+        $scheduledDate = $payload['scheduled_date'];
         $block = $this->shiftBlockRepository->create([
             'fleet_id' => $fleetRoute->fleet_id,
             'driver_id' => $payload['driver_id'],
@@ -157,8 +303,15 @@ class ShiftBlockService
             ]);
         }
 
-        $routeName = $fleetRoute->route?->route_name ?? 'a shift block';
         $this->assignments->ensureForBlock($block);
+
+        return $block;
+    }
+
+    private function notifyBlockAssigned(ShiftBlock $block, object $driver, object $conductor, object $fleetRoute, array $payload): void
+    {
+        $routeName = $fleetRoute->route?->route_name ?? 'a shift block';
+        $scheduledDate = $payload['scheduled_date'];
         if ($driver->user) {
             $this->fcmService->sendToUser(
                 $driver->user,
@@ -175,8 +328,6 @@ class ShiftBlockService
                 NotificationLink::blockAssignedData('conductor', (int) $block->shift_block_id),
             );
         }
-
-        return $this->shiftBlockRepository->findById($block->shift_block_id);
     }
 
     public function findById(int $blockId): ShiftBlock
@@ -373,7 +524,7 @@ class ShiftBlockService
 
         return [
             'eligible' => $withinGeofence,
-            'reason' => $withinGeofence ? null : "Fleet is ".round($distanceM)."m from the home terminal (must be within {$radiusM}m).",
+            'reason' => $withinGeofence ? null : 'Fleet is '.round($distanceM)."m from the home terminal (must be within {$radiusM}m).",
             'distance_m' => round($distanceM, 1),
             'radius_m' => $radiusM,
         ];

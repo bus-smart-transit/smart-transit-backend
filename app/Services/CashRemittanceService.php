@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CashRemittance;
 use App\Models\ConductorShiftLog;
+use App\Support\BusLabel;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -228,12 +229,14 @@ class CashRemittanceService
                 'end_source' => $row->end_source,
                 'conductor_name' => $row->conductor_name,
                 'plate_number' => $row->plate_number,
-                'bus_label' => \App\Support\BusLabel::compose($row->bus_company_name, $row->body_no),
+                'bus_label' => BusLabel::compose($row->bus_company_name, $row->body_no),
                 'route_name' => $row->route_name,
             ],
             'opening_cash' => $live['opening_cash'],
             'cash_sales' => $live['cash_sales'],
             'cash_refunds' => $live['cash_refunds'],
+            // Passenger In leakage check (2026-10-26): passengers checked in on this shift whose fare was never collected.
+            'unpaid_check_ins' => app(PendingBoardingService::class)->unpaidCountsByShift([(int) $row->conductor_shift_log_id])[(int) $row->conductor_shift_log_id] ?? 0,
             // A pending batch shows the cash as it stands now (a late refund may still arrive); a confirmed one keeps the
             // amount that was expected when it was confirmed, and `expected_now` shows if that has moved since.
             'expected_cash' => $confirmed ? $money($row->expected_cash) : $live['expected_cash'],

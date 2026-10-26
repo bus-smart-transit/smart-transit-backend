@@ -6,11 +6,16 @@ use App\Http\Requests\AssignConductorRequest;
 use App\Http\Requests\AssignDriverRequest;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
+use App\Models\FleetRoute;
+use App\Repositories\TicketRepository;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
+use App\Services\FleetService;
 use App\Services\TripActionGuard;
 use App\Services\TripAssignmentRequestService;
 use App\Services\TripService;
+use App\Support\TripRunInfo;
+use App\Support\TripTiming;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -51,8 +56,8 @@ class TripController extends Controller
         $data = $request->validate(['fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id']);
         $user = $request->user();
         if ($user?->role === 'operator') {
-            $fleetId = \App\Models\FleetRoute::where('fleet_route_id', $data['fleet_route_id'])->value('fleet_id');
-            if (! $fleetId || ! app(\App\Services\FleetService::class)->isOwnedByOperator((int) $fleetId, (int) $user->companyProfile?->company_user_id)) {
+            $fleetId = FleetRoute::where('fleet_route_id', $data['fleet_route_id'])->value('fleet_id');
+            if (! $fleetId || ! app(FleetService::class)->isOwnedByOperator((int) $fleetId, (int) $user->companyProfile?->company_user_id)) {
                 return $this->error('You do not have permission to use that bus.', 403);
             }
         }
@@ -329,7 +334,10 @@ class TripController extends Controller
             (int) ($pagination['per_page'] ?? 100),
         );
         $trips = $page->getCollection();
-        \App\Support\TripRunInfo::attach($trips);
+        TripRunInfo::attach($trips);
+        // §4.7: how many passengers are on board now, for the Operator's Track fleet view (tickets sold stays separate).
+        $onboard = app(TicketRepository::class)->countBoardedByTrips($trips->pluck('trip_id')->map(fn ($id) => (int) $id)->all());
+        $trips->each(fn ($trip) => $trip->setAttribute('onboard_count', $onboard[(int) $trip->trip_id] ?? 0));
 
         return response()->json([
             'status' => 'success',
@@ -355,7 +363,9 @@ class TripController extends Controller
         if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
-        \App\Support\TripRunInfo::attach([$trip]);
+        TripRunInfo::attach([$trip]);
+        // Phase A: when Start Boarding and Depart open, for the buttons (the server still decides).
+        $trip->setAttribute('action_timing', TripTiming::forTrip($trip));
 
         return $this->success($trip, 'Current trip retrieved successfully');
     }
@@ -371,7 +381,8 @@ class TripController extends Controller
         if (! $trip) {
             return $this->error('No active trip found.', 404);
         }
-        \App\Support\TripRunInfo::attach([$trip]);
+        TripRunInfo::attach([$trip]);
+        $trip->setAttribute('action_timing', TripTiming::forTrip($trip));
 
         return $this->success($trip, 'Current trip retrieved successfully');
     }
@@ -431,7 +442,7 @@ class TripController extends Controller
         $tripDate = $request->query('trip_date');
 
         $trips = $this->tripService->getAvailableTripsForPassengers($includeStops, is_string($tripDate) ? $tripDate : null);
-        \App\Support\TripRunInfo::attach($trips);
+        TripRunInfo::attach($trips);
 
         return $this->success($trips, 'Available trips retrieved successfully');
     }

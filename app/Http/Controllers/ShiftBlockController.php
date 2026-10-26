@@ -83,6 +83,65 @@ class ShiftBlockController extends Controller
         return $this->success($block, 'Shift block created successfully');
     }
 
+    /** Phase B (§4.13): POST shift-blocks/range/preview. What each day From..To would be; nothing is saved. */
+    public function previewRange(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $payload = array_merge($this->validateRange($request), ['company_user_id' => $companyUser->company_user_id]);
+
+        return $this->success($this->shiftBlockService->previewRange($payload), 'Schedule preview ready');
+    }
+
+    /** Phase B: POST shift-blocks/range. Creates the clean days and lists the skipped ones with the reason. */
+    public function storeRange(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        $validated = $this->validateRange($request);
+        $result = $this->shiftBlockService->createRange(array_merge($validated, ['company_user_id' => $companyUser->company_user_id]));
+
+        foreach ($result['days'] as $day) {
+            if (isset($day['shift_block_id'])) {
+                AuditLogger::log('shift_block.create', 'ShiftBlock', $day['shift_block_id'], [
+                    'driver_id' => $validated['driver_id'],
+                    'conductor_id' => $validated['conductor_id'],
+                    'block_type' => $validated['block_type'],
+                    'range' => [$result['from_date'], $result['to_date']],
+                ]);
+            }
+        }
+
+        $message = $result['create_count'] === 1 ? '1 day scheduled' : "{$result['create_count']} days scheduled";
+
+        return $this->success($result, $result['skip_count'] > 0 ? "{$message}, {$result['skip_count']} skipped" : $message);
+    }
+
+    /** The single-block fields, with a From and To date in place of scheduled_date (the range cap is the service's). */
+    private function validateRange(Request $request): array
+    {
+        return $request->validate([
+            'fleet_route_id' => ['required', 'integer'],
+            'driver_id' => ['required', 'integer'],
+            'conductor_id' => ['required', 'integer'],
+            'block_type' => ['required', 'string'],
+            'from_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:today'],
+            'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+            'service_type' => ['sometimes', 'in:regular,express'],
+            'leg_departure_times' => ['required', 'array'],
+            'leg_departure_times.*' => ['required', 'date_format:H:i'],
+        ], [
+            'from_date.after_or_equal' => 'The From date cannot be in the past.',
+            'to_date.after_or_equal' => 'The To date must be on or after the From date.',
+        ]);
+    }
+
     public function update(Request $request, int $shiftBlockId)
     {
         $block = $this->shiftBlockService->findById($shiftBlockId);
