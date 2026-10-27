@@ -166,6 +166,7 @@ class TripService
     {
         $this->tripRepository->updateStatus($tripId, 'boarding');
         $this->durationFactors->freezeFor($tripId); // the leg keeps the factor it started with
+        app(ShiftBlockLifecycleService::class)->started($tripId); // a shift block starts with its first leg
 
         return $this->tripRepository->findById($tripId);
     }
@@ -191,6 +192,7 @@ class TripService
 
         $this->tripRepository->updateStatus($tripId, 'departed');
         $this->durationFactors->freezeFor($tripId);
+        app(ShiftBlockLifecycleService::class)->started($tripId);
 
         return $this->tripRepository->findById($tripId);
     }
@@ -206,6 +208,8 @@ class TripService
         $this->closeShiftLogsForTrip($tripId);
         // Passenger In: check-ins still waiting at End Trip were never paid (the leakage list).
         app(PendingBoardingService::class)->closeOpenForTrip($tripId, PendingBoarding::UNPAID);
+        // A shift block finishes with its last leg (pending the Operator's review).
+        app(ShiftBlockLifecycleService::class)->legEnded($tripId);
 
         return $this->tripRepository->findById($tripId);
     }
@@ -270,6 +274,7 @@ class TripService
             $this->closeShiftLogsForTrip($tripId);
             // Passenger In: unpaid at completion (leakage list); closed without blame when the trip is cancelled.
             app(PendingBoardingService::class)->closeOpenForTrip($tripId, $newStatus === 'completed' ? PendingBoarding::UNPAID : PendingBoarding::CANCELLED);
+            app(ShiftBlockLifecycleService::class)->legEnded($tripId);
         }
 
         // Batch 28 Stage 3, item 6: the paid, unused tickets of a cancelled trip are marked "awaiting choice"
@@ -304,6 +309,7 @@ class TripService
         $this->tripRepository->updateStatus($tripId, 'cancelled');
         $this->closeShiftLogsForTrip($tripId);
         $this->cancellations->record($this->tripRepository->findById($tripId), $previousStatus, $actor, $reason);
+        app(ShiftBlockLifecycleService::class)->legEnded($tripId);
 
         return [$this->tripRepository->findById($tripId), $previousStatus];
     }

@@ -480,8 +480,10 @@ class ShiftBlockService
     public function updateAssignment(int $blockId, array $payload): ShiftBlock
     {
         $block = $this->findById($blockId);
-        if ($block->status !== 'scheduled') {
-            throw ValidationException::withMessages(['status' => ['Only a scheduled shift block can be reassigned.']]);
+        // 2026-10-27: a block is in progress from its first leg (ShiftBlockLifecycleService); a crew member can still be
+        // replaced for the legs that have not started, as before.
+        if (! in_array($block->status, ['scheduled', 'in_progress'], true)) {
+            throw ValidationException::withMessages(['status' => ['Only a shift block that has not finished can be reassigned.']]);
         }
 
         $update = [];

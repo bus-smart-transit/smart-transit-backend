@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ShiftBlock;
 use App\Models\Trip;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteStopRepository;
@@ -78,11 +79,42 @@ class LegProgressionService
             return ['Finish leg '.($legs->search(fn (Trip $l) => (int) $l->trip_id === (int) $previous->trip_id) + 1).' of this shift block first: each leg starts only after the one before it is completed or cancelled.', 422];
         }
 
+        // 2026-10-27 (Confirm Takeover removed): two crews never run one bus at once. A block's first leg waits until
+        // every earlier leg of another block on this bus that day has ended, and no leg of another block is under way.
+        if ($index === 0 && $checkLocation && ($other = $this->otherBlockStillRunning($trip))) {
+            return ["The {$other} shift on this bus has not finished its last trip yet. This shift starts after it ends.", 422];
+        }
+
         if ($index > 0 && $checkLocation && config('shift_blocks.leg_location_rule_enabled')) {
             return $this->locationBlockedReason($trip);
         }
 
         return null;
+    }
+
+    /** The block type (morning, afternoon) of another block on this bus that is still running before this leg, or null. */
+    private function otherBlockStillRunning(Trip $trip): ?string
+    {
+        $fleetId = ShiftBlock::whereKey($trip->shift_block_id)->value('fleet_id');
+        if (! $fleetId) {
+            return null;
+        }
+
+        $otherBlockIds = ShiftBlock::where('fleet_id', $fleetId)
+            ->where('shift_block_id', '!=', $trip->shift_block_id)
+            ->whereNotIn('status', self::TERMINAL)
+            ->pluck('shift_block_id');
+        if ($otherBlockIds->isEmpty()) {
+            return null;
+        }
+
+        $open = Trip::whereIn('shift_block_id', $otherBlockIds)
+            ->whereDate('trip_date', $trip->trip_date)
+            ->whereNotIn('status', self::TERMINAL)
+            ->where(fn ($q) => $q->where('departure_time', '<', $trip->departure_time)->orWhereIn('status', ['boarding', 'departed', 'in-progress']))
+            ->first();
+
+        return $open ? (string) (ShiftBlock::whereKey($open->shift_block_id)->value('block_type') ?? 'other') : null;
     }
 
     /** The bus must be within the geofence of this leg's origin terminal. */
