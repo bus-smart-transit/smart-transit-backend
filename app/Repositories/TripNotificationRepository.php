@@ -35,6 +35,18 @@ class TripNotificationRepository
             ->update(['read_at' => now()]) > 0;
     }
 
+    /**
+     * 2026-10-27: a group of Operator notifications marked read at once (the bell groups the same kind together).
+     *
+     * @param  list<int>  $ids
+     */
+    public function markManyRead(array $ids): int
+    {
+        return TripNotification::whereIn('id', $ids)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+    }
+
     public function markAllRead(): int
     {
         return TripNotification::whereNull('read_at')->update(['read_at' => now()]);

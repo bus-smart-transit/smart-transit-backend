@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\MarkNotificationsReadRequest;
 use App\Repositories\TripNotificationRepository;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -33,6 +34,14 @@ class TripNotificationController extends Controller
         $this->notificationRepository->markRead($id);
 
         return $this->success(null, 'Notification marked as read');
+    }
+
+    /** 2026-10-27: one notification group in the bell, marked read at once. */
+    public function markManyRead(MarkNotificationsReadRequest $request)
+    {
+        $count = $this->notificationRepository->markManyRead(array_map('intval', $request->validated('ids')));
+
+        return $this->success(['marked' => $count], 'Notifications marked as read');
     }
 
     public function markAllRead()

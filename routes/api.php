@@ -290,6 +290,8 @@ Route::prefix('operator')
         Route::get('notifications', [TripNotificationController::class, 'index']);
         Route::patch('notifications/{id}/read', [TripNotificationController::class, 'markRead']);
         Route::patch('notifications/read-all', [TripNotificationController::class, 'markAllRead']);
+        // 2026-10-27: one notification group in the bell, marked read at once.
+        Route::patch('notifications/read-many', [TripNotificationController::class, 'markManyRead'])->middleware('throttle:60,1,notifications-read-many');
     });
 
 // DRIVER
@@ -327,6 +329,8 @@ Route::prefix('driver')
         Route::get('notifications', [UserNotificationController::class, 'index']);
         Route::patch('notifications/{id}/read', [UserNotificationController::class, 'markRead']);
         Route::patch('notifications/read-all', [UserNotificationController::class, 'markAllRead']);
+        // 2026-10-27: one notification group in the bell, marked read at once.
+        Route::patch('notifications/read-many', [UserNotificationController::class, 'markManyRead'])->middleware('throttle:60,1,notifications-read-many');
 
         Route::middleware('paired:driver')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripDriver']);
@@ -382,6 +386,8 @@ Route::prefix('conductor')
         Route::get('notifications', [UserNotificationController::class, 'index']);
         Route::patch('notifications/{id}/read', [UserNotificationController::class, 'markRead']);
         Route::patch('notifications/read-all', [UserNotificationController::class, 'markAllRead']);
+        // 2026-10-27: one notification group in the bell, marked read at once.
+        Route::patch('notifications/read-many', [UserNotificationController::class, 'markManyRead'])->middleware('throttle:60,1,notifications-read-many');
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);

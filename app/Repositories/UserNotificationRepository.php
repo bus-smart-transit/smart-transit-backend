@@ -45,6 +45,20 @@ class UserNotificationRepository
             ->update(['read_at' => now()]) > 0;
     }
 
+    /**
+     * 2026-10-27: a group of this user's notifications marked read at once (the bell groups the same kind together).
+     * Ids that are not this user's are ignored.
+     *
+     * @param  list<int>  $notificationIds
+     */
+    public function markManyReadForUser(array $notificationIds, int $userId): int
+    {
+        return UserNotification::whereIn('notification_id', $notificationIds)
+            ->where('user_id', $userId)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+    }
+
     public function markAllReadForUser(int $userId): int
     {
         return UserNotification::where('user_id', $userId)

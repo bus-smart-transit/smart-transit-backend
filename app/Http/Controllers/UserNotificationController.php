@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\MarkNotificationsReadRequest;
 use App\Services\FcmService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -37,6 +38,14 @@ class UserNotificationController extends Controller
         $this->fcmService->markReadForUser($id, $request->user()->user_id);
 
         return $this->success(null, 'Notification marked as read');
+    }
+
+    /** 2026-10-27: one notification group in the bell, marked read at once (only the caller's own notifications). */
+    public function markManyRead(MarkNotificationsReadRequest $request)
+    {
+        $count = $this->fcmService->markManyReadForUser(array_map('intval', $request->validated('ids')), $request->user()->user_id);
+
+        return $this->success(['marked' => $count], 'Notifications marked as read');
     }
 
     public function markAllRead(Request $request)

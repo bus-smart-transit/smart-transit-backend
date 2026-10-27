@@ -5,10 +5,10 @@ namespace App\Services;
 use App\Models\User;
 use App\Repositories\UserNotificationRepository;
 use Illuminate\Support\Facades\Log;
-use Kreait\Firebase\Factory;
 use Kreait\Firebase\Contract\Messaging;
-use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Exception\MessagingException;
+use Kreait\Firebase\Factory;
+use Kreait\Firebase\Messaging\CloudMessage;
 
 /**
  * Batch 15, Items 2/3: Firebase Cloud Messaging.
@@ -24,6 +24,7 @@ use Kreait\Firebase\Exception\MessagingException;
 class FcmService
 {
     private ?Messaging $messaging = null;
+
     private UserNotificationRepository $notificationRepository;
 
     public function __construct(?Messaging $messaging = null, ?UserNotificationRepository $notificationRepository = null)
@@ -32,20 +33,21 @@ class FcmService
 
         if ($messaging) {
             $this->messaging = $messaging;
+
             return;
         }
 
         try {
             $this->messaging = $this->buildMessaging();
         } catch (\Throwable $e) {
-            Log::warning('FcmService: not configured, push notifications disabled — ' . $e->getMessage());
+            Log::warning('FcmService: not configured, push notifications disabled — '.$e->getMessage());
             $this->messaging = null;
         }
     }
 
     private function buildMessaging(): Messaging
     {
-        $factory = new Factory();
+        $factory = new Factory;
 
         $credentialsJson = config('services.firebase.credentials_json');
         if (! empty($credentialsJson)) {
@@ -53,6 +55,7 @@ class FcmService
             if (json_last_error() !== JSON_ERROR_NONE) {
                 throw new \RuntimeException('FIREBASE_CREDENTIALS_JSON is not valid JSON.');
             }
+
             return $factory->withServiceAccount($decoded)->createMessaging();
         }
 
@@ -130,12 +133,15 @@ class FcmService
             ]);
 
             $this->messaging->send($message);
+
             return true;
         } catch (MessagingException $e) {
-            Log::warning("FcmService: send failed for user {$user->user_id} — " . $e->getMessage());
+            Log::warning("FcmService: send failed for user {$user->user_id} — ".$e->getMessage());
+
             return false;
         } catch (\Throwable $e) {
-            Log::warning("FcmService: unexpected error sending to user {$user->user_id} — " . $e->getMessage());
+            Log::warning("FcmService: unexpected error sending to user {$user->user_id} — ".$e->getMessage());
+
             return false;
         }
     }
@@ -157,6 +163,12 @@ class FcmService
     public function markReadForUser(int $notificationId, int $userId): bool
     {
         return $this->notificationRepository->markReadForUser($notificationId, $userId);
+    }
+
+    /** @param list<int> $notificationIds */
+    public function markManyReadForUser(array $notificationIds, int $userId): int
+    {
+        return $this->notificationRepository->markManyReadForUser($notificationIds, $userId);
     }
 
     public function markAllReadForUser(int $userId): int
