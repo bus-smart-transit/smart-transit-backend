@@ -286,7 +286,8 @@ it('answers 404 for any unknown or malformed link, the same way, and slows a cli
 it('rate limits the public routes: the track link and the live bus positions', function () {
     $middleware = fn (string $uri) => collect(app('router')->getRoutes()->getRoutes())->first(fn ($route) => $route->uri() === $uri)->gatherMiddleware();
 
-    expect($middleware('api/track/{token}'))->toContain('throttle:60,1');
-    expect($middleware('api/fleet/locations'))->toContain('throttle:90,1');
-    expect($middleware('api/fleet/nearest'))->toContain('throttle:90,1');
+    // 2026-10-27: same limits, each with its own counter (the third value).
+    expect($middleware('api/track/{token}'))->toContain('throttle:60,1,track');
+    expect($middleware('api/fleet/locations'))->toContain('throttle:90,1,fleet-locations');
+    expect($middleware('api/fleet/nearest'))->toContain('throttle:90,1,fleet-nearest');
 });

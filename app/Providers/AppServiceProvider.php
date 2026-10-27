@@ -2,11 +2,13 @@
 
 namespace App\Providers;
 
-use App\Support\Database\RlsContext;
 use App\Support\ApiRequestMetrics;
+use App\Support\Database\RlsContext;
 use App\Support\RateLimiting\ToggleableRateLimiter;
 use Illuminate\Cache\RateLimiter;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
@@ -42,6 +44,18 @@ class AppServiceProvider extends ServiceProvider
         $this->guardStaffOtpBypassIsDevOnly();
         $this->guardRateLimitingOffIsDevOnly();
         $this->endIdleStaffSessions();
+        $this->configureRateLimiters();
+    }
+
+    /**
+     * 2026-10-27: the checkout return page asks for one payment's status every few seconds. It is counted per payment
+     * reference and IP, so two passengers behind one network (or the map polling in another tab) never use up each
+     * other's checks. Same limit as before: 30 a minute.
+     */
+    private function configureRateLimiters(): void
+    {
+        $this->app->make(RateLimiter::class)->for('payment-status', fn (Request $request) => Limit::perMinute(30)
+            ->by('payment-status|'.(string) $request->query('ref', '').'|'.$request->ip()));
     }
 
     /**

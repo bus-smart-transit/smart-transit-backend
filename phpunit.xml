@@ -29,6 +29,7 @@
         <env name="DB_URL" value=""/>
         <env name="DISABLE_STEP_UP" value="false"/>
         <env name="DISABLE_STAFF_OTP" value="false"/>
+        <env name="RATE_LIMITING_ENABLED" value="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
