@@ -6,6 +6,8 @@ use App\Models\Ticket;
 use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\DropOffGroups;
+use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
@@ -26,7 +28,7 @@ class OccupancyService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'trip' => ['Trip not found.'],
             ]);
@@ -97,7 +99,7 @@ class OccupancyService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'trip' => ['Trip not found.'],
             ]);
@@ -115,7 +117,7 @@ class OccupancyService
         // Tickets that boarded between stops have no origin stop: count each at the nearest preceding stop in this
         // leg's direction, so the running total of passengers on the bus still adds up.
         foreach ($this->ticketRepository->getSnappedBoardingDistances($tripId) as $boardingDistanceM) {
-            $stopId = \App\Support\TicketBoarding::precedingStopId($routeStops, (int) $boardingDistanceM, $trip->leg_direction);
+            $stopId = TicketBoarding::precedingStopId($routeStops, (int) $boardingDistanceM, $trip->leg_direction);
             if ($stopId !== null) {
                 $boardingByStop[$stopId] = (int) ($boardingByStop[$stopId] ?? 0) + 1;
             }
@@ -126,26 +128,26 @@ class OccupancyService
         $stopBreakdown = [];
 
         foreach ($routeStops as $routeStop) {
-            $stopId   = $routeStop->stop_id;
-            $boarding  = (int) ($boardingByStop[$stopId]  ?? 0);
+            $stopId = $routeStop->stop_id;
+            $boarding = (int) ($boardingByStop[$stopId] ?? 0);
             $alighting = (int) ($alightingByStop[$stopId] ?? 0);
             $cumulativeOnBus += $boarding - $alighting;
 
             $stopBreakdown[] = [
-                'stop_id'                 => $stopId,
-                'stop_name'               => $routeStop->stop->stop_name,
-                'sequence_number'         => $routeStop->stop_order,
+                'stop_id' => $stopId,
+                'stop_name' => $routeStop->stop->stop_name,
+                'sequence_number' => $routeStop->stop_order,
                 'distance_from_origin_km' => $routeStop->distance_from_origin_km,
-                'boarding_count'          => $boarding,
-                'alighting_count'         => $alighting,
+                'boarding_count' => $boarding,
+                'alighting_count' => $alighting,
                 'passengers_on_bus_after' => max(0, $cumulativeOnBus),
             ];
         }
 
         return [
-            'trip_id'    => $tripId,
+            'trip_id' => $tripId,
             'route_name' => $route->route_name,
-            'stops'      => $stopBreakdown,
+            'stops' => $stopBreakdown,
         ];
     }
 
@@ -156,7 +158,7 @@ class OccupancyService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'trip' => ['Trip not found.'],
             ]);
@@ -181,60 +183,72 @@ class OccupancyService
         $payloadStopNames = $this->stopRepository->getNamesByIds($payloadStopIds);
         $legContext = $trip->fleetRoute ? $this->placementService->contextFor($trip) : null;
 
+        $rows = $passengers->map(function ($ticket) use ($payloadStopNames, $legContext) {
+            $matchedItem = $this->matchPaymentItemForTicket($ticket);
+            $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
+            $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
+
+            $originStopName = $ticket->originStop?->stop_name
+                ?? ($payloadOriginId ? ($payloadStopNames[$payloadOriginId] ?? null) : null);
+            $destinationStopName = $ticket->destinationStop?->stop_name
+                ?? ($payloadDestinationId ? ($payloadStopNames[$payloadDestinationId] ?? null) : null);
+            // A boarding taken between stops has no origin stop (Batch 28 Stage 2).
+            $originBetweenStops = $originStopName === null && TicketBoarding::isSnapped($ticket);
+            if ($originBetweenStops) {
+                $originStopName = TicketBoarding::BETWEEN_STOPS;
+            }
+            // D5: a custom drop-off is shown as a requested stop.
+            $requestedStop = $destinationStopName === null && $ticket->destination_lat !== null;
+            if ($requestedStop) {
+                $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off')
+                    .($ticket->alightingPoint ? ' ('.$ticket->alightingPoint->kind.')' : '');
+            }
+
+            // Travel order of the drop-off along this leg: a stop is its leg sequence, a
+            // requested stop sits between the stops around it, an unknown position is last.
+            $dropOffOrder = 100001.0;
+            if ($legContext) {
+                if ($requestedStop) {
+                    $placement = $this->placementService->place($legContext, (float) $ticket->destination_lat, (float) $ticket->destination_lng);
+                    $dropOffOrder = $this->placementService->sortKey($placement['after_stop_sequence'], $placement['position_known']);
+                } elseif ($ticket->destination_stop_id !== null || $payloadDestinationId) {
+                    $dropOffOrder = (float) ($legContext['sequence_by_stop_id'][(int) ($ticket->destination_stop_id ?? $payloadDestinationId)] ?? 100001);
+                }
+            }
+
+            return [
+                'ticket_id' => $ticket->ticket_id,
+                'ticket_uuid' => $ticket->ticket_uuid,
+                'passenger_name' => $ticket->passenger->user->name ?? 'Guest',
+                'passenger_id' => $ticket->passenger_id,
+                'seat_type' => $ticket->seat_type,
+                'status' => $ticket->status,
+                'is_boarded' => $ticket->status === 'boarded',
+                'origin_stop' => $originStopName,
+                'origin_between_stops' => $originBetweenStops,
+                'destination_stop' => $destinationStopName,
+                'requested_stop' => $requestedStop,
+                'requested_stop_kind' => $requestedStop ? $ticket->alightingPoint?->kind : null,
+                'drop_off_order' => $dropOffOrder,
+                'boarded_at' => $ticket->boarded_at,
+                // 2026-10-27 (§7): which destination group this passenger gets off with.
+                'destination_stop_id' => $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
+                'destination_key' => DropOffGroups::key(
+                    $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
+                    $ticket->alighting_point_id !== null ? (int) $ticket->alighting_point_id : null,
+                    $ticket->destination_lat !== null ? (float) $ticket->destination_lat : null,
+                    $ticket->destination_lng !== null ? (float) $ticket->destination_lng : null,
+                ),
+            ];
+        })->sortBy('drop_off_order')->values()->toArray();
+
         return [
             'trip_id' => $tripId,
             'trip_status' => $trip->status,
             'total_count' => $passengers->count(),
-            'passengers' => $passengers->map(function ($ticket) use ($payloadStopNames, $legContext) {
-                $matchedItem = $this->matchPaymentItemForTicket($ticket);
-                $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
-                $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
-
-                $originStopName = $ticket->originStop?->stop_name
-                    ?? ($payloadOriginId ? ($payloadStopNames[$payloadOriginId] ?? null) : null);
-                $destinationStopName = $ticket->destinationStop?->stop_name
-                    ?? ($payloadDestinationId ? ($payloadStopNames[$payloadDestinationId] ?? null) : null);
-                // A boarding taken between stops has no origin stop (Batch 28 Stage 2).
-                $originBetweenStops = $originStopName === null && \App\Support\TicketBoarding::isSnapped($ticket);
-                if ($originBetweenStops) {
-                    $originStopName = \App\Support\TicketBoarding::BETWEEN_STOPS;
-                }
-                // D5: a custom drop-off is shown as a requested stop.
-                $requestedStop = $destinationStopName === null && $ticket->destination_lat !== null;
-                if ($requestedStop) {
-                    $destinationStopName = 'Requested stop: '.($ticket->destination_label ?: 'custom drop-off')
-                        .($ticket->alightingPoint ? ' ('.$ticket->alightingPoint->kind.')' : '');
-                }
-
-                // Travel order of the drop-off along this leg: a stop is its leg sequence, a
-                // requested stop sits between the stops around it, an unknown position is last.
-                $dropOffOrder = 100001.0;
-                if ($legContext) {
-                    if ($requestedStop) {
-                        $placement = $this->placementService->place($legContext, (float) $ticket->destination_lat, (float) $ticket->destination_lng);
-                        $dropOffOrder = $this->placementService->sortKey($placement['after_stop_sequence'], $placement['position_known']);
-                    } elseif ($ticket->destination_stop_id !== null || $payloadDestinationId) {
-                        $dropOffOrder = (float) ($legContext['sequence_by_stop_id'][(int) ($ticket->destination_stop_id ?? $payloadDestinationId)] ?? 100001);
-                    }
-                }
-
-                return [
-                    'ticket_id' => $ticket->ticket_id,
-                    'ticket_uuid' => $ticket->ticket_uuid,
-                    'passenger_name' => $ticket->passenger->user->name ?? 'Guest',
-                    'passenger_id' => $ticket->passenger_id,
-                    'seat_type' => $ticket->seat_type,
-                    'status' => $ticket->status,
-                    'is_boarded' => $ticket->status === 'boarded',
-                    'origin_stop' => $originStopName,
-                    'origin_between_stops' => $originBetweenStops,
-                    'destination_stop' => $destinationStopName,
-                    'requested_stop' => $requestedStop,
-                    'requested_stop_kind' => $requestedStop ? $ticket->alightingPoint?->kind : null,
-                    'drop_off_order' => $dropOffOrder,
-                    'boarded_at' => $ticket->boarded_at,
-                ];
-            })->sortBy('drop_off_order')->values()->toArray(),
+            'passengers' => $rows,
+            // 2026-10-27 (§7): the passengers grouped by where they get off, in travel order (DropOffGroups).
+            'destination_groups' => DropOffGroups::fromPassengers($rows),
         ];
     }
 
@@ -261,7 +275,7 @@ class OccupancyService
     {
         $trip = $this->tripRepository->findById($tripId);
 
-        if (!$trip) {
+        if (! $trip) {
             return false;
         }
 
@@ -282,7 +296,7 @@ class OccupancyService
 
         // A ticket from another trip is reported as not found, like a missing one.
         if (! $ticket || ($tripId !== null && (int) $ticket->trip_id !== $tripId)) {
-            throw (new ModelNotFoundException())->setModel(Ticket::class, $ticketId);
+            throw (new ModelNotFoundException)->setModel(Ticket::class, $ticketId);
         }
 
         if ($ticket->status !== 'boarded') {

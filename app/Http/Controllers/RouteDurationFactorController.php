@@ -6,7 +6,9 @@ use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteDurationFactor;
 use App\Services\AuditLogger;
+use App\Services\LegPlanningService;
 use App\Services\RouteDurationFactorService;
+use App\Support\ServiceType;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -19,7 +21,10 @@ class RouteDurationFactorController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private RouteDurationFactorService $factors) {}
+    public function __construct(
+        private RouteDurationFactorService $factors,
+        private LegPlanningService $legPlanning,
+    ) {}
 
     public function index(Request $request)
     {
@@ -108,7 +113,9 @@ class RouteDurationFactorController extends Controller
             'fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id',
             'scheduled_date' => 'required|date_format:Y-m-d',
             'first_departure_time' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
-            'service_type' => 'nullable|string|in:'.implode(',', \App\Support\ServiceType::ALL),
+            'service_type' => 'nullable|string|in:'.implode(',', ServiceType::ALL),
+            // 2026-10-27 (§4.2): without leg_count the planner decides how many legs fit from the route's travel time.
+            'leg_count' => 'nullable|integer|min:1|max:'.LegPlanningService::maxLegs(),
         ]);
 
         $fleetRoute = FleetRoute::with('fleet')->findOrFail($data['fleet_route_id']);
@@ -117,15 +124,15 @@ class RouteDurationFactorController extends Controller
             return $this->error('You do not have permission to plan for that bus.', 403);
         }
 
-        $plan = $this->factors->suggestLegs(
+        $plan = $this->legPlanning->plan(
             (int) $fleetRoute->route_id,
             $data['service_type'] ?? null,
             $data['scheduled_date'],
             $data['first_departure_time'],
-            (int) config('shift_blocks.legs_per_block'),
+            isset($data['leg_count']) ? (int) $data['leg_count'] : null,
         );
 
-        return $this->success($plan + ['note' => 'A suggestion only. These times come from your settings, not from measurements.'], 'Leg times suggested');
+        return $this->success($plan, 'Leg times suggested');
     }
 
     // ----------------------------------------------------------------

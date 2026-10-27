@@ -43,6 +43,7 @@ class ShiftBlockService
         private ShiftBlockAssignmentService $assignments,
         private TripCancellationService $cancellations,
         private FleetScheduleGuard $fleetGuard,
+        private LegPlanningService $legPlanning,
     ) {}
 
     /**
@@ -215,10 +216,11 @@ class ShiftBlockService
 
         $scheduledDate = $payload['scheduled_date'];
         $legTimes = $payload['leg_departure_times'] ?? [];
-        $legsPerBlock = (int) config('shift_blocks.legs_per_block');
-
-        if (count($legTimes) !== $legsPerBlock) {
-            throw ValidationException::withMessages(['leg_departure_times' => ["Exactly {$legsPerBlock} leg departure times are required."]]);
+        // 2026-10-27 (§4.2): no fixed number of legs. The Operator sends 1 to shift_blocks.max_legs_per_block legs (the
+        // planner suggests how many fit); each must leave after the previous one is expected back plus the turnaround.
+        $maxLegs = LegPlanningService::maxLegs();
+        if (count($legTimes) < 1 || count($legTimes) > $maxLegs) {
+            throw ValidationException::withMessages(['leg_departure_times' => ["A shift block has 1 to {$maxLegs} legs."]]);
         }
 
         for ($i = 1; $i < count($legTimes); $i++) {
@@ -226,6 +228,8 @@ class ShiftBlockService
                 throw ValidationException::withMessages(['leg_departure_times' => ['Leg departure times must be strictly increasing.']]);
             }
         }
+
+        $this->legPlanning->assertNoOverlap((int) $fleetRoute->route_id, $payload['service_type'] ?? null, (string) $scheduledDate, $legTimes);
 
         // One-shift-block-per-day exclusivity (supersedes the earlier
         // per-trip exclusivity check — see TripService::assertNotAlreadyAssignedThatDay()
@@ -328,6 +332,96 @@ class ShiftBlockService
                 NotificationLink::blockAssignedData('conductor', (int) $block->shift_block_id),
             );
         }
+    }
+
+    /**
+     * 2026-10-27 (§4.2): the Operator moves one leg of a block to a new time (traffic, a late bus, a change of plan).
+     * Only a leg that has not started boarding. The block's leg order stays, the leg still leaves after the previous
+     * one is expected back plus the turnaround (and the next one after it), and the bus must be free and inside its
+     * route hours at the new time. A leg that passengers already hold tickets or seats on may move later, never
+     * earlier, so nobody arrives after their bus has gone. The Driver and Chauffeur are told.
+     *
+     * @return array{shift_block: ShiftBlock, planning: array<string, mixed>}
+     *
+     * @throws ValidationException
+     */
+    public function rescheduleLeg(int $blockId, int $tripId, string $newTime, ?object $actor = null): array
+    {
+        $result = DB::transaction(function () use ($blockId, $tripId, $newTime) {
+            $block = $this->findById($blockId);
+            $legs = Trip::where('shift_block_id', $blockId)->orderBy('departure_time')->lockForUpdate()->get()->values();
+            $index = $legs->search(fn (Trip $leg) => (int) $leg->trip_id === $tripId);
+            if ($index === false) {
+                throw ValidationException::withMessages(['trip_id' => ['This leg is not part of the shift block.']]);
+            }
+
+            $leg = $legs[$index];
+            if (! in_array($leg->status, ['scheduled', 'delayed'], true)) {
+                throw ValidationException::withMessages(['departure_time' => ['Only a leg that has not started boarding can be moved.']]);
+            }
+
+            $oldTime = substr((string) $leg->departure_time, 0, 5);
+            $date = $leg->trip_date->toDateString();
+            $timezone = config('app.timezone', 'Asia/Manila');
+            if (Carbon::parse($date.' '.$newTime, $timezone)->lt(Carbon::now($timezone))) {
+                throw ValidationException::withMessages(['departure_time' => ['Choose a time that has not passed yet.']]);
+            }
+            if ($newTime < $oldTime && (int) $leg->total_occupancy > 0) {
+                throw ValidationException::withMessages(['departure_time' => ["Passengers already hold tickets for {$oldTime}. You can move this leg later, not earlier."]]);
+            }
+
+            $times = $legs->map(fn (Trip $l) => substr((string) $l->departure_time, 0, 5))->all();
+            $times[$index] = $newTime;
+            for ($i = 1; $i < count($times); $i++) {
+                if ($times[$i] <= $times[$i - 1]) {
+                    throw ValidationException::withMessages(['departure_time' => ['The legs must stay in order. Move the next leg first.']]);
+                }
+            }
+
+            $fleetRoute = $this->fleetRouteRepository->findWithRoute((int) $leg->fleet_route_id);
+            $this->legPlanning->assertNoOverlap((int) $fleetRoute->route_id, $leg->service_type, $date, $times, 'departure_time');
+            $this->fleetGuard->assertCanSchedule((int) $leg->fleet_route_id, $date, $newTime, $leg->leg_direction, ServiceType::normalize($leg->service_type), (int) $leg->trip_id);
+            if ($index === 0) {
+                $this->assertRestThresholdMet('driver', (int) $block->driver_id, $date, $newTime);
+                $this->assertRestThresholdMet('conductor', (int) $block->conductor_id, $date, $newTime);
+            }
+
+            $leg->update(['departure_time' => $newTime]);
+            AuditLogger::log('shift_block.leg_rescheduled', 'Trip', (int) $leg->trip_id, ['shift_block_id' => $blockId, 'from' => $oldTime, 'to' => $newTime]);
+
+            return [$block, $leg, $oldTime, $times, (int) $fleetRoute->route_id, $index + 1];
+        });
+
+        [$block, $leg, $oldTime, $times, $routeId, $legNumber] = $result;
+        $message = "Leg {$legNumber} on ".$leg->trip_date->toDateString()." now leaves at {$newTime}, not {$oldTime}.";
+        foreach ([$block->driver_id, $block->conductor_id] as $staffId) {
+            $staff = $staffId ? $this->staffRepository->findById((int) $staffId) : null;
+            if ($staff?->user) {
+                $this->fcmService->sendToUser($staff->user, 'Leg time changed', $message, NotificationLink::blockAssignedData($staff->user->role, (int) $block->shift_block_id));
+            }
+        }
+
+        return [
+            'shift_block' => $this->shiftBlockRepository->findById($blockId),
+            'planning' => $this->legPlanning->review($routeId, $leg->service_type, $leg->trip_date->toDateString(), $times),
+        ];
+    }
+
+    /** The planner's checks for a block's saved times (flags only), shown after a block is created. */
+    public function planningReview(ShiftBlock $block): array
+    {
+        $legs = $block->legs->sortBy('departure_time')->values();
+        $first = $legs->first();
+        if (! $first) {
+            return ['summary' => [], 'flags' => []];
+        }
+
+        return $this->legPlanning->review(
+            (int) $first->fleetRoute->route_id,
+            $first->service_type,
+            $first->trip_date->toDateString(),
+            $legs->map(fn (Trip $leg) => substr((string) $leg->departure_time, 0, 5))->all(),
+        );
     }
 
     public function findById(int $blockId): ShiftBlock

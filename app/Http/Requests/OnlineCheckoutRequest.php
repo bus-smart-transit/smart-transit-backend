@@ -25,6 +25,8 @@ class OnlineCheckoutRequest extends FormRequest
             'items' => 'required|array|min:1',
             'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
             'items.*.journey_leg' => 'prohibited',
+            // 2026-10-27: discounts are given on the bus only; online fares earn reward points.
+            'items.*.discount_type_key' => 'prohibited',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             // Online tickets are for seats; standing places are sold only on the bus (TicketService::priceItem).
             'items.*.seat_type' => 'required|string|in:seated',
@@ -79,6 +81,7 @@ class OnlineCheckoutRequest extends FormRequest
             'items.*.seat_type.in' => 'Online tickets are for seats only. Standing places are sold on the bus.',
             'journey_type.in' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
             'items.*.journey_leg.prohibited' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
+            'items.*.discount_type_key.prohibited' => 'Discounts are given on the bus only. Online fares earn reward points instead.',
         ];
     }
 

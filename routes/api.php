@@ -6,6 +6,7 @@ use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
 use App\Http\Controllers\CrewShiftLogController;
+use App\Http\Controllers\DiscountTypeController;
 use App\Http\Controllers\DriverShiftController;
 use App\Http\Controllers\DropoffOptionsController;
 use App\Http\Controllers\DropoffRulesController;
@@ -174,6 +175,9 @@ Route::prefix('operator')
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
         // §4.8: the crew's time in / time out (Start Shift / End Shift) on this Operator's buses, read only.
         Route::get('crew-shifts', [CrewShiftLogController::class, 'index'])->middleware('throttle:60,1');
+        // 2026-10-27: onsite discount types (Student, Senior citizen, PWD) and this Operator's on/off choice.
+        Route::get('discount-types', [DiscountTypeController::class, 'operatorIndex']);
+        Route::patch('discount-types/{key}/active', [DiscountTypeController::class, 'setActive'])->where('key', '[a-z_]+')->middleware('throttle:30,1');
 
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
@@ -248,6 +252,8 @@ Route::prefix('operator')
         Route::get('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'show']);
         Route::patch('shift-blocks/{shiftBlockId}', [ShiftBlockController::class, 'update']);
         Route::patch('shift-blocks/{shiftBlockId}/cancel', [ShiftBlockController::class, 'cancel']);
+        // 2026-10-27 (§4.2): move one leg that has not started to a new time (checked like a new block; crew told).
+        Route::patch('shift-blocks/{shiftBlockId}/legs/{tripId}', [ShiftBlockController::class, 'rescheduleLeg'])->whereNumber(['shiftBlockId', 'tripId'])->middleware('throttle:30,1');
         Route::patch('shift-blocks/{shiftBlockId}/mark-reviewed', [ShiftBlockController::class, 'markReviewed']);
         Route::post('shift-blocks/{shiftBlockId}/override-handoff', [ShiftBlockController::class, 'overrideHandoff']);
         Route::post('shift-blocks/{shiftBlockId}/override-takeover', [ShiftBlockController::class, 'overrideTakeover']);
@@ -364,6 +370,8 @@ Route::prefix('conductor')
         Route::patch('assignments/{key}/accept', [AssignmentController::class, 'acceptAsConductor'])->where('key', '(block|trip)-[0-9]+');
         Route::patch('assignments/{key}/decline', [AssignmentController::class, 'declineAsConductor'])->where('key', '(block|trip)-[0-9]+');
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
+        // 2026-10-27: the onsite discounts on for this Chauffeur's bus.
+        Route::get('discount-types', [DiscountTypeController::class, 'conductorIndex']);
 
         // Batch 18: Shift Block Hand-off System
         Route::get('shift-blocks', [ShiftBlockController::class, 'myBlocksAsConductor']);
@@ -392,6 +400,8 @@ Route::prefix('conductor')
             Route::post('trips/current/check-ins', [TicketController::class, 'checkIn'])->middleware('throttle:60,1');
             Route::get('trips/current/check-ins', [TicketController::class, 'checkIns'])->middleware('throttle:120,1');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
+            // 2026-10-27 (§7): a destination group gets off in one action (the single-ticket drop-off above stays as the exception path).
+            Route::post('trips/current/drop-off-groups/confirm', [TicketController::class, 'confirmDropOffGroup'])->middleware('throttle:60,1');
         });
 
         // Daily fleet PIN — view and verify

@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ConfirmDropOffGroupRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
 use App\Http\Requests\ScanGroupRequest;
 use App\Http\Requests\ScanTicketRequest;
 use App\Repositories\RouteStopRepository;
 use App\Services\AuditLogger;
 use App\Services\ConductorShiftService;
+use App\Services\DropOffGroupService;
 use App\Services\LegProgressionService;
 use App\Services\MidTripBoardingService;
 use App\Services\OccupancyService;
@@ -258,6 +260,31 @@ class TicketController extends Controller
         $this->occupancyService->recordAlighting($ticketId, (int) $trip->trip_id);
 
         return $this->success(null, 'Passenger alighting recorded successfully');
+    }
+
+    /**
+     * 2026-10-27 (§7): the Chauffeur confirms that a destination group got off, in one action.
+     * POST /conductor/trips/current/drop-off-groups/confirm
+     */
+    public function confirmDropOffGroup(ConfirmDropOffGroupRequest $request, DropOffGroupService $dropOffGroups)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+        $trip = $this->tripService->getCurrentTripForConductor($companyUser->company_user_id);
+        if (! $trip) {
+            return $this->error('No active trip found.', 404);
+        }
+
+        $result = $dropOffGroups->confirm(
+            (int) $trip->trip_id,
+            (int) $companyUser->company_user_id,
+            (string) $request->validated('destination_key'),
+            $request->validated('ticket_ids'),
+        );
+
+        return $this->success($result, 'Drop-off confirmed');
     }
 
     /**

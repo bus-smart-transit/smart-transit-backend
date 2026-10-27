@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RescheduleLegRequest;
 use App\Services\AuditLogger;
 use App\Services\ShiftBlockService;
 use App\Traits\ApiResponse;
@@ -80,7 +81,23 @@ class ShiftBlockController extends Controller
             'block_type' => $validated['block_type'],
         ]);
 
+        // 2026-10-27 (§4.2): the planner's flags for the saved times (overtime, driving limit, rest, night work).
+        $block->setAttribute('planning', $this->shiftBlockService->planningReview($block));
+
         return $this->success($block, 'Shift block created successfully');
+    }
+
+    /** 2026-10-27 (§4.2): the Operator moves one leg that has not started to a new time. */
+    public function rescheduleLeg(RescheduleLegRequest $request, int $shiftBlockId, int $tripId)
+    {
+        $block = $this->shiftBlockService->findById($shiftBlockId);
+        if ($denied = $this->assertOperatorOwnsBlock($request, $block)) {
+            return $denied;
+        }
+
+        $result = $this->shiftBlockService->rescheduleLeg($shiftBlockId, $tripId, (string) $request->validated('departure_time'), $request->user());
+
+        return $this->success($result, 'Leg time changed');
     }
 
     /** Phase B (§4.13): POST shift-blocks/range/preview. What each day From..To would be; nothing is saved. */

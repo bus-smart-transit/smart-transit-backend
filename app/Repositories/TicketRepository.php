@@ -88,6 +88,21 @@ class TicketRepository
      * Guarded by `where('status', 'boarded')` so a duplicate/racing call
      * can't re-stamp `alighted_at` on an already-alighted ticket.
      */
+    /**
+     * 2026-10-27 (§7): these tickets of the trip, locked for a group drop-off. Only boarded tickets not yet off the bus.
+     *
+     * @param  list<int>  $ticketIds
+     */
+    public function lockBoardedInTrip(int $tripId, array $ticketIds): Collection
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->whereIn('ticket_id', $ticketIds)
+            ->where('status', 'boarded')
+            ->whereNull('alighted_at')
+            ->lockForUpdate()
+            ->get();
+    }
+
     public function markAlighted(int $ticketId): bool
     {
         return Ticket::where('ticket_id', $ticketId)

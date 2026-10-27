@@ -648,6 +648,10 @@ class PaymentService
             'amount' => round((float) $priced['amount'], 2),
             'distance_km' => isset($priced['distance_km']) ? (float) $priced['distance_km'] : null,
             'seat_type' => (string) $priced['seat_type'],
+            // 2026-10-27: with an onsite discount, the fare before it and the discount (null without one).
+            'original_amount' => isset($priced['original_amount']) ? (float) $priced['original_amount'] : null,
+            'discount_amount' => isset($priced['discount_amount']) ? (float) $priced['discount_amount'] : null,
+            'discount_label' => $priced['discount_label'] ?? null,
         ];
     }
 

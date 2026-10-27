@@ -45,7 +45,9 @@ function dfsRoute(): array
 
 function dfsPlan($test, array $f, string $date, string $first): array
 {
-    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => $date, 'first_departure_time' => $first]);
+    // 2026-10-27: these scenarios are about the peak-hour factors on a set number of legs, so they ask for that number
+    // (without leg_count the planner decides how many legs fit; LegPlanningTest covers that).
+    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => $date, 'first_departure_time' => $first, 'leg_count' => (int) config('shift_blocks.legs_per_block')]);
 
     return $test->actingAs($f['operator'])->getJson("/api/operator/shift-blocks/plan-legs?$query")->assertSuccessful()->json('data');
 }

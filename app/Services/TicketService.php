@@ -36,6 +36,7 @@ class TicketService
         private CustomDropoffService $customDropoffService,
         private TicketTrackingService $trackingService,
         private PendingBoardingService $pendingBoardings,
+        private OnsiteDiscountService $onsiteDiscounts,
     ) {}
 
     /**
@@ -133,6 +134,12 @@ class TicketService
         // stored point's, never the request's.
         $item = $this->customDropoffService->normaliseItem($item, (int) $trip->fleetRoute->route_id);
 
+        // 2026-10-27 (§6): on a bus already on the road, a cash ticket cannot go to a stop the Driver has already
+        // acknowledged (passed). The boarding stop may be behind the bus: a passenger who got on there pays now.
+        if ($onsite && isset($item['destination_stop_id']) && in_array($trip->status, ['departed', 'in-progress'], true)) {
+            $this->assertDestinationNotPassed($trip, (int) $item['destination_stop_id']);
+        }
+
         if (isset($item['origin_stop_id'], $item['destination_stop_id'])) {
             $reserved = $this->priceByStops($trip, $item);
         } elseif (isset($item['origin_stop_id'], $item['destination_lat'], $item['destination_lng'])) {
@@ -142,6 +149,9 @@ class TicketService
                 'item' => ['Provide origin_stop_id with either destination_stop_id or a custom drop-off (destination_lat/lng).'],
             ]);
         }
+
+        // 2026-10-27: an onsite discount (cash only, ID checked), applied here so the quote and the sale agree.
+        $reserved = $this->onsiteDiscounts->apply($reserved, $item, $onsite, (int) $trip->company_user_id);
 
         // Passenger In: which check-in this sale settles, and how the boarding stop was found (stop | check_in | bus_position).
         $reserved['pending_boarding_id'] = isset($item['pending_boarding_id']) ? (int) $item['pending_boarding_id'] : null;
@@ -223,6 +233,37 @@ class TicketService
             'boarding_distance_m' => $this->routeStopMeters($originRouteStop),
             'alighting_distance_m' => $this->routeStopMeters($destinationRouteStop),
         ];
+    }
+
+    /**
+     * §6: the destination must still be ahead of the last stop the Driver acknowledged on this leg (outbound: further
+     * from the route's first stop; reverse: nearer to it). No acknowledgement yet means nothing has been passed.
+     *
+     * @throws ValidationException
+     */
+    private function assertDestinationNotPassed(object $trip, int $destinationStopId): void
+    {
+        if (! $trip->last_acknowledged_stop_id) {
+            return;
+        }
+
+        $routeId = (int) $trip->fleetRoute->route_id;
+        $acknowledged = $this->routeStopRepository->findByRouteAndStop($routeId, (int) $trip->last_acknowledged_stop_id);
+        $destination = $this->routeStopRepository->findByRouteAndStop($routeId, $destinationStopId);
+        if (! $acknowledged || ! $destination) {
+            return; // an unknown stop is refused by the stop checks that follow
+        }
+
+        $ackKm = (float) $acknowledged->distance_from_origin_km;
+        $destinationKm = (float) $destination->distance_from_origin_km;
+        $passed = LegDistance::direction($trip->leg_direction) === 'reverse'
+            ? $destinationKm >= $ackKm - 0.001
+            : $destinationKm <= $ackKm + 0.001;
+
+        if ($passed) {
+            $name = $destination->stop?->stop_name ?? 'that stop';
+            throw ValidationException::withMessages(['destination_stop_id' => ["The bus has already passed {$name}. Choose a stop ahead."]]);
+        }
     }
 
     /** Both stops must be places this trip's bus stops at: pass-through points never are (Task 2). */
@@ -447,6 +488,12 @@ class TicketService
             'alighting_point_id' => $reserved['alighting_point_id'] ?? null,
             'boarding_distance_m' => $reserved['boarding_distance_m'] ?? null,
             'alighting_distance_m' => $reserved['alighting_distance_m'] ?? null,
+            'discount_type_key' => $reserved['discount_type_key'] ?? null,
+            'discount_label' => $reserved['discount_label'] ?? null,
+            'discount_rate' => $reserved['discount_rate'] ?? null,
+            'original_amount' => $reserved['original_amount'] ?? null,
+            'discount_amount' => $reserved['discount_amount'] ?? null,
+            'discount_id_checked_at' => $reserved['discount_id_checked_at'] ?? null,
         ]);
 
         if ($passengerId) {

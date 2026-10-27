@@ -22,6 +22,9 @@ class OnsiteQuoteRequest extends FormRequest
             'pending_boarding_id' => 'nullable|integer|exists:pending_boardings,id',
             'origin_stop_id' => 'required_without_all:boarding_mode,pending_boarding_id|nullable|integer|exists:stops,stop_id',
             'destination_stop_id' => 'required|integer|exists:stops,stop_id',
+            // 2026-10-27: the quote includes the discount, so the sale's fare check compares like with like.
+            'discount_type_key' => 'nullable|string|max:32',
+            'discount_id_checked' => 'nullable|boolean',
         ];
     }
 }

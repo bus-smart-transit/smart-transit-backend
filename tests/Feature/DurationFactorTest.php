@@ -10,6 +10,7 @@ use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
 use App\Services\RouteDurationFactorService;
+use App\Services\ShiftBlockService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -151,7 +152,8 @@ it('scales the booking list: boarding and arrival times and the journey time', f
 it('suggests each next leg at the previous leg\'s expected end plus the turnaround buffer, scaled by the window of its own start (4 legs)', function () {
     $f = dfFixture();
     dfWindow($f['route']->route_id, '06:00', '08:00', 2.0);
-    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => '2026-10-05', 'first_departure_time' => '06:00']);
+    // 2026-10-27: leg_count asks for a set number of legs (without it the planner decides from the travel time).
+    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => '2026-10-05', 'first_departure_time' => '06:00', 'leg_count' => 4]);
 
     $plan = $this->actingAs($f['operator'])->getJson("/api/operator/shift-blocks/plan-legs?$query")->assertSuccessful()->json('data');
     $legs = collect($plan['legs']);
@@ -171,7 +173,7 @@ it('plans a 2-leg block with the configured leg count, and the operator can stil
     $f = dfFixture();
     config(['shift_blocks.legs_per_block' => 2]);
     dfWindow($f['route']->route_id, '06:00', '08:00', 1.5);
-    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => '2026-10-05', 'first_departure_time' => '06:30']);
+    $query = http_build_query(['fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'scheduled_date' => '2026-10-05', 'first_departure_time' => '06:30', 'leg_count' => 2]);
 
     $legs = collect($this->actingAs($f['operator'])->getJson("/api/operator/shift-blocks/plan-legs?$query")->json('data.legs'));
     expect($legs->pluck('suggested_departure')->all())->toBe(['06:30', '08:00']); // 06:30 + 60 = 07:30, + 30 buffer = 08:00: the window's end is exclusive, so leg 2 runs at 1.0
@@ -180,7 +182,7 @@ it('plans a 2-leg block with the configured leg count, and the operator can stil
     // Creating a block takes exactly the operator's own times (the suggestion is not enforced).
     $driver = dfStaff('driver');
     $conductor = dfStaff('conductor');
-    $block = app(\App\Services\ShiftBlockService::class)->createBlock([
+    $block = app(ShiftBlockService::class)->createBlock([
         'fleet_route_id' => $f['fleetRoute']->fleet_route_id, 'driver_id' => $driver->companyProfile->company_user_id, 'conductor_id' => $conductor->companyProfile->company_user_id,
         'company_user_id' => $f['company'], 'block_type' => 'morning', 'scheduled_date' => '2026-10-05', 'leg_departure_times' => ['06:30', '09:15'],
     ]);
@@ -226,7 +228,7 @@ it('reports the median actual leg duration per route, direction and hour, with s
     // 6 completed morning legs outbound: 50, 50, 52, 54, 60, 50 minutes -> median 51.0? sorted 50,50,50,52,54,60 -> (50+52)/2 = 51
     foreach ([50, 50, 52, 54, 60, 50] as $i => $minutes) {
         $trip = $f['mk']('2026-09-2'.($i + 1), '08:00', 'outbound', 'completed');
-        $trip->forceFill(['departed_at' => "2026-09-2".($i + 1)." 08:00:00", 'completed_at' => Carbon::parse('2026-09-2'.($i + 1).' 08:00:00', 'Asia/Manila')->addMinutes($minutes)->format('Y-m-d H:i:s')])->save();
+        $trip->forceFill(['departed_at' => '2026-09-2'.($i + 1).' 08:00:00', 'completed_at' => Carbon::parse('2026-09-2'.($i + 1).' 08:00:00', 'Asia/Manila')->addMinutes($minutes)->format('Y-m-d H:i:s')])->save();
     }
     // 2 legs reverse at 17:00: too few for a proposal.
     foreach ([45, 47] as $i => $minutes) {

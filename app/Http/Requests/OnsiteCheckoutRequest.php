@@ -24,6 +24,9 @@ class OnsiteCheckoutRequest extends FormRequest
             'items.*.pending_boarding_id' => 'nullable|integer|exists:pending_boardings,id',
             // The fare the Chauffeur was shown; a different server fare refuses the sale (TicketService::reserveAndPrice).
             'items.*.quoted_amount' => 'nullable|numeric|min:0',
+            // 2026-10-27: one onsite discount per ticket, only after the Chauffeur checked the ID (OnsiteDiscountService).
+            'items.*.discount_type_key' => 'nullable|string|max:32',
+            'items.*.discount_id_checked' => 'nullable|boolean',
             'items.*.origin_stop_id' => 'required_without_all:items.*.boarding_mode,items.*.pending_boarding_id|nullable|integer|exists:stops,stop_id',
             // Task 7: the destination is a stop or a custom drop-off pin (coordinates re-validated and snapped server-side).
             'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.alighting_point_id|nullable|integer|exists:stops,stop_id',

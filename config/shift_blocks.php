@@ -17,6 +17,11 @@ return [
     // round trips before hand-off).
     'legs_per_block' => (int) env('SHIFT_BLOCK_LEGS_PER_BLOCK', 4),
 
+    // 2026-10-27 (§4.2): a block is no longer a fixed number of legs. The planner (LegPlanningService) suggests how many
+    // fit from the route's travel time; a block may have 1 to this many. legs_per_block above stays as the count the
+    // older screens and tests fill in by default.
+    'max_legs_per_block' => (int) env('SHIFT_BLOCK_MAX_LEGS_PER_BLOCK', 8),
+
     // Terminal Turnaround Buffer: wait time between legs WITHIN the same
     // block, at the terminal — distinct from the Rest Rule below.
     'terminal_turnaround_buffer_minutes' => (int) env('SHIFT_BLOCK_TURNAROUND_BUFFER_MINUTES', 30),

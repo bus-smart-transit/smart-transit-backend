@@ -13,11 +13,16 @@ use App\Repositories\TripRepository;
 use App\Services\FcmService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
 // Regression tests for the scheduled auto-delay → passenger notification flow.
+// 2026-10-27: the clock is fixed at midday Manila. The trips below are "2 minutes ago" and "in an hour" on today's date,
+// which crossed midnight (and failed) when the suite ran just before or after 12:00 AM.
+beforeEach(fn () => Carbon::setTestNow(Carbon::parse('2026-10-06 12:00:00', 'Asia/Manila')));
+afterEach(fn () => Carbon::setTestNow());
 
 function makeOperatorForDelayNotificationTest(): StaffUser
 {

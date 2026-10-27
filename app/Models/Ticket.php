@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperTicket
+ *
  * @property int $ticket_id
  * @property int $fleet_route_id
  * @property int $trip_id
@@ -15,21 +17,22 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $ticket_uuid
  * @property string $status
  * @property numeric $amount
- * @property \Illuminate\Support\Carbon|null $boarded_at
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property Carbon|null $boarded_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  * @property string|null $seat_type
  * @property numeric|null $distance_km
  * @property int|null $origin_stop_id
  * @property int|null $destination_stop_id
- * @property \Illuminate\Support\Carbon|null $alighted_at
- * @property-read \App\Models\Stop|null $destinationStop
- * @property-read \App\Models\FareRule|null $fareRule
- * @property-read \App\Models\FleetRoute $fleetRoute
- * @property-read \App\Models\Stop|null $originStop
- * @property-read \App\Models\PassengerUser|null $passenger
- * @property-read \App\Models\Payment $payment
- * @property-read \App\Models\Trip $trip
+ * @property Carbon|null $alighted_at
+ * @property-read Stop|null $destinationStop
+ * @property-read FareRule|null $fareRule
+ * @property-read FleetRoute $fleetRoute
+ * @property-read Stop|null $originStop
+ * @property-read PassengerUser|null $passenger
+ * @property-read Payment $payment
+ * @property-read Trip $trip
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket query()
@@ -50,11 +53,13 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereTicketUuid($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereTripId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Ticket whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class Ticket extends Model
 {
     protected $table = 'tickets';
+
     protected $primaryKey = 'ticket_id';
 
     protected $fillable = [
@@ -83,6 +88,12 @@ class Ticket extends Model
         'alighting_distance_m',
         'tracking_token_hash',
         'tracking_token_enc',
+        'discount_type_key',
+        'discount_label',
+        'discount_rate',
+        'original_amount',
+        'discount_amount',
+        'discount_id_checked_at',
     ];
 
     // The tracking token is a bearer secret: never serialised with a ticket. Owners get it only
@@ -93,12 +104,16 @@ class Ticket extends Model
     {
         return [
             'tracking_token_enc' => 'encrypted',
-            'boarded_at'      => 'datetime',
-            'alighted_at'     => 'datetime',
-            'origin_lat'      => 'float',
-            'origin_lng'      => 'float',
+            'boarded_at' => 'datetime',
+            'alighted_at' => 'datetime',
+            'origin_lat' => 'float',
+            'origin_lng' => 'float',
             'destination_lat' => 'float',
             'destination_lng' => 'float',
+            'discount_rate' => 'float',
+            'original_amount' => 'float',
+            'discount_amount' => 'float',
+            'discount_id_checked_at' => 'datetime',
         ];
     }
 

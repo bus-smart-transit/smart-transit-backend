@@ -4,8 +4,8 @@ namespace App\Services;
 
 use App\Support\BusLabel;
 use App\Support\FinancialClock;
-use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -78,7 +78,7 @@ class FinancialReportService
         $refunded = $refunds->sum('cents');
 
         return [
-            'filters' => \Illuminate\Support\Arr::only($filters, ['from', 'to', 'route_id', 'fleet_id', 'trip_id', 'payment_method', 'channel', 'refund_basis']),
+            'filters' => Arr::only($filters, ['from', 'to', 'route_id', 'fleet_id', 'trip_id', 'payment_method', 'channel', 'refund_basis']),
             'currency' => 'PHP',
             'kpis' => [
                 'gross' => $this->money($gross),
@@ -91,6 +91,7 @@ class FinancialReportService
                 'cash' => $this->split($sales, $refunds, 'cash', $gross),
                 'online' => $this->split($sales, $refunds, 'online', $gross),
             ],
+            'discounts' => $this->discounts($sales),
             'channels' => $this->channels($sales, $refunds, $gross),
             'by_route' => $this->groupBy($sales, $refunds, fn ($r) => (string) $r['route_id'], fn ($r) => ['route_id' => $r['route_id'], 'route_name' => $r['route_name']]),
             'by_bus' => $this->groupBy($sales, $refunds, fn ($r) => (string) $r['fleet_id'], fn ($r) => ['fleet_id' => $r['fleet_id'], 'plate_number' => $r['plate_number'], 'bus_label' => $r['bus_label']]),
@@ -359,6 +360,7 @@ class FinancialReportService
     {
         return [
             'tickets.ticket_id', 'tickets.ticket_uuid', 'tickets.amount', 'tickets.status as ticket_status', 'tickets.seat_type', 'tickets.boarded_at',
+            'tickets.discount_type_key', 'tickets.discount_label', 'tickets.discount_rate', 'tickets.original_amount', 'tickets.discount_amount',
             'trips.trip_id', 'trips.trip_date', 'trips.departure_time', 'trips.leg_direction', 'trips.service_type', 'trips.shift_block_id',
             'fleets.fleet_id', 'fleets.plate_number', 'fleets.bus_company_name', 'fleets.body_no',
             'routes.route_id', 'routes.route_name', 'routes.origin', 'routes.destination',
@@ -413,6 +415,12 @@ class FinancialReportService
             'paid_at' => $paidAt,
             'refund_completed_at' => $refundCents > 0 ? FinancialClock::fromUtc($r->res_completed_at) : null,
             'status' => $status,
+            // 2026-10-27: the onsite discount snapshot on the ticket (null without one).
+            'discount_type_key' => $r->discount_type_key,
+            'discount_label' => $r->discount_label,
+            'discount_rate' => $r->discount_rate !== null ? (float) $r->discount_rate : null,
+            'original_cents' => $r->original_amount !== null ? (int) round(((float) $r->original_amount) * 100) : null,
+            'discount_cents' => $r->discount_amount !== null ? (int) round(((float) $r->discount_amount) * 100) : 0,
         ];
     }
 
@@ -446,6 +454,29 @@ class FinancialReportService
     }
 
     // ------------------------------------------------------------------ figures
+
+    /**
+     * 2026-10-27: the onsite discounts given in the range, from the ticket snapshots (the type's current setting plays
+     * no part).
+     *
+     * @return array{total: float, tickets: int, by_type: list<array<string, mixed>>}
+     */
+    private function discounts(Collection $sales): array
+    {
+        $discounted = $sales->filter(fn ($s) => $s['discount_type_key'] !== null && $s['discount_cents'] > 0);
+
+        return [
+            'total' => $this->money($discounted->sum('discount_cents')),
+            'tickets' => $discounted->count(),
+            'by_type' => $discounted->groupBy('discount_type_key')->map(fn (Collection $rows, $key) => [
+                'type_key' => (string) $key,
+                'label' => $rows->first()['discount_label'],
+                'rate' => $rows->first()['discount_rate'],
+                'tickets' => $rows->count(),
+                'amount' => $this->money($rows->sum('discount_cents')),
+            ])->sortByDesc('amount')->values()->all(),
+        ];
+    }
 
     private function money(int $cents): float
     {
@@ -613,6 +644,11 @@ class FinancialReportService
             'status' => $r['status'],
             'status_label' => $labels[$r['status']] ?? $r['status'],
             'refund_completed_at' => $r['refund_completed_at']?->format('Y-m-d H:i:s'),
+            'discount_type_key' => $r['discount_type_key'],
+            'discount_label' => $r['discount_label'],
+            'discount_rate' => $r['discount_rate'],
+            'original_amount' => $r['original_cents'] !== null ? $this->money($r['original_cents']) : null,
+            'discount_amount' => $this->money($r['discount_cents']),
         ];
     }
 }
