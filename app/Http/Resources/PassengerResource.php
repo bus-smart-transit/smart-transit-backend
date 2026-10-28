@@ -14,20 +14,21 @@ class PassengerResource extends JsonResource
     {
         return [
             'passenger_uuid' => $this->passenger_uuid,
-            'name'           => $this->name,
-            'phone_num'      => $this->phone_num,
-            'address'        => $this->address,
-            'birth_date'     => $this->birth_date,
-            'reward_points'  => $this->reward_points,
-            'email'          => $this->user?->email,
-            'username'       => $this->user?->username,
+            'name' => $this->name,
+            'phone_num' => $this->phone_num,
+            'address' => $this->address,
+            'birth_date' => $this->birth_date,
+            'reward_points' => $this->reward_points,
+            'gender' => $this->gender,
+            'email' => $this->user?->email,
+            'username' => $this->user?->username,
             'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
             'user' => [
                 'email' => $this->user?->email,
                 'username' => $this->user?->username,
                 'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
             ],
-            'created_at'     => $this->created_at,
+            'created_at' => $this->created_at,
         ];
     }
 }

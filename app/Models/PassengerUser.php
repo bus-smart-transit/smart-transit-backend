@@ -1,11 +1,13 @@
 <?php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperPassengerUser
+ *
  * @property int $passenger_id
  * @property string $passenger_uuid
  * @property int $user_id
@@ -13,10 +15,11 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $phone_num
  * @property string $address
  * @property float $reward_points
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  * @property string|null $birthdate
- * @property-read \App\Models\User $user
+ * @property-read User $user
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser query()
@@ -30,6 +33,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereRewardPoints($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|PassengerUser whereUserId($value)
+ *
  * @mixin \Eloquent
  */
 class PassengerUser extends Model
@@ -39,6 +43,7 @@ class PassengerUser extends Model
     // Standard int PK — no HasUuids trait needed since passenger_uuid
     // is generated manually in the repository, not by this trait
     public $incrementing = true;
+
     protected $keyType = 'int';
 
     protected $fillable = [
@@ -50,6 +55,7 @@ class PassengerUser extends Model
         'phone_num',
         'address',
         'reward_points',
+        'gender',
     ];
 
     protected $appends = [

@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Repositories\PassengerRepository;
@@ -10,8 +11,7 @@ class PassengerService
     public function __construct(
         private PassengerRepository $passengerRepository,
         private UserRepository $userRepository,
-    ) {
-    }
+    ) {}
 
     public function listPassenger(int $perPage = 15)
     {
@@ -30,6 +30,7 @@ class PassengerService
                 'phone_num' => $payload['phone_num'],
                 'address' => $payload['address'] ?? '',
                 'birthdate' => $payload['birthdate'],
+                'gender' => $payload['gender'] ?? null,
             ]);
         });
     }

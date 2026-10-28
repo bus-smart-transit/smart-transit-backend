@@ -2,20 +2,23 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperStaffUser
+ *
  * @property int $company_user_id
  * @property string $company_user_uuid
  * @property int $user_id
  * @property string $phone_num
  * @property string $name
  * @property string $address
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\User $user
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read User $user
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser query()
@@ -27,6 +30,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser wherePhoneNum($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUserId($value)
+ *
  * @mixin \Eloquent
  */
 class StaffUser extends Model
@@ -37,8 +41,11 @@ class StaffUser extends Model
 
     // Keep incrementing true since your primary key is an auto-incrementing integer id
     public $incrementing = true;
+
     protected $keyType = 'int';
+
     protected $table = 'company_users';
+
     protected $fillable = [
         'user_id',
         'company_user_uuid',
@@ -48,6 +55,7 @@ class StaffUser extends Model
         'birth_date',
         'is_available',
         'available_since',
+        'gender',
     ];
 
     protected function casts(): array
@@ -62,6 +70,7 @@ class StaffUser extends Model
     {
         return ['company_user_uuid'];
     }
+
     /**
      * Get the user that owns this record.
      */
