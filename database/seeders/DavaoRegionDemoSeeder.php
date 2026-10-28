@@ -13,6 +13,7 @@ use App\Models\Stop;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * DEV / DEMO DATA ONLY. A clean start after a full database reset: the demo accounts, three routes in the Davao
@@ -103,6 +104,8 @@ class DavaoRegionDemoSeeder extends Seeder
         DB::transaction(function () {
             $staff = $this->accounts();
             $this->passengers();
+            // 2026-10-28: demo accounts count as email-verified (passenger sign-in needs a verified email).
+            User::where('email', 'like', '%@smarttransit.com')->whereNull('email_verified_at')->update(['email_verified_at' => now()]);
             $operator = $staff['operator'];
             foreach (self::ROUTES as $name => [$origin, $destination, $stops, $bus]) {
                 $route = Route::firstOrCreate(['route_name' => $name], ['origin' => $origin, 'destination' => $destination]);
@@ -141,7 +144,7 @@ class DavaoRegionDemoSeeder extends Seeder
             $user = User::updateOrCreate(['email' => $email], ['username' => $username, 'password' => self::PASSWORD, 'role' => 'passenger']);
             PassengerUser::firstOrCreate(
                 ['user_id' => $user->user_id],
-                ['passenger_uuid' => (string) \Illuminate\Support\Str::uuid(), 'name' => $name, 'phone_num' => $phone, 'address' => $address, 'birth_date' => now()->subYears(25)]
+                ['passenger_uuid' => (string) Str::uuid(), 'name' => $name, 'phone_num' => $phone, 'address' => $address, 'birth_date' => now()->subYears(25)]
             );
         }
     }

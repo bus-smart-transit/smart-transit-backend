@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Requests\ScanGroupRequest;
+use App\Http\Requests\ScanTicketRequest;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\PassengerUser;
@@ -10,6 +12,7 @@ use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -241,7 +244,11 @@ describe('QR Code & Occupancy Monitoring System', function () {
 
         $registerResponse->assertStatus(201);
 
-        $token = $registerResponse->json('data.token');
+        // 2026-10-28: sign-up gives no token until the email is verified; this test is about QR codes, so the
+        // passenger is verified and signed in directly.
+        $user = User::findOrFail($registerResponse->json('data.user_id'));
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $token = $user->createToken('test-token')->plainTextToken;
 
         $response = $this->withHeader('Authorization', "Bearer $token")
             ->getJson('/api/passengers/tickets/'.Str::uuid().'/qr');
@@ -395,10 +402,10 @@ describe('QR Code & Occupancy Monitoring System', function () {
             ->and($data['group_qr_content'])->toBe('grp:TXN-PAYLOAD-1');
 
         // The validator accepts the payload exactly as the scanner posts it.
-        $rules = (new \App\Http\Requests\ScanTicketRequest())->rules();
-        expect(\Illuminate\Support\Facades\Validator::make(['ticket_uuid' => $data['qr_content']], ['ticket_uuid' => $rules['ticket_uuid']])->passes())->toBeTrue();
-        $groupRules = (new \App\Http\Requests\ScanGroupRequest())->rules();
-        expect(\Illuminate\Support\Facades\Validator::make(['transaction_reference' => substr($data['group_qr_content'], 4)], ['transaction_reference' => $groupRules['transaction_reference']])->passes())->toBeTrue();
+        $rules = (new ScanTicketRequest)->rules();
+        expect(Validator::make(['ticket_uuid' => $data['qr_content']], ['ticket_uuid' => $rules['ticket_uuid']])->passes())->toBeTrue();
+        $groupRules = (new ScanGroupRequest)->rules();
+        expect(Validator::make(['transaction_reference' => substr($data['group_qr_content'], 4)], ['transaction_reference' => $groupRules['transaction_reference']])->passes())->toBeTrue();
 
         // No third-party image URL: nothing in the response points at an external QR service.
         expect($data)->not->toHaveKeys(['qr_url', 'group_qr_url'])

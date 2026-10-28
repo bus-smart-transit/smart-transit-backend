@@ -16,12 +16,13 @@ class PassengerOtpMail extends Mailable
         public readonly string $otp,
         public readonly string $name,
         public readonly string $recipientEmail = '',
+        public readonly bool $verify = false, // 2026-10-28: true for "verify your email" (sign-up)
     ) {}
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Your SmartTransit Login Code',
+            subject: $this->verify ? 'Verify your SmartTransit email' : 'Your SmartTransit Login Code',
         );
     }
 
@@ -31,6 +32,7 @@ class PassengerOtpMail extends Mailable
             view: 'emails.passenger-otp',
             with: [
                 'originalEmail' => $this->recipientEmail,
+                'verify' => $this->verify,
             ],
         );
     }

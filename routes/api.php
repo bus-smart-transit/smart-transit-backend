@@ -43,6 +43,8 @@ use Illuminate\Support\Facades\Route;
 // PUBLIC — no auth required
 // Login endpoints use controller-level RateLimiter (failed-only counting).
 Route::post('passengers/login', [AuthController::class, 'login']);
+// 2026-10-28: a new email verification code (right after sign-up, the password is not at hand to sign in again).
+Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:3,15,passengers-verify-email-resend');
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15,passengers-verify-otp-post');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');

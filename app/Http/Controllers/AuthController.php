@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use App\Http\Requests\LoginRequest;
@@ -11,15 +12,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private UserService $userService)
-    {
-    }
+    public function __construct(private UserService $userService) {}
 
     /**
      * Step 1: validate credentials and send OTP.
@@ -28,7 +26,7 @@ class AuthController extends Controller
     public function login(LoginRequest $request)
     {
         // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        $key = 'passenger-login:' . $request->ip();
+        $key = 'passenger-login:'.$request->ip();
 
         if (RateLimiter::tooManyAttempts($key, 5)) {
             $seconds = RateLimiter::availableIn($key);
@@ -61,11 +59,11 @@ class AuthController extends Controller
     {
         $request->validate([
             'user_id' => 'required|integer',
-            'otp'     => 'required|string|size:6',
+            'otp' => 'required|string|size:6',
         ]);
 
         // Separate rate limit for OTP guessing — max 5 wrong codes per 15 min.
-        $otpKey = 'passenger-otp-verify:' . $request->ip() . ':' . $request->input('user_id');
+        $otpKey = 'passenger-otp-verify:'.$request->ip().':'.$request->input('user_id');
 
         if (RateLimiter::tooManyAttempts($otpKey, 5)) {
             $seconds = RateLimiter::availableIn($otpKey);
@@ -85,23 +83,33 @@ class AuthController extends Controller
         }
 
         RateLimiter::clear($otpKey);
+
         return $this->success(['token' => $result['token']], 'Logged in successfully.');
+    }
+
+    /** 2026-10-28: POST passengers/verify-email/resend { user_id }. A new code for an account not verified yet. */
+    public function resendVerification(Request $request)
+    {
+        $data = $request->validate(['user_id' => 'required|integer']);
+        $this->userService->resendVerificationCode((int) $data['user_id']);
+
+        return $this->success(null, 'If this account still needs verifying, a new code was sent.');
     }
 
     public function profile(Request $request)
     {
-        $user             = $request->user();
+        $user = $request->user();
         $passengerProfile = $this->userService->getPassengerProfile($user);
 
-        if (!$passengerProfile) {
+        if (! $passengerProfile) {
             // The Sanctum token is valid (middleware passed) but no passenger_users
             // row exists yet.  Return minimal user data so the frontend can stay
             // authenticated and prompt the user to complete their profile instead
             // of immediately logging them out.
             return $this->success([
-                'user_id'          => $user->user_id,
-                'email'            => $user->email,
-                'username'         => $user->username,
+                'user_id' => $user->user_id,
+                'email' => $user->email,
+                'username' => $user->username,
                 'profile_complete' => false,
             ], 'Profile incomplete — please complete your profile');
         }
@@ -115,6 +123,7 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         $this->userService->logoutUser($request->user());
+
         return $this->success(null, 'Logged out successfully');
     }
 
@@ -167,9 +176,9 @@ class AuthController extends Controller
     {
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
         $request->validate([
-            'token'                 => 'required|string',
-            'email'                 => 'required|email',
-            'password'              => 'required|string|min:8|confirmed',
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
             'password_confirmation' => 'required|string',
         ]);
 

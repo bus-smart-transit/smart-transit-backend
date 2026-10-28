@@ -86,11 +86,12 @@ class PassengerController extends Controller
 
     public function store(RegisterPassengerRequest $request): JsonResponse
     {
-        ['passenger' => $passenger, 'token' => $token] = $this->passengerService->registerPassenger($request->validated());
+        ['passenger' => $passenger, 'verification' => $verification] = $this->passengerService->registerPassenger($request->validated());
 
+        // 2026-10-28: no token until the emailed code is entered (email verification).
         return $this->success(
-            ['passenger' => new PassengerResource($passenger), 'token' => $token],
-            'Registered successfully',
+            ['passenger' => new PassengerResource($passenger)] + $verification,
+            'Registered. Enter the code sent to your email to verify it.',
             201
         );
     }

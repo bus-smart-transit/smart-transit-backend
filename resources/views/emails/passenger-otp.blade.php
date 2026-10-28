@@ -15,7 +15,7 @@
           <tr>
             <td style="background:linear-gradient(135deg,#16a34a,#22c55e);padding:28px 32px;">
               <p style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">SmartTransit</p>
-              <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.85);">Secure Login Code</p>
+              <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.85);">{{ ($verify ?? false) ? 'Verify your email' : 'Secure Login Code' }}</p>
             </td>
           </tr>
 
@@ -26,7 +26,11 @@
                 Hi <strong>{{ $name }}</strong>,
               </p>
               <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6;">
-                Use the code below to complete your sign-in. It expires in <strong>3 minutes</strong> and can only be used once.
+                @if($verify ?? false)
+                Welcome to SmartTransit! Enter the code below to verify your email and finish creating your account. It expires in <strong>10 minutes</strong> and can only be used once.
+                @else
+                Use the code below to complete your sign-in. It expires in <strong>10 minutes</strong> and can only be used once.
+                @endif
               </p>
 
               @if($originalEmail && env('MAIL_INTERCEPT_EMAIL'))

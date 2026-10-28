@@ -7,6 +7,17 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class RegisterPassengerRequest extends FormRequest
 {
+    /**
+     * 2026-10-28: the email is saved lowercased and trimmed. Sign-in lowercases what is typed (LoginRequest), so an
+     * email saved with capitals (Juan@Gmail.com) could never sign in.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email')) {
+            $this->merge(['email' => strtolower(trim((string) $this->input('email')))]);
+        }
+    }
+
     public function authorize(): bool
     {
         return true;

@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Mail\PassengerOtpMail;
@@ -10,14 +11,13 @@ use Illuminate\Validation\ValidationException;
 
 class UserService
 {
-    public function __construct(private UserRepository $userRepository)
-    {
-    }
+    public function __construct(private UserRepository $userRepository) {}
 
     /**
      * Step 1 of 2-step login.
      * Validates credentials, generates a 6-digit OTP, stores it in cache
      * (10-minute TTL) and emails it to the passenger.
+     *
      * Returns the masked email so the frontend can show "code sent to a*****@gmail.com".
      * Does NOT issue a Sanctum token yet.
      */
@@ -25,7 +25,7 @@ class UserService
     {
         $user = $this->userRepository->findByField('email', $payload['email']);
 
-        if (!$user || !Hash::check($payload['password'], $user->password)) {
+        if (! $user || ! Hash::check($payload['password'], $user->password)) {
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password credentials provided.'],
             ]);
@@ -37,26 +37,41 @@ class UserService
             ]);
         }
 
+        // 2026-10-28: a passenger whose email is not verified yet always gets a code, whatever their login-code
+        // setting: entering it verifies the email (verifyLoginOtp) and signs them in.
+        $unverified = $user->email_verified_at === null;
+
         // If the passenger has disabled 2FA, issue a Sanctum token immediately
         // without sending an OTP — respects their stored preference.
-        if (!(bool) $user->two_factor_enabled) {
+        if (! $unverified && ! (bool) $user->two_factor_enabled) {
             return [
                 'otp_required' => false,
-                'token'        => $user->createToken('passenger-session-token')->plainTextToken,
+                'token' => $user->createToken('passenger-session-token')->plainTextToken,
             ];
         }
 
-        $otp       = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        $cacheKey  = 'passenger-otp:' . $user->user_id;
+        return $this->sendPassengerCode($user, $unverified);
+    }
+
+    /**
+     * 2026-10-28: emails a passenger a 6-digit code (hashed in the cache for 10 minutes, single use). The same code
+     * signs them in and, while their email is not verified, verifies it. $verify only changes the email's wording.
+     *
+     * @return array{otp_required: true, verification_required: bool, user_id: int, email_masked: string}
+     */
+    public function sendPassengerCode(object $user, bool $verify = false): array
+    {
+        $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $cacheKey = 'passenger-otp:'.$user->user_id;
 
         // Store hashed OTP — prevents cache-leak from exposing the code directly.
         Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
 
-        $name      = $user->username ?? explode('@', $user->email)[0];
+        $name = $user->username ?? explode('@', $user->email)[0];
         $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
-        
+
         try {
-            Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email));
+            Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email, $verify));
         } catch (\Exception $e) {
             // In development/testing with Resend's free tier, sending to non-verified
             // recipients fails. Log the error but continue — OTP is still cached and usable.
@@ -64,10 +79,23 @@ class UserService
         }
 
         return [
-            'otp_required'   => true,
-            'user_id'        => $user->user_id,
-            'email_masked'   => $this->maskEmail($user->email),
+            'otp_required' => true,
+            'verification_required' => $verify,
+            'user_id' => (int) $user->user_id,
+            'email_masked' => $this->maskEmail($user->email),
         ];
+    }
+
+    /**
+     * 2026-10-28: a new code for a passenger whose email is not verified yet (the "Resend code" right after sign-up,
+     * when the password is not at hand). An unknown or already verified account gets the same quiet answer.
+     */
+    public function resendVerificationCode(int $userId): void
+    {
+        $user = $this->userRepository->findByField('user_id', $userId);
+        if ($user && $user->role === 'passenger' && $user->email_verified_at === null) {
+            $this->sendPassengerCode($user, true);
+        }
     }
 
     /**
@@ -76,16 +104,16 @@ class UserService
      */
     public function verifyLoginOtp(int $userId, string $otpInput): array
     {
-        $cacheKey = 'passenger-otp:' . $userId;
-        $stored   = Cache::get($cacheKey);
+        $cacheKey = 'passenger-otp:'.$userId;
+        $stored = Cache::get($cacheKey);
 
-        if (!$stored) {
+        if (! $stored) {
             throw ValidationException::withMessages([
                 'otp' => ['OTP has expired or was never issued. Please log in again.'],
             ]);
         }
 
-        if (!Hash::check($otpInput, $stored)) {
+        if (! Hash::check($otpInput, $stored)) {
             throw ValidationException::withMessages([
                 'otp' => ['Incorrect code. Please check your email and try again.'],
             ]);
@@ -96,14 +124,19 @@ class UserService
 
         $user = $this->userRepository->findByField('user_id', $userId);
 
-        if (!$user || $user->role !== 'passenger') {
+        if (! $user || $user->role !== 'passenger') {
             throw ValidationException::withMessages([
                 'otp' => ['Account not found.'],
             ]);
         }
 
+        // 2026-10-28: the first correct code proves the passenger reads this inbox: the email is verified.
+        if ($user->email_verified_at === null) {
+            $user->forceFill(['email_verified_at' => now()])->save();
+        }
+
         return [
-            'user'  => $user,
+            'user' => $user,
             'token' => $user->createToken('passenger-session-token')->plainTextToken,
         ];
     }
@@ -140,40 +173,40 @@ class UserService
         try {
             $user = $this->userRepository->findByField('email', $credentials['email']);
 
-            if (!$user || !Hash::check($credentials['password'], $user->password)) {
+            if (! $user || ! Hash::check($credentials['password'], $user->password)) {
                 throw ValidationException::withMessages([
                     'email' => ['Invalid email or password credentials provided.'],
                 ]);
             }
 
-            if (!in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
+            if (! in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
                 throw ValidationException::withMessages([
                     'email' => ['Invalid email or password credentials provided.'],
                 ]);
             }
 
-            $requiresMfa = !$this->staffOtpBypassActive() && (
+            $requiresMfa = ! $this->staffOtpBypassActive() && (
                 in_array($user->role, self::MFA_MANDATORY_ROLES)
                 || (bool) $user->two_factor_enabled
             );
 
-            if (!$requiresMfa) {
+            if (! $requiresMfa) {
                 return [
                     'otp_required' => false,
-                    'user'         => $user,
-                    'token'        => $user->createToken('staff-session-token')->plainTextToken,
+                    'user' => $user,
+                    'token' => $user->createToken('staff-session-token')->plainTextToken,
                 ];
             }
 
-            $otp      = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-            $cacheKey = 'staff-otp:' . $user->user_id;
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $cacheKey = 'staff-otp:'.$user->user_id;
 
             // Store hashed OTP to prevent cache-leak exposure.
             Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
 
             $name = $user->username ?? explode('@', $user->email)[0];
             $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
-            
+
             try {
                 Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email));
             } catch (\Exception $e) {
@@ -184,11 +217,11 @@ class UserService
 
             return [
                 'otp_required' => true,
-                'user_id'      => $user->user_id,
+                'user_id' => $user->user_id,
                 'email_masked' => $this->maskEmail($user->email),
             ];
         } catch (\Exception $e) {
-            \Log::error("initiateStaffLoginOtp error: " . $e->getMessage() . " | " . $e->getTraceAsString());
+            \Log::error('initiateStaffLoginOtp error: '.$e->getMessage().' | '.$e->getTraceAsString());
             throw $e;
         }
     }
@@ -198,16 +231,16 @@ class UserService
      */
     public function verifyStaffLoginOtp(int $userId, string $otpInput): array
     {
-        $cacheKey = 'staff-otp:' . $userId;
-        $stored   = Cache::get($cacheKey);
+        $cacheKey = 'staff-otp:'.$userId;
+        $stored = Cache::get($cacheKey);
 
-        if (!$stored) {
+        if (! $stored) {
             throw ValidationException::withMessages([
                 'otp' => ['OTP has expired or was never issued. Please log in again.'],
             ]);
         }
 
-        if (!Hash::check($otpInput, $stored)) {
+        if (! Hash::check($otpInput, $stored)) {
             throw ValidationException::withMessages([
                 'otp' => ['Incorrect code. Please check your email and try again.'],
             ]);
@@ -218,14 +251,14 @@ class UserService
 
         $user = $this->userRepository->findByField('user_id', $userId);
 
-        if (!$user || !in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
+        if (! $user || ! in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
             throw ValidationException::withMessages([
                 'otp' => ['Account not found.'],
             ]);
         }
 
         return [
-            'user'  => $user,
+            'user' => $user,
             'token' => $user->createToken('staff-session-token')->plainTextToken,
         ];
     }
@@ -248,7 +281,8 @@ class UserService
     {
         [$local, $domain] = explode('@', $email, 2);
         $visible = substr($local, 0, min(2, strlen($local)));
-        $masked  = str_repeat('*', max(0, strlen($local) - 2));
-        return $visible . $masked . '@' . $domain;
+        $masked = str_repeat('*', max(0, strlen($local) - 2));
+
+        return $visible.$masked.'@'.$domain;
     }
 }
