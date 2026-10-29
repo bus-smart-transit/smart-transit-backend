@@ -135,7 +135,8 @@ Route::prefix('passengers')
     ->group(function () {
         Route::delete('logout', [AuthController::class, 'logout']);
         Route::get('profile', [AuthController::class, 'profile']);
-        Route::put('profile', [PassengerController::class, 'update']);
+        // 2026-10-29 (Batch 36 Phase 2): the passenger edits their own name, phone and gender (PATCH; PUT kept for older clients).
+        Route::match(['put', 'patch'], 'profile', [PassengerController::class, 'update'])->middleware('throttle:10,1,passengers-profile-update');
         Route::patch('two-factor', [AuthController::class, 'updateTwoFactor']);
         Route::post('fcm-token', [AuthController::class, 'registerFcmToken']);
         Route::get('tickets', [TicketController::class, 'myTickets']);

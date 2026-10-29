@@ -41,7 +41,7 @@ describe('Authentication & Authorization', function () {
         $response->assertJsonStructure([
             'status',
             'message',
-            'data' => ['otp_required', 'user_id', 'email_masked'],
+            'data' => ['otp_required', 'account_uuid', 'email_masked'],
         ]);
         $response->assertJsonPath('data.otp_required', true);
         $response->assertJsonPath('status', 'success');

@@ -81,7 +81,8 @@ class UserService
         return [
             'otp_required' => true,
             'verification_required' => $verify,
-            'user_id' => (int) $user->user_id,
+            // 2026-10-29: the account's uuid, not the numeric user id; step 2 sends it back.
+            'account_uuid' => (string) $user->passengerProfile?->passenger_uuid,
             'email_masked' => $this->maskEmail($user->email),
         ];
     }
@@ -90,9 +91,9 @@ class UserService
      * 2026-10-28: a new code for a passenger whose email is not verified yet (the "Resend code" right after sign-up,
      * when the password is not at hand). An unknown or already verified account gets the same quiet answer.
      */
-    public function resendVerificationCode(int $userId): void
+    public function resendVerificationCode(string $passengerUuid): void
     {
-        $user = $this->userRepository->findByField('user_id', $userId);
+        $user = $this->userRepository->findPassengerUserByUuid($passengerUuid);
         if ($user && $user->role === 'passenger' && $user->email_verified_at === null) {
             $this->sendPassengerCode($user, true);
         }
@@ -102,8 +103,10 @@ class UserService
      * Step 2 of 2-step login.
      * Validates the OTP and, if correct, deletes it and issues the Sanctum token.
      */
-    public function verifyLoginOtp(int $userId, string $otpInput): array
+    public function verifyLoginOtp(string $accountUuid, string $otpInput): array
     {
+        // 2026-10-29: the uuid from step 1 names the account; an unknown one reads like an expired code.
+        $userId = (int) ($this->userRepository->findPassengerUserByUuid($accountUuid)?->user_id ?? 0);
         $cacheKey = 'passenger-otp:'.$userId;
         $stored = Cache::get($cacheKey);
 
@@ -217,7 +220,8 @@ class UserService
 
             return [
                 'otp_required' => true,
-                'user_id' => $user->user_id,
+                // 2026-10-29: the account's uuid, not the numeric user id; step 2 sends it back.
+                'account_uuid' => (string) $user->companyProfile?->company_user_uuid,
                 'email_masked' => $this->maskEmail($user->email),
             ];
         } catch (\Exception $e) {
@@ -229,8 +233,10 @@ class UserService
     /**
      * Step 2 of staff login — validates OTP and issues Sanctum token.
      */
-    public function verifyStaffLoginOtp(int $userId, string $otpInput): array
+    public function verifyStaffLoginOtp(string $accountUuid, string $otpInput): array
     {
+        // 2026-10-29: the uuid from step 1 names the account; an unknown one reads like an expired code.
+        $userId = (int) ($this->userRepository->findStaffUserByUuid($accountUuid)?->user_id ?? 0);
         $cacheKey = 'staff-otp:'.$userId;
         $stored = Cache::get($cacheKey);
 

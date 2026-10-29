@@ -1,6 +1,7 @@
 <?php
 
 use App\Mail\PassengerOtpMail;
+use App\Models\PassengerUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
@@ -25,6 +26,12 @@ function evfRegister($test, string $email)
     ]);
 }
 
+/** 2026-10-29: sign-in names the account by its passenger_uuid, so tests find the user from it. */
+function evfUser(string $passengerUuid): User
+{
+    return PassengerUser::where('passenger_uuid', $passengerUuid)->firstOrFail()->user;
+}
+
 function evfLastCode(): string
 {
     $code = null;
@@ -45,33 +52,33 @@ it('sends a verify-your-email code at sign-up and gives no session yet', functio
         ->assertJsonMissingPath('data.token');
 
     Mail::assertSent(PassengerOtpMail::class, fn (PassengerOtpMail $mail) => $mail->verify && $mail->recipientEmail === strtolower($email));
-    expect(User::find($response->json('data.user_id'))->email_verified_at)->toBeNull();
+    expect(evfUser($response->json('data.account_uuid'))->email_verified_at)->toBeNull();
 });
 
 it('verifies the email and signs the passenger in with the code', function () {
     $response = evfRegister($this, 'evf'.Str::random(6).'@example.com')->assertCreated();
-    $userId = $response->json('data.user_id');
+    $userId = $response->json('data.account_uuid');
 
-    $this->postJson('/api/passengers/verify-otp', ['user_id' => $userId, 'otp' => evfLastCode()])
+    $this->postJson('/api/passengers/verify-otp', ['account_uuid' => $userId, 'otp' => evfLastCode()])
         ->assertSuccessful()
         ->assertJsonStructure(['data' => ['token']]);
 
-    expect(User::find($userId)->email_verified_at)->not->toBeNull();
+    expect(evfUser($userId)->email_verified_at)->not->toBeNull();
 });
 
 it('refuses a wrong code and leaves the email unverified', function () {
-    $userId = evfRegister($this, 'evf'.Str::random(6).'@example.com')->json('data.user_id');
+    $userId = evfRegister($this, 'evf'.Str::random(6).'@example.com')->json('data.account_uuid');
     $wrong = evfLastCode() === '000000' ? '111111' : '000000';
 
-    $this->postJson('/api/passengers/verify-otp', ['user_id' => $userId, 'otp' => $wrong])->assertStatus(422);
+    $this->postJson('/api/passengers/verify-otp', ['account_uuid' => $userId, 'otp' => $wrong])->assertStatus(422);
 
-    expect(User::find($userId)->email_verified_at)->toBeNull();
+    expect(evfUser($userId)->email_verified_at)->toBeNull();
 });
 
 it('asks an unverified passenger for a code at sign-in even with the login code switched off', function () {
     $email = 'evf'.Str::random(6).'@example.com';
-    $userId = evfRegister($this, $email)->json('data.user_id');
-    User::whereKey($userId)->update(['two_factor_enabled' => false]);
+    $userId = evfRegister($this, $email)->json('data.account_uuid');
+    User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false]);
 
     $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
         ->assertSuccessful()
@@ -82,8 +89,8 @@ it('asks an unverified passenger for a code at sign-in even with the login code 
 
 it('lets a verified passenger with the login code off sign in directly', function () {
     $email = 'evf'.Str::random(6).'@example.com';
-    $userId = evfRegister($this, $email)->json('data.user_id');
-    User::whereKey($userId)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
+    $userId = evfRegister($this, $email)->json('data.account_uuid');
+    User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
 
     $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
         ->assertSuccessful()
@@ -91,23 +98,36 @@ it('lets a verified passenger with the login code off sign in directly', functio
 });
 
 it('sends a new code on request only to an account still waiting for verification', function () {
-    $userId = evfRegister($this, 'evf'.Str::random(6).'@example.com')->json('data.user_id');
+    $userId = evfRegister($this, 'evf'.Str::random(6).'@example.com')->json('data.account_uuid');
 
-    $this->postJson('/api/passengers/verify-email/resend', ['user_id' => $userId])->assertSuccessful();
+    $this->postJson('/api/passengers/verify-email/resend', ['account_uuid' => $userId])->assertSuccessful();
     Mail::assertSent(PassengerOtpMail::class, 2);
 
-    User::whereKey($userId)->update(['email_verified_at' => now()]);
-    $this->postJson('/api/passengers/verify-email/resend', ['user_id' => $userId])->assertSuccessful();
+    User::whereKey(evfUser($userId)->user_id)->update(['email_verified_at' => now()]);
+    $this->postJson('/api/passengers/verify-email/resend', ['account_uuid' => $userId])->assertSuccessful();
     Mail::assertSent(PassengerOtpMail::class, 2);
 });
 
 it('signs in a passenger who typed capitals in their email at sign-up', function () {
-    $userId = evfRegister($this, 'Juan.Cruz.'.Str::random(4).'@Gmail.com')->json('data.user_id');
-    $stored = User::find($userId)->email;
-    User::whereKey($userId)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
+    $userId = evfRegister($this, 'Juan.Cruz.'.Str::random(4).'@Gmail.com')->json('data.account_uuid');
+    $stored = evfUser($userId)->email;
+    User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
 
     expect($stored)->toBe(strtolower($stored));
     $this->postJson('/api/passengers/login', ['email' => strtoupper($stored), 'password' => 'Password123'])
         ->assertSuccessful()
         ->assertJsonStructure(['data' => ['token']]);
+});
+
+it('names the account by its uuid at sign-up and sign-in, never by the numeric user id', function () {
+    $email = 'evf'.Str::random(6).'@example.com';
+    $signup = evfRegister($this, $email)->assertCreated()->assertJsonMissingPath('data.user_id');
+    $uuid = $signup->json('data.account_uuid');
+    expect(Str::isUuid($uuid))->toBeTrue();
+
+    $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
+        ->assertJsonPath('data.account_uuid', $uuid)
+        ->assertJsonMissingPath('data.user_id');
+    $this->postJson('/api/passengers/verify-otp', ['user_id' => evfUser($uuid)->user_id, 'otp' => '123456'])
+        ->assertStatus(422)->assertJsonValidationErrors(['account_uuid']);
 });

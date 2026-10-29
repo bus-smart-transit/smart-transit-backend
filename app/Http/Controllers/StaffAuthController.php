@@ -57,12 +57,13 @@ class StaffAuthController extends Controller
 
     public function verifyOtp(Request $request)
     {
+        // 2026-10-29: the account is named by its uuid from step 1, never by the numeric user id.
         $request->validate([
-            'user_id' => 'required|integer',
+            'account_uuid' => 'required|uuid',
             'otp' => 'required|string|size:6',
         ]);
 
-        $otpKey = 'staff-otp-verify:'.$request->ip().':'.$request->input('user_id');
+        $otpKey = 'staff-otp-verify:'.$request->ip().':'.$request->input('account_uuid');
 
         if (RateLimiter::tooManyAttempts($otpKey, 5)) {
             $seconds = RateLimiter::availableIn($otpKey);
@@ -73,7 +74,7 @@ class StaffAuthController extends Controller
 
         try {
             $result = $this->staffService->verifyStaffLoginOtp(
-                (int) $request->input('user_id'),
+                (string) $request->input('account_uuid'),
                 (string) $request->input('otp')
             );
         } catch (ValidationException $e) {

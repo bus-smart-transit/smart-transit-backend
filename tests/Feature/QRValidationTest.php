@@ -246,7 +246,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
 
         // 2026-10-28: sign-up gives no token until the email is verified; this test is about QR codes, so the
         // passenger is verified and signed in directly.
-        $user = User::findOrFail($registerResponse->json('data.user_id'));
+        $user = PassengerUser::where('passenger_uuid', $registerResponse->json('data.account_uuid'))->firstOrFail()->user;
         $user->forceFill(['email_verified_at' => now()])->save();
         $token = $user->createToken('test-token')->plainTextToken;
 

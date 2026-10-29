@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegisterPassengerRequest;
 use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
+use App\Services\AuditLogger;
 use App\Services\PassengerService;
 use App\Services\PaymentService;
 use App\Services\RewardService;
@@ -109,13 +110,12 @@ class PassengerController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
-        $model = $this->passengerService->updatePassenger(
-            $passengerProfile->passenger_uuid,
-            $request->validated()
-        );
+        $changes = $request->validated();
+        $model = $this->passengerService->updatePassenger($passengerProfile->passenger_uuid, $changes);
 
-        // Revoke all other tokens when profile is updated (session hygiene)
-        $request->user()->tokens()->where('id', '!=', $request->user()->currentAccessToken()->id)->delete();
+        // 2026-10-29 (Batch 36 Phase 2): a name, phone or gender change keeps the passenger's other devices signed in
+        // (only an email or password change signs them out). The change is audit-logged (which fields, not the values).
+        AuditLogger::log('passenger.profile_updated', 'PassengerUser', (int) $passengerProfile->passenger_id, ['fields' => array_keys($changes)]);
 
         return $this->success(new PassengerResource($model), 'Profile updated successfully');
     }

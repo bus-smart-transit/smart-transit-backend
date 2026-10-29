@@ -33,9 +33,9 @@ class StaffService
         return $this->userService->initiateStaffLoginOtp($credentials);
     }
 
-    public function verifyStaffLoginOtp(int $userId, string $otp): array
+    public function verifyStaffLoginOtp(string $accountUuid, string $otp): array
     {
-        return $this->userService->verifyStaffLoginOtp($userId, $otp);
+        return $this->userService->verifyStaffLoginOtp($accountUuid, $otp);
     }
 
     public function getStaffProfile(object $user): ?object

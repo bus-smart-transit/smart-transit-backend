@@ -21,7 +21,7 @@ class AuthController extends Controller
 
     /**
      * Step 1: validate credentials and send OTP.
-     * Returns { otp_required: true, user_id, email_masked } — NO token yet.
+     * Returns { otp_required: true, account_uuid, email_masked } — NO token yet.
      */
     public function login(LoginRequest $request)
     {
@@ -53,17 +53,17 @@ class AuthController extends Controller
 
     /**
      * Step 2: verify OTP and issue Sanctum token.
-     * POST /passengers/verify-otp  { user_id, otp }
+     * POST /passengers/verify-otp  { account_uuid, otp } (2026-10-29: the uuid from step 1, never the numeric user id)
      */
     public function verifyOtp(Request $request)
     {
         $request->validate([
-            'user_id' => 'required|integer',
+            'account_uuid' => 'required|uuid',
             'otp' => 'required|string|size:6',
         ]);
 
         // Separate rate limit for OTP guessing — max 5 wrong codes per 15 min.
-        $otpKey = 'passenger-otp-verify:'.$request->ip().':'.$request->input('user_id');
+        $otpKey = 'passenger-otp-verify:'.$request->ip().':'.$request->input('account_uuid');
 
         if (RateLimiter::tooManyAttempts($otpKey, 5)) {
             $seconds = RateLimiter::availableIn($otpKey);
@@ -74,7 +74,7 @@ class AuthController extends Controller
 
         try {
             $result = $this->userService->verifyLoginOtp(
-                (int) $request->input('user_id'),
+                (string) $request->input('account_uuid'),
                 (string) $request->input('otp')
             );
         } catch (ValidationException $e) {
@@ -87,11 +87,11 @@ class AuthController extends Controller
         return $this->success(['token' => $result['token']], 'Logged in successfully.');
     }
 
-    /** 2026-10-28: POST passengers/verify-email/resend { user_id }. A new code for an account not verified yet. */
+    /** 2026-10-28: POST passengers/verify-email/resend { account_uuid }. A new code for an account not verified yet. */
     public function resendVerification(Request $request)
     {
-        $data = $request->validate(['user_id' => 'required|integer']);
-        $this->userService->resendVerificationCode((int) $data['user_id']);
+        $data = $request->validate(['account_uuid' => 'required|uuid']);
+        $this->userService->resendVerificationCode((string) $data['account_uuid']);
 
         return $this->success(null, 'If this account still needs verifying, a new code was sent.');
     }

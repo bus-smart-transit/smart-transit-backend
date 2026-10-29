@@ -17,7 +17,7 @@ test('it can create a passenger user', function () {
 
     $response->assertStatus(201);
     // 2026-10-28: no token at sign-up; a code is emailed to verify the address first.
-    $response->assertJsonStructure(['data' => ['passenger', 'verification_required', 'user_id', 'email_masked']]);
+    $response->assertJsonStructure(['data' => ['passenger', 'verification_required', 'account_uuid', 'email_masked']]);
     $response->assertJsonMissingPath('data.token');
 });
 
