@@ -65,6 +65,7 @@ class SimulateGps extends Command
             if ($travelled > $segStart + $segLen) {
                 $segStart += $segLen;
                 $segIndex++;
+
                 continue;
             }
 
@@ -77,7 +78,8 @@ class SimulateGps extends Command
                 'trip_id' => $trip->trip_id,
                 'latitude' => round($lat, 7),
                 'longitude' => round($lng, 7),
-                'heading' => null,
+                // 2026-10-29: the heading of the road segment, as a phone reports it (the map's bus arrow uses it).
+                'heading' => self::bearing($ay, $ax, $by, $bx),
                 'speed_kmh' => null,
                 'accuracy' => (float) $this->option('accuracy'),
             ]);
@@ -98,5 +100,16 @@ class SimulateGps extends Command
         $this->info("simulation finished after {$ticks} ticks");
 
         return self::SUCCESS;
+    }
+
+    /** Compass bearing in degrees (0 = north, 90 = east) from one point to the next. */
+    private static function bearing(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $p1 = deg2rad($lat1);
+        $p2 = deg2rad($lat2);
+        $dl = deg2rad($lng2 - $lng1);
+        $deg = rad2deg(atan2(sin($dl) * cos($p2), cos($p1) * sin($p2) - sin($p1) * cos($p2) * cos($dl)));
+
+        return round(fmod($deg + 360.0, 360.0), 1);
     }
 }
