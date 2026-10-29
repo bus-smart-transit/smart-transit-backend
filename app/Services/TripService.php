@@ -7,6 +7,7 @@ use App\Models\PendingBoarding;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
+use App\Models\User;
 use App\Repositories\ConductorShiftLogRepository;
 use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\StaffRepository;
@@ -613,9 +614,16 @@ class TripService
         }
 
         $decision = $payload['decision'] ?? null;
-        if (! in_array($decision, ['accept', 'keep'], true)) {
+        if (! in_array($decision, ['accept', 'keep', 'contact'], true)) {
             throw ValidationException::withMessages([
-                'decision' => ['Dispatch decision must be either "accept" or "keep".'],
+                'decision' => ['Dispatch decision must be "accept", "keep" or "contact".'],
+            ]);
+        }
+
+        $crew = $decision === 'contact' ? $this->assignedCrewUsers($trip) : [];
+        if ($decision === 'contact' && $crew === []) {
+            throw ValidationException::withMessages([
+                'decision' => ['This trip has no assigned driver or chauffeur to message.'],
             ]);
         }
 
@@ -626,7 +634,36 @@ class TripService
             $payload['reason'] ?? null,
         );
 
+        // 2026-10-29: "Contact crew" sends the Operator's message to the Driver and the Chauffeur (in-app + push).
+        foreach ($crew as $role => $user) {
+            $this->fcmService->sendToUser(
+                $user,
+                'Message from your operator',
+                "Trip #{$tripId}: ".(string) ($payload['note'] ?? ''),
+                NotificationLink::dispatchContactData($role, $tripId),
+            );
+        }
+
         return $this->tripRepository->findById($tripId);
+    }
+
+    /**
+     * The trip's assigned crew who can receive a message, keyed by role.
+     *
+     * @return array<string, User>
+     */
+    private function assignedCrewUsers(object $trip): array
+    {
+        $trip->loadMissing(['driver.user', 'conductor.user']);
+        $crew = [];
+        if ($trip->driver?->user) {
+            $crew['driver'] = $trip->driver->user;
+        }
+        if ($trip->conductor?->user) {
+            $crew['conductor'] = $trip->conductor->user;
+        }
+
+        return $crew;
     }
 
     public function getDriverTrips(int $driverCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): object

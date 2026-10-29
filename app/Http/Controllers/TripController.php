@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\AssignConductorRequest;
 use App\Http\Requests\AssignDriverRequest;
+use App\Http\Requests\SaveDispatchDecisionRequest;
 use App\Http\Requests\StoreTripRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
 use App\Models\FleetRoute;
@@ -95,17 +96,13 @@ class TripController extends Controller
     }
 
     // Operator / Admin: save reroute decision
-    public function saveDispatchDecision(Request $request, int $tripId)
+    public function saveDispatchDecision(SaveDispatchDecisionRequest $request, int $tripId)
     {
         if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
             return $denied;
         }
 
-        $validated = $request->validate([
-            'decision' => ['required', 'string', 'in:accept,keep'],
-            'route' => ['nullable', 'string', 'max:255'],
-            'reason' => ['nullable', 'string', 'max:1000'],
-        ]);
+        $validated = $request->validated();
 
         $result = $this->tripService->saveDispatchDecision($tripId, $validated);
         AuditLogger::log('trip.dispatch_decision', 'Trip', $tripId, $validated);

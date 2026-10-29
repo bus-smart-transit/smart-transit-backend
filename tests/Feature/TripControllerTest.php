@@ -7,8 +7,12 @@ use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
+use App\Models\UserNotification;
+use App\Services\FleetDailyPinService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 uses(RefreshDatabase::class);
 
@@ -199,13 +203,13 @@ test('FleetDailyPinService refuses to generate a PIN for IDs with the wrong role
         'total_occupancy' => 0,
     ]);
 
-    $pinService = app(\App\Services\FleetDailyPinService::class);
+    $pinService = app(FleetDailyPinService::class);
 
     expect(fn () => $pinService->generateOrGet(
         $trip->trip_id,
         $driver->companyProfile->company_user_id,
         $notAConductor->companyProfile->company_user_id,
-    ))->toThrow(\Illuminate\Validation\ValidationException::class);
+    ))->toThrow(ValidationException::class);
 
     $this->assertDatabaseCount('fleet_daily_pins', 0);
 });
@@ -232,7 +236,7 @@ test('FleetDailyPinService::generateOrGet is idempotent for the same trip/day', 
         'total_occupancy' => 0,
     ]);
 
-    $pinService = app(\App\Services\FleetDailyPinService::class);
+    $pinService = app(FleetDailyPinService::class);
 
     $first = $pinService->generateOrGet(
         $trip->trip_id,
@@ -510,6 +514,59 @@ test('operator can persist a reroute dispatch decision on a trip', function () {
         'dispatch_decision' => 'accept',
         'dispatch_route' => 'Route A via North Bypass',
     ]);
+});
+
+// 2026-10-29: "Contact crew" was refused (only accept/keep were allowed). It now sends the message to the crew.
+test('operator can contact the assigned crew with a message', function () {
+    $operator = makeStaffUser('operator');
+    $driver = makeStaffUser('driver');
+    $conductor = makeStaffUser('conductor');
+    $trip = Trip::create([
+        'fleet_route_id' => makeFleetRoute()->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'driver_id' => $driver->companyProfile->company_user_id,
+        'conductor_id' => $conductor->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'delayed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+
+    $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/dispatch-decision", [
+        'decision' => 'contact',
+        'route' => 'Davao - Tagum',
+        'note' => '  Please check traffic before the next stop. ',
+    ])->assertSuccessful();
+
+    expect($trip->fresh()->dispatch_decision)->toBe('contact');
+    foreach (['driver' => $driver, 'conductor' => $conductor] as $role => $user) {
+        $notice = UserNotification::where('user_id', $user->user_id)->where('type', 'dispatch_contact')->first();
+        expect($notice)->not->toBeNull()
+            ->and($notice->body)->toBe("Trip #{$trip->trip_id}: Please check traffic before the next stop.")
+            ->and($notice->data['role'])->toBe($role)
+            ->and($notice->data['link'])->toBe("/employee/{$role}/dashboard?tab=dashboard&trip={$trip->trip_id}");
+    }
+});
+
+test('contacting the crew needs a message and an assigned crew', function () {
+    $operator = makeStaffUser('operator');
+    $trip = Trip::create([
+        'fleet_route_id' => makeFleetRoute()->fleet_route_id,
+        'company_user_id' => $operator->companyProfile->company_user_id,
+        'trip_date' => now()->toDateString(),
+        'status' => 'delayed',
+        'current_seated_capacity' => 0,
+        'current_standing_capacity' => 0,
+        'total_occupancy' => 0,
+    ]);
+    $url = "/api/operator/trips/{$trip->trip_id}/dispatch-decision";
+
+    $this->actingAs($operator)->patchJson($url, ['decision' => 'contact', 'note' => '   '])
+        ->assertStatus(422)->assertJsonValidationErrors(['note']);
+    $this->actingAs($operator)->patchJson($url, ['decision' => 'contact', 'note' => 'Hello'])
+        ->assertStatus(422)->assertJsonValidationErrors(['decision']);
+    expect($trip->fresh()->dispatch_decision)->toBeNull();
 });
 
 test('driver can depart a trip', function () {
@@ -915,7 +972,7 @@ test('trip_date serializes as a plain calendar date, not shifted by UTC conversi
 test('operator upcoming trips excludes trips whose scheduled datetime has already passed', function () {
     // Frozen mid-day Manila time: the scheduled-datetime comparison is anchored to Asia/Manila, so a real
     // clock near midnight (or a different server timezone) must not decide whether a trip has passed.
-    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 10:00:00', 'Asia/Manila'));
+    $this->travelTo(Carbon::parse('2026-10-01 10:00:00', 'Asia/Manila'));
 
     $operator = makeStaffUser('operator');
     $fleetRoute = makeFleetRoute();
@@ -1002,7 +1059,7 @@ test('driver decline goes For Approval: the assignment stays until the operator 
         'total_occupancy' => 0,
     ]);
 
-    \App\Models\FleetDailyPin::create([
+    FleetDailyPin::create([
         'trip_id' => $trip->trip_id,
         'driver_id' => $driver->companyProfile->company_user_id,
         'conductor_id' => $conductor->companyProfile->company_user_id,

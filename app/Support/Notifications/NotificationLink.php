@@ -66,4 +66,19 @@ final class NotificationLink
             'link' => self::tripAssignment($role, $tripId),
         ];
     }
+
+    /**
+     * 2026-10-29: data for the Operator's "Contact crew" message. It opens the same trip as an assignment notice.
+     *
+     * @return array<string, string|int>
+     */
+    public static function dispatchContactData(string $role, int $tripId): array
+    {
+        return [
+            'type' => 'dispatch_contact',
+            'trip_id' => $tripId,
+            'role' => $role,
+            'link' => self::tripAssignment($role, $tripId),
+        ];
+    }
 }
