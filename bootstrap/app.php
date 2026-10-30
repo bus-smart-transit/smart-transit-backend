@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\ApiRequestMetricsMiddleware;
+use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\OptionalSanctumAuth;
 use App\Http\Middleware\RequirePairedSession;
 use App\Http\Middleware\RequireStepUp;
@@ -19,6 +19,14 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // 2026-10-30: behind a reverse proxy (Caddy on the VPS, ngrok on a laptop) every request arrives from the
+        // proxy, so each client's own address (rate limits, audit log) is read from X-Forwarded-For. TRUSTED_PROXIES
+        // says which proxy may set it: "*" only where the backend port is reachable through the proxy alone.
+        $trustedProxies = trim((string) env('TRUSTED_PROXIES', ''));
+        if ($trustedProxies !== '') {
+            $middleware->trustProxies(at: $trustedProxies === '*' ? '*' : array_map('trim', explode(',', $trustedProxies)));
+        }
+
         $middleware->append('App\\Http\\Middleware\\ApplyDatabaseRlsContext');
         $middleware->appendToGroup('api', ApiRequestMetricsMiddleware::class);
 

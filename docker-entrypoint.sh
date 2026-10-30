@@ -57,4 +57,5 @@ echo "[entrypoint] Starting scheduler (routes/console.php)..."
 ) &
 
 echo "[entrypoint] Starting Laravel on 0.0.0.0:8000..."
-exec php artisan serve --host=0.0.0.0 --port=8000
+# --no-reload lets PHP_CLI_SERVER_WORKERS serve several requests at once (Laravel ignores it otherwise).
+exec php artisan serve --host=0.0.0.0 --port=8000 --no-reload
