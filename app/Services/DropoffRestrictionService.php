@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CustomDropoffRestriction;
 use App\Models\RouteStop;
+use App\Repositories\CustomDropoffRestrictionRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
@@ -29,7 +30,21 @@ class DropoffRestrictionService
     /** @var array<int, array|null> the route lines already read by this instance (one read per route per request) */
     private array $lines = [];
 
-    public function __construct(private RouteGeometryRepository $geometry) {}
+    public function __construct(
+        private RouteGeometryRepository $geometry,
+        private CustomDropoffRestrictionRepository $restrictionRows,
+    ) {}
+
+    public function find(int $id): ?CustomDropoffRestriction
+    {
+        return $this->restrictionRows->findById($id);
+    }
+
+    /** @return array<int, int> every route that has at least one restricted area */
+    public function routesWithRestrictions(): array
+    {
+        return $this->restrictionRows->routeIds();
+    }
 
     private function line(int $routeId): ?array
     {

@@ -4,12 +4,12 @@ namespace App\Services;
 
 use App\Models\RouteDurationFactor;
 use App\Models\Trip;
+use App\Repositories\RouteDurationFactorRepository;
 use App\Repositories\RouteStopRepository;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -27,9 +27,44 @@ use Illuminate\Validation\ValidationException;
 class RouteDurationFactorService
 {
     public const DAY_TYPES = ['weekday', 'weekend'];
+
     public const DIRECTIONS = ['outbound', 'reverse'];
 
-    public function __construct(private RouteStopRepository $routeStops) {}
+    public function __construct(
+        private RouteStopRepository $routeStops,
+        private RouteDurationFactorRepository $windows,
+    ) {}
+
+    /**
+     * @param  array<int, int>|null  $routeIds  an Operator's routes, or null for all
+     * @return Collection<int, RouteDurationFactor>
+     */
+    public function listWindows(?int $routeId, ?array $routeIds): Collection
+    {
+        return $this->windows->list($routeId, $routeIds);
+    }
+
+    public function findWindow(int $id): ?RouteDurationFactor
+    {
+        return $this->windows->findById($id);
+    }
+
+    /** @param  array<string, mixed>  $clean  the output of validateWindow() */
+    public function createWindow(array $clean, int $userId): RouteDurationFactor
+    {
+        return $this->windows->create($clean + ['created_by_user_id' => $userId]);
+    }
+
+    /** @param  array<string, mixed>  $clean  the output of validateWindow() */
+    public function updateWindow(RouteDurationFactor $window, array $clean): RouteDurationFactor
+    {
+        return $this->windows->update($window, $clean);
+    }
+
+    public function deleteWindow(RouteDurationFactor $window): void
+    {
+        $this->windows->delete($window);
+    }
 
     /** The window containing this moment (Manila) for the route and direction, or null. */
     public function windowFor(int $routeId, ?string $direction, Carbon $at): ?RouteDurationFactor
@@ -144,7 +179,7 @@ class RouteDurationFactorService
      * types can match the same day.
      *
      * @param  array<string, mixed>  $attributes
-     * @return array<string, mixed>  the cleaned attributes
+     * @return array<string, mixed> the cleaned attributes
      *
      * @throws ValidationException
      */

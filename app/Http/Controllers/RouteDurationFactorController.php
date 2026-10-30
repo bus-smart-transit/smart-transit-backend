@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\FleetRoute;
-use App\Models\Route;
 use App\Models\RouteDurationFactor;
+use App\Repositories\FleetRouteRepository;
 use App\Services\AuditLogger;
 use App\Services\LegPlanningService;
+use App\Services\OperatorRouteAccess;
 use App\Services\RouteDurationFactorService;
 use App\Support\ServiceType;
 use App\Traits\ApiResponse;
@@ -24,21 +24,22 @@ class RouteDurationFactorController extends Controller
     public function __construct(
         private RouteDurationFactorService $factors,
         private LegPlanningService $legPlanning,
+        private OperatorRouteAccess $access,
+        private FleetRouteRepository $fleetRoutes,
     ) {}
 
     public function index(Request $request)
     {
         $data = $request->validate(['route_id' => 'nullable|integer']);
-        $scope = $this->scope($request);
+        $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $windows = RouteDurationFactor::with('route:route_id,route_name')
-            ->when(isset($data['route_id']), fn ($q) => $q->where('route_id', (int) $data['route_id']))
-            ->when($scope !== null, fn ($q) => $q->whereIn('route_id', $this->routeIds($scope)))
-            ->orderBy('route_id')->orderBy('start_time')
-            ->get()
+        $windows = $this->factors->listWindows(
+            isset($data['route_id']) ? (int) $data['route_id'] : null,
+            $scope === null ? null : $this->access->routeIds($scope),
+        )
             ->map(fn (RouteDurationFactor $w) => $this->present($w))
             ->values();
 
@@ -53,7 +54,7 @@ class RouteDurationFactorController extends Controller
         }
 
         $clean = $this->factors->validateWindow($data);
-        $window = RouteDurationFactor::create($clean + ['created_by_user_id' => $request->user()->user_id]);
+        $window = $this->factors->createWindow($clean, (int) $request->user()->user_id);
         AuditLogger::log('duration_factor.create', 'RouteDurationFactor', (int) $window->id, $clean);
 
         return $this->success($this->present($window->load('route:route_id,route_name')), 'Duration factor saved', 201);
@@ -61,7 +62,7 @@ class RouteDurationFactorController extends Controller
 
     public function update(Request $request, int $id)
     {
-        $window = RouteDurationFactor::find($id);
+        $window = $this->factors->findWindow($id);
         if (! $window) {
             return $this->error('Duration factor not found.', 404);
         }
@@ -72,15 +73,15 @@ class RouteDurationFactorController extends Controller
         $data = $this->validated($request) + [];
         $data['route_id'] = $window->route_id; // a window never moves to another route
         $clean = $this->factors->validateWindow($data, (int) $window->id);
-        $window->update($clean);
+        $window = $this->factors->updateWindow($window, $clean);
         AuditLogger::log('duration_factor.update', 'RouteDurationFactor', (int) $window->id, $clean);
 
-        return $this->success($this->present($window->fresh()->load('route:route_id,route_name')), 'Duration factor updated');
+        return $this->success($this->present($window->load('route:route_id,route_name')), 'Duration factor updated');
     }
 
     public function destroy(Request $request, int $id)
     {
-        $window = RouteDurationFactor::find($id);
+        $window = $this->factors->findWindow($id);
         if (! $window) {
             return $this->error('Duration factor not found.', 404);
         }
@@ -88,7 +89,7 @@ class RouteDurationFactorController extends Controller
             return $denied;
         }
 
-        $window->delete();
+        $this->factors->deleteWindow($window);
         AuditLogger::log('duration_factor.delete', 'RouteDurationFactor', $id, ['route_id' => (int) $window->route_id]);
 
         return $this->success(null, 'Duration factor removed');
@@ -98,7 +99,7 @@ class RouteDurationFactorController extends Controller
     public function report(Request $request)
     {
         $data = $request->validate(['route_id' => 'nullable|integer']);
-        $scope = $this->scope($request);
+        $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
         }
@@ -118,7 +119,10 @@ class RouteDurationFactorController extends Controller
             'leg_count' => 'nullable|integer|min:1|max:'.LegPlanningService::maxLegs(),
         ]);
 
-        $fleetRoute = FleetRoute::with('fleet')->findOrFail($data['fleet_route_id']);
+        $fleetRoute = $this->fleetRoutes->findWithRoute((int) $data['fleet_route_id']);
+        if (! $fleetRoute) {
+            return $this->error('Bus route not found.', 404);
+        }
         $user = $request->user();
         if ($user->role === 'operator' && (int) $fleetRoute->fleet?->company_user_id !== (int) $user->companyProfile?->company_user_id) {
             return $this->error('You do not have permission to plan for that bus.', 403);
@@ -171,36 +175,10 @@ class RouteDurationFactorController extends Controller
         ];
     }
 
-    /** null = admin (all), int = an operator's company, false = no staff profile. */
-    private function scope(Request $request): int|false|null
-    {
-        if (($request->user()->role ?? null) === 'admin') {
-            return null;
-        }
-        $companyUserId = $request->user()?->companyProfile?->company_user_id;
-
-        return $companyUserId ? (int) $companyUserId : false;
-    }
-
-    /** @return array<int, int> the routes an operator's buses are assigned to */
-    private function routeIds(int $companyUserId): array
-    {
-        return FleetRoute::whereHas('fleet', fn ($q) => $q->where('company_user_id', $companyUserId))->pluck('route_id')->unique()->values()->all();
-    }
-
     private function assertRoute(Request $request, int $routeId)
     {
-        $scope = $this->scope($request);
-        if ($scope === false) {
-            return $this->error('Staff profile not found.', 404);
-        }
-        if ($scope !== null && ! in_array($routeId, $this->routeIds($scope), true)) {
-            return $this->error('You can only manage duration factors for routes your buses run.', 403);
-        }
-        if (! Route::whereKey($routeId)->exists()) {
-            return $this->error('Route not found.', 404);
-        }
+        $denied = $this->access->denial($request->user(), $routeId, 'duration factors');
 
-        return null;
+        return $denied ? $this->error(...$denied) : null;
     }
 }

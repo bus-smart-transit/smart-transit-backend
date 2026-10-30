@@ -4,7 +4,10 @@ namespace App\Services;
 
 use App\Models\AlightingPoint;
 use App\Models\Route;
+use App\Repositories\AlightingPointRepository;
+use App\Repositories\RouteGeometryRepository;
 use App\Support\Geo\GeoLine;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -17,7 +20,37 @@ class AlightingPointService
     public function __construct(
         private RouteSnapService $routeSnapService,
         private RegionService $regionService,
+        private AlightingPointRepository $points,
     ) {}
+
+    /**
+     * @param  array{route_id?: int|null, municipality?: string|null, is_active?: bool|null}  $filters
+     * @param  array<int, int>|null  $routeIds  an Operator's routes, or null for all
+     * @return Collection<int, AlightingPoint>
+     */
+    public function list(array $filters, ?array $routeIds): Collection
+    {
+        return $this->points->list($filters, $routeIds);
+    }
+
+    public function find(int $id): ?AlightingPoint
+    {
+        return $this->points->findById($id);
+    }
+
+    /** Measures the point on the route (prepare) and stores it. */
+    public function create(array $data, int $userId): AlightingPoint
+    {
+        return $this->points->create($this->prepare($data) + ['created_by_user_id' => $userId]);
+    }
+
+    /** Measures the point again and saves it; a point never moves to another route. */
+    public function update(AlightingPoint $point, array $data): AlightingPoint
+    {
+        $data['route_id'] = $point->route_id;
+
+        return $this->points->update($point, $this->prepare($data));
+    }
 
     /**
      * @param  array{route_id: int, name: string, kind: string, latitude: float, longitude: float, municipality?: string|null, source?: string|null, note?: string|null, is_active?: bool}  $data
@@ -80,7 +113,7 @@ class AlightingPointService
     /** A point on the route line at a fraction of its length (used only by the SAMPLE command; no coordinate is typed). */
     public function pointAtFraction(int $routeId, float $fraction): ?array
     {
-        $geometry = app(\App\Repositories\RouteGeometryRepository::class)->get($routeId);
+        $geometry = app(RouteGeometryRepository::class)->get($routeId);
         if (! $geometry) {
             return null;
         }

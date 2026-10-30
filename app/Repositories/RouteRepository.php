@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\Route;
 use Illuminate\Support\Collection;
 
@@ -15,8 +17,13 @@ class RouteRepository
         return Route::with([
             'routeStops' => function ($q) {
                 $q->orderBy('stop_order')->with('stop');
-            }
+            },
         ])->find($routeId);
+    }
+
+    public function exists(int $routeId): bool
+    {
+        return Route::whereKey($routeId)->exists();
     }
 
     public function findWithStops(int $routeId): ?Route
@@ -29,7 +36,7 @@ class RouteRepository
         return Route::with([
             'routeStops' => function ($q) {
                 $q->orderBy('stop_order')->with('stop');
-            }
+            },
         ])->get();
     }
 
@@ -48,7 +55,7 @@ class RouteRepository
         return Route::with([
             'routeStops' => function ($q) {
                 $q->orderBy('stop_order')->with('stop');
-            }
+            },
         ])->get();
     }
 }

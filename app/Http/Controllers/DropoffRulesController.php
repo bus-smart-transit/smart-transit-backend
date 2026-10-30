@@ -4,11 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\AlightingPoint;
 use App\Models\CustomDropoffRestriction;
-use App\Models\FleetRoute;
-use App\Models\Route;
 use App\Services\AlightingPointService;
-use App\Services\DropoffRestrictionService;
 use App\Services\AuditLogger;
+use App\Services\DropoffRestrictionService;
+use App\Services\OperatorRouteAccess;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -26,6 +25,7 @@ class DropoffRulesController extends Controller
     public function __construct(
         private AlightingPointService $points,
         private DropoffRestrictionService $restrictions,
+        private OperatorRouteAccess $access,
     ) {}
 
     // ---------------------------------------------------------------- alighting points
@@ -37,18 +37,12 @@ class DropoffRulesController extends Controller
             'municipality' => 'nullable|string|max:100',
             'is_active' => 'nullable|boolean',
         ]);
-        $scope = $this->scope($request);
+        $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $rows = AlightingPoint::with('route:route_id,route_name')
-            ->when(isset($data['route_id']), fn ($q) => $q->where('route_id', (int) $data['route_id']))
-            ->when(! empty($data['municipality']), fn ($q) => $q->where('municipality', $data['municipality']))
-            ->when(array_key_exists('is_active', $data), fn ($q) => $q->where('is_active', (bool) $data['is_active']))
-            ->when($scope !== null, fn ($q) => $q->whereIn('route_id', $this->routeIds($scope)))
-            ->orderBy('route_id')->orderBy('distance_along_outbound_m')
-            ->get()
+        $rows = $this->points->list($data, $scope === null ? null : $this->access->routeIds($scope))
             ->map(fn (AlightingPoint $p) => $this->presentPoint($p))
             ->values();
 
@@ -62,8 +56,7 @@ class DropoffRulesController extends Controller
             return $denied;
         }
 
-        $attributes = $this->points->prepare($data);
-        $point = AlightingPoint::create($attributes + ['created_by_user_id' => $request->user()->user_id]);
+        $point = $this->points->create($data, (int) $request->user()->user_id);
         AuditLogger::log('dropoff_point.create', 'AlightingPoint', (int) $point->id, ['route_id' => (int) $point->route_id, 'name' => $point->name, 'kind' => $point->kind]);
 
         return $this->success($this->presentPoint($point->load('route:route_id,route_name')), 'Drop-off point saved', 201);
@@ -71,7 +64,7 @@ class DropoffRulesController extends Controller
 
     public function updatePoint(Request $request, int $id)
     {
-        $point = AlightingPoint::find($id);
+        $point = $this->points->find($id);
         if (! $point) {
             return $this->error('Drop-off point not found.', 404);
         }
@@ -79,12 +72,10 @@ class DropoffRulesController extends Controller
             return $denied;
         }
 
-        $data = $this->validatePoint($request);
-        $data['route_id'] = $point->route_id; // a point never moves to another route
-        $point->update($this->points->prepare($data));
+        $point = $this->points->update($point, $this->validatePoint($request));
         AuditLogger::log('dropoff_point.update', 'AlightingPoint', (int) $point->id, ['route_id' => (int) $point->route_id, 'is_active' => (bool) $point->is_active]);
 
-        return $this->success($this->presentPoint($point->fresh()->load('route:route_id,route_name')), 'Drop-off point updated');
+        return $this->success($this->presentPoint($point->load('route:route_id,route_name')), 'Drop-off point updated');
     }
 
     // ---------------------------------------------------------------- restricted areas
@@ -92,16 +83,14 @@ class DropoffRulesController extends Controller
     public function restrictions(Request $request)
     {
         $data = $request->validate(['route_id' => 'nullable|integer']);
-        $scope = $this->scope($request);
+        $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $routeIds = isset($data['route_id'])
-            ? [(int) $data['route_id']]
-            : CustomDropoffRestriction::query()->distinct()->pluck('route_id')->map(fn ($id) => (int) $id)->all();
+        $routeIds = isset($data['route_id']) ? [(int) $data['route_id']] : $this->restrictions->routesWithRestrictions();
         if ($scope !== null) {
-            $routeIds = array_values(array_intersect($routeIds, $this->routeIds($scope)));
+            $routeIds = array_values(array_intersect($routeIds, $this->access->routeIds($scope)));
         }
 
         $rows = collect($routeIds)->flatMap(fn (int $routeId) => $this->restrictions->forRoute($routeId))
@@ -126,7 +115,7 @@ class DropoffRulesController extends Controller
 
     public function updateRestriction(Request $request, int $id)
     {
-        $row = CustomDropoffRestriction::find($id);
+        $row = $this->restrictions->find($id);
         if (! $row) {
             return $this->error('Restricted area not found.', 404);
         }
@@ -152,7 +141,7 @@ class DropoffRulesController extends Controller
     /** The team has looked at an area flagged "needs review" and confirms it still covers the right stretch. */
     public function reviewRestriction(Request $request, int $id)
     {
-        $row = CustomDropoffRestriction::find($id);
+        $row = $this->restrictions->find($id);
         if (! $row) {
             return $this->error('Restricted area not found.', 404);
         }
@@ -247,36 +236,10 @@ class DropoffRulesController extends Controller
         ];
     }
 
-    /** null = admin (all), int = an operator's company, false = no staff profile. */
-    private function scope(Request $request): int|false|null
-    {
-        if (($request->user()->role ?? null) === 'admin') {
-            return null;
-        }
-        $companyUserId = $request->user()?->companyProfile?->company_user_id;
-
-        return $companyUserId ? (int) $companyUserId : false;
-    }
-
-    /** @return array<int, int> the routes an operator's buses are assigned to */
-    private function routeIds(int $companyUserId): array
-    {
-        return FleetRoute::whereHas('fleet', fn ($q) => $q->where('company_user_id', $companyUserId))->pluck('route_id')->unique()->values()->all();
-    }
-
     private function assertRoute(Request $request, int $routeId)
     {
-        $scope = $this->scope($request);
-        if ($scope === false) {
-            return $this->error('Staff profile not found.', 404);
-        }
-        if ($scope !== null && ! in_array($routeId, $this->routeIds($scope), true)) {
-            return $this->error('You can only manage drop-off rules for routes your buses run.', 403);
-        }
-        if (! Route::whereKey($routeId)->exists()) {
-            return $this->error('Route not found.', 404);
-        }
+        $denied = $this->access->denial($request->user(), $routeId, 'drop-off rules');
 
-        return null;
+        return $denied ? $this->error(...$denied) : null;
     }
 }
