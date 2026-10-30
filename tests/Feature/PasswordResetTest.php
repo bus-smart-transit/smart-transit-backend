@@ -73,8 +73,8 @@ it('emails a passenger a link to the passenger reset page, and the new password 
 
     expect(Hash::check(PR_NEW, $user->fresh()->password))->toBeTrue();
     expect($user->fresh()->tokens()->count())->toBe(0);          // every open session is signed out
-    $this->postJson('/api/passengers/login', ['email' => $user->email, 'password' => PR_OLD])->assertStatus(422);
-    $this->postJson('/api/passengers/login', ['email' => $user->email, 'password' => PR_NEW])->assertOk();
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => $user->email, 'password' => PR_OLD])->assertStatus(422);
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => $user->email, 'password' => PR_NEW])->assertOk();
 });
 
 it('emails a staff member a link to the staff reset page, and the new password works', function () {

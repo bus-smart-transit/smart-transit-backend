@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\CreateStaffAccountRequest;
-use App\Http\Requests\LoginRequest;
 use App\Mail\PassengerOtpMail;
 use App\Services\FcmService;
 use App\Services\StaffService;
@@ -26,34 +25,6 @@ class StaffAuthController extends Controller
         private StaffService $staffService,
         private StepUpService $stepUpService,
     ) {}
-
-    public function login(LoginRequest $request)
-    {
-        // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        $key = 'staff-login:'.$request->ip();
-
-        if (RateLimiter::tooManyAttempts($key, 5)) {
-            $seconds = RateLimiter::availableIn($key);
-            throw ValidationException::withMessages([
-                'email' => ["Too many failed login attempts. Please wait {$seconds} seconds and try again."],
-            ]);
-        }
-
-        try {
-            $response = $this->staffService->loginStaff($request->validated());
-        } catch (ValidationException $e) {
-            RateLimiter::hit($key, 900); // decay: 15 minutes
-            throw $e;
-        }
-
-        RateLimiter::clear($key);
-
-        $message = ($response['otp_required'] ?? false)
-            ? 'OTP sent to your email address.'
-            : 'Logged in successfully';
-
-        return $this->success($response, $message);
-    }
 
     public function verifyOtp(Request $request)
     {

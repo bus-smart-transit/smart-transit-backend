@@ -123,7 +123,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
             'total_occupancy' => 0,
         ]);
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -147,7 +147,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can retrieve current trip occupancy metrics', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -164,7 +164,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can get occupancy breakdown by stop', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -181,7 +181,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can view current passengers on trip', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -198,7 +198,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can scan QR code to board passenger', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -217,7 +217,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can record passenger alighting', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);

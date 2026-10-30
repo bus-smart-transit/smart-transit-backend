@@ -61,16 +61,16 @@ it('allows thirty checkout attempts per minute and throttles the next attempt', 
 });
 
 it('lets staff login keep failing past 5 attempts only when rate limiting is off', function () {
-    $payload = ['email' => 'nobody@example.com', 'password' => 'wrong-password', 'role' => 'operator'];
+    $payload = ['portal' => 'staff', 'email' => 'nobody@example.com', 'password' => 'wrong-password', 'role' => 'operator'];
 
     config(['app.rate_limiting_enabled' => false]);
     for ($i = 0; $i < 7; $i++) {
-        $response = $this->postJson('/api/staff/login', $payload);
+        $response = $this->postJson('/api/auth/login', $payload);
     }
     expect($response->json('errors.email.0') ?? $response->json('message') ?? '')
         ->not->toContain('Too many failed login attempts');
 
     config(['app.rate_limiting_enabled' => true]);
-    $response = $this->postJson('/api/staff/login', $payload);
+    $response = $this->postJson('/api/auth/login', $payload);
     expect(json_encode($response->json()))->toContain('Too many failed login attempts');
 });

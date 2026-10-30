@@ -25,7 +25,7 @@ beforeEach(fn () => Mail::fake());
 it('gives the staff member\'s uuid after the password and signs them in with it and the code', function () {
     [$user, $staff] = sluOperator();
 
-    $this->postJson('/api/staff/login', ['email' => $user->email, 'password' => 'password123', 'role' => 'operator'])
+    $this->postJson('/api/auth/login', ['portal' => 'staff', 'email' => $user->email, 'password' => 'password123', 'role' => 'operator'])
         ->assertSuccessful()
         ->assertJsonPath('data.otp_required', true)
         ->assertJsonPath('data.account_uuid', $staff->company_user_uuid)
@@ -45,7 +45,7 @@ it('gives the staff member\'s uuid after the password and signs them in with it 
 
 it('refuses the numeric user id and an unknown uuid at the code step', function () {
     [$user] = sluOperator();
-    $this->postJson('/api/staff/login', ['email' => $user->email, 'password' => 'password123', 'role' => 'operator'])->assertSuccessful();
+    $this->postJson('/api/auth/login', ['portal' => 'staff', 'email' => $user->email, 'password' => 'password123', 'role' => 'operator'])->assertSuccessful();
 
     $this->postJson('/api/staff/verify-otp', ['user_id' => $user->user_id, 'otp' => '123456'])
         ->assertStatus(422)->assertJsonValidationErrors(['account_uuid']);

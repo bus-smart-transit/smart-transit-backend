@@ -22,7 +22,7 @@ it('creates a staff account that can sign in, with the email saved lowercase', f
         ->and($user->companyProfile?->name)->toBe('Ana Reyes')
         ->and($user->companyProfile?->company_user_uuid)->not->toBeEmpty();
 
-    $this->postJson('/api/staff/login', ['email' => 'ana.reyes@example.com', 'password' => 'correct-horse-9', 'role' => 'operator'])
+    $this->postJson('/api/auth/login', ['portal' => 'staff', 'email' => 'ana.reyes@example.com', 'password' => 'correct-horse-9', 'role' => 'operator'])
         ->assertSuccessful();
 });
 

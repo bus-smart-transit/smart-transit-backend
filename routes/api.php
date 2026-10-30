@@ -26,6 +26,7 @@ use App\Http\Controllers\RewardController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\RouteDurationFactorController;
 use App\Http\Controllers\ShiftBlockController;
+use App\Http\Controllers\SignInController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
@@ -42,14 +43,14 @@ use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
 // Login endpoints use controller-level RateLimiter (failed-only counting).
-Route::post('passengers/login', [AuthController::class, 'login']);
+// 2026-10-30: one sign-in address for passengers and staff (the body's `portal` picks the flow).
+Route::post('auth/login', [SignInController::class, 'login']);
 // 2026-10-28: a new email verification code (right after sign-up, the password is not at hand to sign in again).
 Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:3,15,passengers-verify-email-resend');
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15,passengers-verify-otp-post');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
 Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
-Route::post('staff/login', [StaffAuthController::class, 'login']);
 Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:5,15,staff-verify-otp-post');
 Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
 Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');

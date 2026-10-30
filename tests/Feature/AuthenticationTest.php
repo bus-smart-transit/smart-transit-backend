@@ -10,8 +10,8 @@ uses(RefreshDatabase::class);
 function makeStaffForAuth(string $role): User
 {
     $user = User::create([
-        'username' => 'u_' . Str::lower($role) . '_' . uniqid(),
-        'email' => Str::lower($role) . '+' . uniqid() . '@smarttransit.test',
+        'username' => 'u_'.Str::lower($role).'_'.uniqid(),
+        'email' => Str::lower($role).'+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
@@ -19,7 +19,7 @@ function makeStaffForAuth(string $role): User
     StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => Str::title($role) . ' User',
+        'name' => Str::title($role).' User',
         'phone_num' => '09170000000',
         'address' => 'Test Address',
     ]);
@@ -32,7 +32,7 @@ describe('Authentication & Authorization', function () {
     it('authenticates admin user and requires OTP step-up', function () {
         $admin = makeStaffForAuth('admin');
 
-        $response = $this->postJson('/api/staff/login', [
+        $response = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $admin->email,
             'password' => 'password123',
         ]);
@@ -50,7 +50,7 @@ describe('Authentication & Authorization', function () {
     it('authenticates driver and returns token', function () {
         $driver = makeStaffForAuth('driver');
 
-        $response = $this->postJson('/api/staff/login', [
+        $response = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -65,7 +65,7 @@ describe('Authentication & Authorization', function () {
     it('authenticates conductor and returns token', function () {
         $conductor = makeStaffForAuth('conductor');
 
-        $response = $this->postJson('/api/staff/login', [
+        $response = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -77,7 +77,7 @@ describe('Authentication & Authorization', function () {
     it('rejects invalid credentials', function () {
         $admin = makeStaffForAuth('admin');
 
-        $response = $this->postJson('/api/staff/login', [
+        $response = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $admin->email,
             'password' => 'wrongpassword',
         ]);
@@ -88,7 +88,7 @@ describe('Authentication & Authorization', function () {
     it('enforces role-based access control on driver routes', function () {
         $conductor = makeStaffForAuth('conductor');
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -105,7 +105,7 @@ describe('Authentication & Authorization', function () {
     it('enforces role-based access control on conductor routes', function () {
         $driver = makeStaffForAuth('driver');
 
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -128,7 +128,7 @@ describe('Authentication & Authorization', function () {
     // provide the missing evidence, not to fix a bug.
     it('denies a driver token on an operator-only endpoint', function () {
         $driver = makeStaffForAuth('driver');
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -143,7 +143,7 @@ describe('Authentication & Authorization', function () {
 
     it('denies a conductor token on an operator-only endpoint', function () {
         $conductor = makeStaffForAuth('conductor');
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -158,7 +158,7 @@ describe('Authentication & Authorization', function () {
 
     it('denies a driver token on an admin-only endpoint', function () {
         $driver = makeStaffForAuth('driver');
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -173,7 +173,7 @@ describe('Authentication & Authorization', function () {
 
     it('denies a conductor token on an admin-only endpoint', function () {
         $conductor = makeStaffForAuth('conductor');
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);

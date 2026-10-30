@@ -80,7 +80,7 @@ it('asks an unverified passenger for a code at sign-in even with the login code 
     $userId = evfRegister($this, $email)->json('data.account_uuid');
     User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false]);
 
-    $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => $email, 'password' => 'Password123'])
         ->assertSuccessful()
         ->assertJsonPath('data.otp_required', true)
         ->assertJsonPath('data.verification_required', true)
@@ -92,7 +92,7 @@ it('lets a verified passenger with the login code off sign in directly', functio
     $userId = evfRegister($this, $email)->json('data.account_uuid');
     User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
 
-    $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => $email, 'password' => 'Password123'])
         ->assertSuccessful()
         ->assertJsonStructure(['data' => ['token']]);
 });
@@ -114,7 +114,7 @@ it('signs in a passenger who typed capitals in their email at sign-up', function
     User::whereKey(evfUser($userId)->user_id)->update(['two_factor_enabled' => false, 'email_verified_at' => now()]);
 
     expect($stored)->toBe(strtolower($stored));
-    $this->postJson('/api/passengers/login', ['email' => strtoupper($stored), 'password' => 'Password123'])
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => strtoupper($stored), 'password' => 'Password123'])
         ->assertSuccessful()
         ->assertJsonStructure(['data' => ['token']]);
 });
@@ -125,7 +125,7 @@ it('names the account by its uuid at sign-up and sign-in, never by the numeric u
     $uuid = $signup->json('data.account_uuid');
     expect(Str::isUuid($uuid))->toBeTrue();
 
-    $this->postJson('/api/passengers/login', ['email' => $email, 'password' => 'Password123'])
+    $this->postJson('/api/auth/login', ['portal' => 'passenger', 'email' => $email, 'password' => 'Password123'])
         ->assertJsonPath('data.account_uuid', $uuid)
         ->assertJsonMissingPath('data.user_id');
     $this->postJson('/api/passengers/verify-otp', ['user_id' => evfUser($uuid)->user_id, 'otp' => '123456'])

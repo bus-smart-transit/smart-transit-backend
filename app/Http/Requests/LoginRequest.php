@@ -23,6 +23,8 @@ class LoginRequest extends FormRequest
         return [
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            // 2026-10-30: the page the person signs in on; POST /auth/login serves both (SignInController).
+            'portal' => ['required', 'in:passenger,staff'],
         ];
     }
 }

@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\LoginRequest;
 use App\Http\Resources\PassengerResource;
 use App\Services\FcmService;
 use App\Services\UserService;
@@ -18,38 +17,6 @@ class AuthController extends Controller
     use ApiResponse;
 
     public function __construct(private UserService $userService) {}
-
-    /**
-     * Step 1: validate credentials and send OTP.
-     * Returns { otp_required: true, account_uuid, email_masked } — NO token yet.
-     */
-    public function login(LoginRequest $request)
-    {
-        // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        $key = 'passenger-login:'.$request->ip();
-
-        if (RateLimiter::tooManyAttempts($key, 5)) {
-            $seconds = RateLimiter::availableIn($key);
-            throw ValidationException::withMessages([
-                'email' => ["Too many failed login attempts. Please wait {$seconds} seconds and try again."],
-            ]);
-        }
-
-        try {
-            $result = $this->userService->initiateLoginOtp($request->validated());
-        } catch (ValidationException $e) {
-            RateLimiter::hit($key, 900);
-            throw $e;
-        }
-
-        RateLimiter::clear($key);
-
-        $message = ($result['otp_required'] ?? false)
-            ? 'OTP sent to your email address.'
-            : 'Logged in successfully.';
-
-        return $this->success($result, $message);
-    }
 
     /**
      * Step 2: verify OTP and issue Sanctum token.
