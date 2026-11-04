@@ -54,8 +54,26 @@ class AppServiceProvider extends ServiceProvider
      */
     private function configureRateLimiters(): void
     {
-        $this->app->make(RateLimiter::class)->for('payment-status', fn (Request $request) => Limit::perMinute(30)
+        $limiter = $this->app->make(RateLimiter::class);
+
+        $limiter->for('payment-status', fn (Request $request) => Limit::perMinute(30)
             ->by('payment-status|'.(string) $request->query('ref', '').'|'.$request->ip()));
+
+        // 2026-11-04 (Batch 45 Todo 2): counted per email, account or reference + IP, so people behind one carrier or
+        // office address no longer use up each other's tries; a wider per-IP cap still stops one address from going
+        // through many emails or references. Passenger and staff forgot-password pages have their own counters.
+        $bySubjectAndIp = fn (string $name, int $perSubject, int $perIp, callable $subject) => $limiter->for(
+            $name,
+            fn (Request $request) => [
+                Limit::perMinutes(15, $perSubject)->by($name.'|subject|'.sha1(mb_strtolower(trim((string) $subject($request)))).'|'.$request->ip()),
+                Limit::perMinutes(15, $perIp)->by($name.'|ip|'.$request->ip()),
+            ],
+        );
+
+        $bySubjectAndIp('pw-forgot-passenger', 3, 20, fn (Request $request) => $request->input('email', ''));
+        $bySubjectAndIp('pw-forgot-staff', 3, 20, fn (Request $request) => $request->input('email', ''));
+        $bySubjectAndIp('verify-email-resend', 3, 20, fn (Request $request) => $request->input('account_uuid', ''));
+        $bySubjectAndIp('tickets-lookup', 10, 40, fn (Request $request) => $request->input('transaction_reference', ''));
     }
 
     /**

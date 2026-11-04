@@ -19,6 +19,9 @@ return [
     'poll_seconds' => (int) env('TRACKING_POLL_SECONDS', 10),
     'backfill_days' => (int) env('TRACKING_BACKFILL_DAYS', 1),
 
+    // Seconds the public map's bus list (GET fleet/locations) is shared between callers; 0 turns the cache off.
+    'active_locations_cache_seconds' => (int) env('TRACKING_ACTIVE_LOCATIONS_CACHE_SECONDS', 5),
+
     // Misses (unknown or malformed links) allowed per client in `miss_window_minutes`.
     'miss_limit' => (int) env('TRACKING_MISS_LIMIT', 20),
     'miss_window_minutes' => (int) env('TRACKING_MISS_WINDOW_MIN', 10),

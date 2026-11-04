@@ -46,13 +46,13 @@ use Illuminate\Support\Facades\Route;
 // 2026-10-30: one sign-in address for passengers and staff (the body's `portal` picks the flow).
 Route::post('auth/login', [SignInController::class, 'login']);
 // 2026-10-28: a new email verification code (right after sign-up, the password is not at hand to sign in again).
-Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:3,15,passengers-verify-email-resend');
+Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:verify-email-resend');
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15,passengers-verify-otp-post');
 Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
-Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
+Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:pw-forgot-passenger');
 Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
 Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:5,15,staff-verify-otp-post');
-Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:3,15,pw-forgot');
+Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:pw-forgot-staff');
 Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
@@ -84,11 +84,12 @@ Route::post('step-up/verify', [StaffAuthController::class, 'stepUpVerify'])
 Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerifyPassword'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:10,1,step-up-verify-password-post']);
 
-Route::get('fare/options', [FareRuleController::class, 'options']);
-Route::post('fare/quote', [FareRuleController::class, 'quote']);
-Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation']);
-// Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab).
-Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware(['auth.optional', 'throttle:90,1,fleet-locations']);
+Route::get('fare/options', [FareRuleController::class, 'options'])->middleware('throttle:60,1,fare-options');
+Route::post('fare/quote', [FareRuleController::class, 'quote'])->middleware('throttle:60,1,fare-quote');
+Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation'])->middleware('throttle:60,1,fare-quote-fleets');
+// Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab). 2026-11-04: 300 a
+// minute per IP (about 60 tabs behind one carrier or office address); the bus list is cached for a few seconds.
+Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware(['auth.optional', 'throttle:300,1,fleet-locations']);
 Route::get('fleet/nearest', [FleetLocationController::class, 'nearest'])->middleware(['auth.optional', 'throttle:90,1,fleet-nearest']);
 // Live traffic for one segment (the next stop), asked through the server so the provider key stays secret and
 // answers are shared and counted. Own throttle bucket (the third value) so it never shares a counter with other routes.
@@ -102,11 +103,11 @@ Route::get('traffic/flow/{z}/{x}/{y}.png', [TrafficController::class, 'flowTile'
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')
     ->middleware('throttle:60,1,track');
-Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares']);
+Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares'])->middleware('throttle:60,1,routes-fares');
 Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:60,1,region');
-Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops']);
+Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:60,1,routes-stops');
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1,routes-geometry');
-Route::get('trips', [TripController::class, 'availableTrips']);
+Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:60,1,trips-available');
 Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:60,1,trips-timeline');
 // Batch 28 Stage 3, item 10: restricted areas and designated drop-off points for a trip (feedback only; the server re-checks).
 Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:60,1,trips-dropoff-options');
@@ -124,7 +125,7 @@ Route::get('booking/address-search', [BookingController::class, 'addressSearch']
 
 Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
     ->middleware(['auth.optional', 'throttle:30,1,checkout']);
-Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:10,15,tickets-lookup');
+Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:tickets-lookup');
 Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
 Route::get('payments/status', [PaymentController::class, 'onlineStatus'])->middleware('throttle:payment-status'); // 30 a minute per payment reference and IP (AppServiceProvider)
 
@@ -174,7 +175,7 @@ Route::prefix('operator')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         // Account management — operator can only create driver/conductor accounts
-        Route::post('accounts', [StaffAuthController::class, 'createAccount']);
+        Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
         Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
         // §4.8: the crew's time in / time out (Start Shift / End Shift) on this Operator's buses, read only.
@@ -186,11 +187,11 @@ Route::prefix('operator')
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
         Route::get('routes', [RouteController::class, 'index']);
-        Route::post('routes', [RouteController::class, 'store']);
+        Route::post('routes', [RouteController::class, 'store'])->middleware('throttle:10,1,mgmt-routes-post');
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
         Route::get('stops', [StopController::class, 'index']);
-        Route::post('stops', [StopController::class, 'store']);
-        Route::put('stops/{stopId}', [StopController::class, 'update']);
+        Route::post('stops', [StopController::class, 'store'])->middleware('throttle:10,1,mgmt-stops-post');
+        Route::put('stops/{stopId}', [StopController::class, 'update'])->middleware('throttle:10,1,mgmt-stops-put');
         Route::delete('stops/{stopId}', [StopController::class, 'destroy']);
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
@@ -435,15 +436,18 @@ Route::prefix('admin')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         // Admin creates operator accounts
-        Route::post('accounts', [StaffAuthController::class, 'createAccount']);
+        Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
         Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
 
         // Stops
-        Route::apiResource('stops', StopController::class);
+        Route::apiResource('stops', StopController::class)
+            ->middlewareFor('store', 'throttle:10,1,mgmt-stops-post')
+            ->middlewareFor('update', 'throttle:10,1,mgmt-stops-put');
 
         // Routes + stops
-        Route::apiResource('routes', RouteController::class);
+        Route::apiResource('routes', RouteController::class)
+            ->middlewareFor('store', 'throttle:10,1,mgmt-routes-post');
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);

@@ -1,7 +1,10 @@
 <?php
+
 namespace App\Services;
+
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\TripRepository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
 class FleetLocationService
@@ -21,7 +24,7 @@ class FleetLocationService
     {
         $trip = $this->tripRepository->findCurrentByDriver($companyUserId);
 
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'trip' => ['No active trip found for this driver.'],
             ]);
@@ -35,7 +38,7 @@ class FleetLocationService
 
         $this->fleetLocationRepository->upsertLocation(array_merge($payload, [
             'fleet_id' => $trip->fleetRoute->fleet_id,
-            'trip_id'  => $payload['trip_id'] ?? $trip->trip_id,
+            'trip_id' => $payload['trip_id'] ?? $trip->trip_id,
         ]));
 
         return true;
@@ -46,6 +49,18 @@ class FleetLocationService
      * canonical route (the client never computes authoritative snapping).
      */
     public function getAllActiveLocations(): object
+    {
+        // 2026-11-04 (Batch 45 Todo 2): every open passenger map asks for the same list every 12 seconds, so it is
+        // kept for a few seconds and shared. Callers must copy a row before changing it (the cached rows are shared).
+        $seconds = (int) config('tracking.active_locations_cache_seconds');
+        if ($seconds <= 0) {
+            return $this->loadActiveLocations();
+        }
+
+        return Cache::remember('fleet:active-locations', $seconds, fn () => $this->loadActiveLocations());
+    }
+
+    private function loadActiveLocations(): object
     {
         return $this->fleetLocationRepository->getAllActiveLocations()->map(function ($row) {
             $row->route_position = null;

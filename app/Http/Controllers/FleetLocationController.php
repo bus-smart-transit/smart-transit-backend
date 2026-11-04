@@ -41,7 +41,7 @@ class FleetLocationController extends Controller
     public function activeLocations(Request $request)
     {
         $rows = $this->fleetLocationService->getAllActiveLocations()
-            ->map(fn ($row) => $this->presentBus($row, $request));
+            ->map(fn ($row) => $this->presentBus(clone $row, $request)); // a copy: the list is cached and shared
 
         return $this->success($rows, 'Active fleet locations retrieved');
     }
