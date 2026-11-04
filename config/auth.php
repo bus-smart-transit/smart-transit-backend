@@ -124,4 +124,26 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Sign-in limits (POST /auth/login, App\Support\RateLimiting\SignInThrottle)
+    |--------------------------------------------------------------------------
+    |
+    | Decided 2026-11-04 (Batch 45, Todo 2). Failed sign-ins are counted per
+    | email + IP: after `failures` of them within `failure_window_minutes`,
+    | that email is locked on that IP for `lock_minutes`. A wider cap counts
+    | every failure from one IP (many people can share a carrier or office
+    | address), so one address cannot try many emails. A successful sign-in
+    | clears only that email's count.
+    |
+    */
+
+    'sign_in_limits' => [
+        'failures' => 5,
+        'failure_window_minutes' => 15,
+        'lock_minutes' => 5,
+        'ip_failures' => 30,
+        'ip_window_minutes' => 15,
+    ],
+
 ];

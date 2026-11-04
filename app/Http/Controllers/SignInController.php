@@ -5,15 +5,16 @@ namespace App\Http\Controllers;
 use App\Http\Requests\LoginRequest;
 use App\Services\StaffService;
 use App\Services\UserService;
+use App\Support\RateLimiting\SignInThrottle;
 use App\Traits\ApiResponse;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 /**
  * 2026-10-30: step 1 of signing in, for passengers and staff alike: POST /auth/login { email, password, portal }.
  * `portal` is the page the person signs in on (passenger or staff). It only picks the flow: each flow still checks
  * the account's own role and answers a wrong one exactly like a wrong password. Step 2 (the emailed code) stays on
- * passengers/verify-otp and staff/verify-otp. Only FAILED attempts count toward the limit (5, then 15 minutes).
+ * passengers/verify-otp and staff/verify-otp. Only FAILED attempts count toward the limit (SignInThrottle: 5 per email + IP,
+ * then 5 minutes; a wider per-IP cap).
  */
 class SignInController extends Controller
 {
@@ -26,27 +27,28 @@ class SignInController extends Controller
 
     public function login(LoginRequest $request)
     {
-        $staff = $request->validated('portal') === 'staff';
-        $key = ($staff ? 'staff-login:' : 'passenger-login:').$request->ip();
+        $portal = $request->validated('portal');
+        $email = (string) $request->validated('email');
+        $ip = $request->ip();
 
-        if (RateLimiter::tooManyAttempts($key, 5)) {
-            $seconds = RateLimiter::availableIn($key);
+        $seconds = SignInThrottle::secondsLocked($portal, $email, $ip);
+        if ($seconds !== null) {
             throw ValidationException::withMessages([
-                'email' => ["Too many failed login attempts. Please wait {$seconds} seconds and try again."],
+                'email' => ['Too many failed login attempts. Please wait '.SignInThrottle::waitText($seconds).' and try again.'],
             ]);
         }
 
         $credentials = $request->safe()->only(['email', 'password']);
         try {
-            $result = $staff
+            $result = $portal === 'staff'
                 ? $this->staffService->loginStaff($credentials)
                 : $this->userService->initiateLoginOtp($credentials);
         } catch (ValidationException $e) {
-            RateLimiter::hit($key, 900);
+            SignInThrottle::recordFailure($portal, $email, $ip);
             throw $e;
         }
 
-        RateLimiter::clear($key);
+        SignInThrottle::recordSuccess($portal, $email, $ip);
 
         return $this->success($result, ($result['otp_required'] ?? false) ? 'OTP sent to your email address.' : 'Logged in successfully.');
     }
