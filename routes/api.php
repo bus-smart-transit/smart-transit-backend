@@ -140,6 +140,8 @@ Route::prefix('passengers')
         // 2026-10-29 (Batch 36 Phase 2): the passenger edits their own name, phone and gender (PATCH; PUT kept for older clients).
         Route::match(['put', 'patch'], 'profile', [PassengerController::class, 'update'])->middleware('throttle:10,1,passengers-profile-update');
         Route::patch('two-factor', [AuthController::class, 'updateTwoFactor']);
+        // 2026-11-05: the signed-in passenger deletes their OWN account (no id in the address; AccountDeletionService).
+        Route::delete('account', [PassengerController::class, 'destroy'])->middleware('throttle:5,15,passengers-account-delete');
         Route::post('fcm-token', [AuthController::class, 'registerFcmToken']);
         Route::get('tickets', [TicketController::class, 'myTickets']);
         Route::get('tickets/{ticketUuid}/qr', [TicketController::class, 'getTicketQR']);

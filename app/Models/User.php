@@ -1,32 +1,41 @@
 <?php
+
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
+use App\Mail\PasswordResetMail;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\DatabaseNotification;
+use Illuminate\Notifications\DatabaseNotificationCollection;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Laravel\Sanctum\HasApiTokens;
-use App\Mail\PasswordResetMail;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * @mixin IdeHelperUser
+ *
  * @property int $user_id
  * @property string $email
  * @property string $username
  * @property string $password
  * @property string $role
  * @property bool $two_factor_enabled
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\StaffUser|null $companyProfile
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read StaffUser|null $companyProfile
  * @property-read int $id
- * @property-read \Illuminate\Notifications\DatabaseNotificationCollection<int, \Illuminate\Notifications\DatabaseNotification> $notifications
+ * @property-read DatabaseNotificationCollection<int, DatabaseNotification> $notifications
  * @property-read int|null $notifications_count
- * @property-read \App\Models\PassengerUser|null $passengerProfile
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \Laravel\Sanctum\PersonalAccessToken> $tokens
+ * @property-read PassengerUser|null $passengerProfile
+ * @property-read Collection<int, PersonalAccessToken> $tokens
  * @property-read int|null $tokens_count
+ *
  * @method static \Database\Factories\UserFactory factory($count = null, $state = [])
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User newQuery()
@@ -38,6 +47,7 @@ use App\Mail\PasswordResetMail;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUserId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|User whereUsername($value)
+ *
  * @mixin \Eloquent
  */
 class User extends Authenticatable
@@ -67,6 +77,9 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_enabled' => 'boolean',
+            // 2026-11-05: passenger account deletion (AccountDeletionService), stored in UTC.
+            'deletion_requested_at' => UtcDateTime::class,
+            'anonymized_at' => UtcDateTime::class,
         ];
     }
 

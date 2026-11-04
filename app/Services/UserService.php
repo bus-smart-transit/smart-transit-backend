@@ -11,7 +11,10 @@ use Illuminate\Validation\ValidationException;
 
 class UserService
 {
-    public function __construct(private UserRepository $userRepository) {}
+    public function __construct(
+        private UserRepository $userRepository,
+        private AccountDeletionService $accountDeletion,
+    ) {}
 
     /**
      * Step 1 of 2-step login.
@@ -47,6 +50,8 @@ class UserService
             return [
                 'otp_required' => false,
                 'token' => $user->createToken('passenger-session-token')->plainTextToken,
+                // 2026-11-05: signing in during the grace days keeps the account (AccountDeletionService).
+                'deletion_cancelled' => $this->accountDeletion->cancelIfPending($user),
             ];
         }
 
@@ -141,6 +146,8 @@ class UserService
         return [
             'user' => $user,
             'token' => $user->createToken('passenger-session-token')->plainTextToken,
+            // 2026-11-05: signing in during the grace days keeps the account (AccountDeletionService).
+            'deletion_cancelled' => $this->accountDeletion->cancelIfPending($user),
         ];
     }
 

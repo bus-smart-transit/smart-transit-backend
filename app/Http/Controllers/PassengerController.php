@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\DeleteOwnAccountRequest;
 use App\Http\Requests\RegisterPassengerRequest;
 use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
+use App\Services\AccountDeletionService;
 use App\Services\AuditLogger;
 use App\Services\PassengerService;
 use App\Services\PaymentService;
@@ -120,11 +122,15 @@ class PassengerController extends Controller
         return $this->success(new PassengerResource($model), 'Profile updated successfully');
     }
 
-    public function destroy(string $uuid): JsonResponse
+    /**
+     * 2026-11-05: the signed-in passenger deletes their OWN account (least privilege: no id is taken, so nobody can
+     * reach another passenger). Every session ends now; signing in within the grace days cancels it.
+     */
+    public function destroy(DeleteOwnAccountRequest $request, AccountDeletionService $deletions): JsonResponse
     {
-        $this->passengerService->deletePassenger($uuid);
+        $result = $deletions->request($request->user(), (string) $request->validated('password'));
 
-        return $this->success(null, 'Deleted successfully');
+        return $this->success($result, 'Your account will be deleted. You have been signed out.');
     }
 
     public function restore(string $uuid): JsonResponse

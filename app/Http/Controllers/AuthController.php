@@ -51,7 +51,10 @@ class AuthController extends Controller
 
         RateLimiter::clear($otpKey);
 
-        return $this->success(['token' => $result['token']], 'Logged in successfully.');
+        return $this->success(
+            ['token' => $result['token'], 'deletion_cancelled' => (bool) ($result['deletion_cancelled'] ?? false)],
+            ($result['deletion_cancelled'] ?? false) ? 'Logged in. Your account will not be deleted.' : 'Logged in successfully.',
+        );
     }
 
     /** 2026-10-28: POST passengers/verify-email/resend { account_uuid }. A new code for an account not verified yet. */

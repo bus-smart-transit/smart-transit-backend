@@ -65,11 +65,6 @@ class PassengerService
         return $this->passengerRepository->update($uuid, $payload);
     }
 
-    public function deletePassenger(string $uuid): bool
-    {
-        return $this->passengerRepository->delete($uuid);
-    }
-
     public function restorePassenger(string $uuid): object
     {
         return $this->passengerRepository->restore($uuid);

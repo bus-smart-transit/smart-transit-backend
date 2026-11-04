@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Repositories;
 
 use App\Models\PassengerUser;
@@ -15,6 +16,7 @@ class PassengerRepository
     {
         // Generate UUID here — no HasUuids trait on the model
         $payload['passenger_uuid'] = (string) Str::uuid();
+
         return PassengerUser::create($payload);
     }
 
@@ -39,13 +41,8 @@ class PassengerRepository
     {
         $model = $this->findByUuid($uuid);
         $model->update($payload);
-        return $model->fresh();
-    }
 
-    public function delete(string $uuid): bool
-    {
-        $model = $this->findByUuid($uuid);
-        return $model->delete();
+        return $model->fresh();
     }
 
     public function restore(string $uuid): PassengerUser
@@ -55,6 +52,7 @@ class PassengerRepository
             ->where('passenger_uuid', $uuid)
             ->firstOrFail();
         $model->restore();
+
         return $model;
     }
 }

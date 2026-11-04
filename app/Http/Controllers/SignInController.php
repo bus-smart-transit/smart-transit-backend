@@ -50,6 +50,12 @@ class SignInController extends Controller
 
         SignInThrottle::recordSuccess($portal, $email, $ip);
 
-        return $this->success($result, ($result['otp_required'] ?? false) ? 'OTP sent to your email address.' : 'Logged in successfully.');
+        $message = match (true) {
+            (bool) ($result['otp_required'] ?? false) => 'OTP sent to your email address.',
+            (bool) ($result['deletion_cancelled'] ?? false) => 'Logged in. Your account will not be deleted.',
+            default => 'Logged in successfully.',
+        };
+
+        return $this->success($result, $message);
     }
 }
