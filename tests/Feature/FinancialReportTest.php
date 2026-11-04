@@ -6,9 +6,9 @@ use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
-use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -384,7 +384,6 @@ it('rate limits the endpoints, the export hardest', function () {
     $this->actingAs($w['operator'])->get('/api/operator/financials/export')->assertStatus(429);
 });
 
-
 it('dates refunds by completion for cash reconciliation, or by the original sale for profitability', function () {
     $w = fnWorld();
     $s = fnSale($w, [100.00], '2026-10-04 20:00:00');                                  // sold on the 4th
@@ -444,4 +443,21 @@ it('keeps the export limit separate from the other financial endpoints, so a bus
     }
 
     $this->actingAs($w['operator'])->get('/api/operator/financials/export?from=2026-10-05')->assertSuccessful();
+});
+it('shows the online booking fee apart from the fares, once per purchase (Feature A)', function () {
+    $w = fnWorld();
+    $s = fnSale($w, [50.00, 50.00], '2026-10-05 08:00:00');
+    DB::table('payments')->where('payment_id', $s['payment_id'])->update(['fee_amount' => 10]);
+    $resolutionTicket = $s['ticket_ids'][0];
+    fnRefund($resolutionTicket, $w['trip']->trip_id, 50.00, '2026-10-05 01:00:00');
+    DB::table('ticket_resolutions')->where('ticket_id', $resolutionTicket)->update(['fee_amount' => 10]);
+
+    $kpis = fnGet($this, $w['operator'], '', ['from' => '2026-10-05', 'to' => '2026-10-05'])->assertSuccessful()->json('data.kpis');
+    expect($kpis['gross'])->toEqual(100)
+        ->and($kpis['booking_fees'])->toEqual(['collected' => 10, 'refunded' => 10, 'net' => 0]);
+
+    $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=transactions&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+    expect(end($rows[0]))->toBe('Booking fee (PHP)')
+        ->and(collect(array_slice($rows, 1))->map(fn ($r) => end($r))->sort()->values()->all())->toBe(['0.00', '10.00']);
 });

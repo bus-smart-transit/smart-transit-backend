@@ -6,6 +6,7 @@ use App\Services\AddressSearchService;
 use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
 use App\Services\TripResolverService;
+use App\Support\BookingFee;
 use App\Support\BookingWindow;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -55,7 +56,8 @@ class BookingController extends Controller
      */
     public function window()
     {
-        return $this->success(BookingWindow::describe(), 'Booking window retrieved successfully');
+        // Batch 45 Feature A: the booking page shows the online booking fee before the passenger pays (BookingFee owns it).
+        return $this->success(BookingWindow::describe() + ['online_booking_fee' => BookingFee::online()], 'Booking window retrieved successfully');
     }
 
     // Available trips for a Manila date (default today), optionally for one journey, paginated.

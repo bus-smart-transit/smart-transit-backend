@@ -84,6 +84,12 @@ class FinancialReportService
                 'gross' => $this->money($gross),
                 'refunds' => $this->money($refunded),
                 'net' => $this->money($gross - $refunded),
+                // Batch 45 Feature A: online booking fees, apart from the fares (they are not the Operator's revenue).
+                'booking_fees' => [
+                    'collected' => $this->money($sales->sum('fee_cents')),
+                    'refunded' => $this->money($refunds->sum('fee_cents')),
+                    'net' => $this->money($sales->sum('fee_cents') - $refunds->sum('fee_cents')),
+                ],
                 'tickets' => $sales->count(),
                 'average_fare' => $sales->count() > 0 ? $this->money((int) round($gross / $sales->count())) : 0.0,
                 // "Boarded" = the ticket has a boarded_at time (set when the ticket is scanned on board).
@@ -165,7 +171,7 @@ class FinancialReportService
         }
 
         $query->select($this->columns())
-            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at');
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'first_t.first_ticket_id', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at');
 
         $direction = $filters['dir'];
         match ($filters['sort']) {
@@ -190,11 +196,11 @@ class FinancialReportService
         $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
 
         return $this->csv(
-            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed'],
+            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Booking fee (PHP)'],
             $rows->map(fn ($t) => [
                 $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
                 $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
-                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '',
+                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '', number_format($t['booking_fee'], 2, '.', ''),
             ])->all(),
         );
     }
@@ -209,11 +215,11 @@ class FinancialReportService
         $refunds = $this->applyFilters($allRefunds, $filters)->sortBy(fn ($r) => $r['refunded_at']->getTimestamp())->values();
 
         return $this->csv(
-            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date'],
+            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date', 'Booking fee refunded (PHP)'],
             $refunds->map(fn ($r) => [
                 $r['refunded_at']->format('Y-m-d H:i:s'), number_format($r['cents'] / 100, 2, '.', ''), $r['refund_method'] === 'cash' ? 'Cash' : 'Back to the original payment',
                 $r['transaction_id'], $r['ticket_id'], $r['sold_at']?->format('Y-m-d H:i:s') ?? '', $this->channelLabel($r['channel'], $r['method']),
-                $r['plate_number'], $r['route_name'], $r['trip_id'], $r['trip_date'],
+                $r['plate_number'], $r['route_name'], $r['trip_id'], $r['trip_date'], number_format($r['fee_cents'] / 100, 2, '.', ''),
             ])->all(),
         );
     }
@@ -298,7 +304,7 @@ class FinancialReportService
             // Wide enough for either clock; the exact Manila range is applied in PHP below.
             ->whereBetween('payments.payment_created', [FinancialClock::wallString($start->copy()->subDay()), FinancialClock::wallString($end->copy()->addDay())])
             ->select($this->columns())
-            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at')
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'first_t.first_ticket_id', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at')
             ->get()
             ->unique('ticket_id')
             ->map(fn ($r) => $this->mapSale($r))
@@ -321,7 +327,7 @@ class FinancialReportService
         }
         $refunds = $refundQuery
             ->select($this->columns())
-            ->addSelect('res.amount as res_amount', 'res.completed_at as res_completed_at', 'res.method as res_method', 'onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at')
+            ->addSelect('res.amount as res_amount', 'res.completed_at as res_completed_at', 'res.method as res_method', 'res.fee_amount as res_fee_amount', 'onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at')
             ->get()
             ->map(fn ($r) => $this->mapRefund($r, $byCompletion))
             ->filter(fn ($r) => $r['at'] && $r['at']->between($start, $end, true))
@@ -333,7 +339,7 @@ class FinancialReportService
     /** The earliest ticket of each payment (when its tickets were minted = when an online payment was confirmed). */
     private function firstTicketPerPayment(): Builder
     {
-        return DB::table('tickets')->select('payment_id', DB::raw('MIN(created_at) as first_ticket_at'))->groupBy('payment_id');
+        return DB::table('tickets')->select('payment_id', DB::raw('MIN(created_at) as first_ticket_at'), DB::raw('MIN(ticket_id) as first_ticket_id'))->groupBy('payment_id');
     }
 
     /** Tickets of paid, valid payments on the owner's fleets, with the dimensions every figure groups by. */
@@ -364,7 +370,7 @@ class FinancialReportService
             'trips.trip_id', 'trips.trip_date', 'trips.departure_time', 'trips.leg_direction', 'trips.service_type', 'trips.shift_block_id',
             'fleets.fleet_id', 'fleets.plate_number', 'fleets.bus_company_name', 'fleets.body_no',
             'routes.route_id', 'routes.route_name', 'routes.origin', 'routes.destination',
-            'payments.payment_id', 'payments.transaction_reference', 'payments.payment_method', 'payments.payment_channel', 'payments.payment_created',
+            'payments.payment_id', 'payments.transaction_reference', 'payments.payment_method', 'payments.payment_channel', 'payments.payment_created', 'payments.fee_amount',
         ];
     }
 
@@ -409,6 +415,8 @@ class FinancialReportService
             'transaction_id' => (string) $r->transaction_reference,
             'payment_id' => (int) $r->payment_id,
             'cents' => $cents,
+            // Batch 45 Feature A: the purchase's booking fee, counted once, on its first ticket.
+            'fee_cents' => (int) $r->ticket_id === (int) ($r->first_ticket_id ?? 0) ? (int) round(((float) ($r->fee_amount ?? 0)) * 100) : 0,
             'refund_cents' => $refundCents,
             'seat_type' => $r->seat_type,
             'boarded' => $r->boarded_at !== null,
@@ -438,6 +446,7 @@ class FinancialReportService
             'transaction_id' => (string) $r->transaction_reference,
             'payment_id' => (int) $r->payment_id,
             'refund_method' => (string) $r->res_method,
+            'fee_cents' => (int) round(((float) ($r->res_fee_amount ?? 0)) * 100),
         ];
     }
 
@@ -641,6 +650,7 @@ class FinancialReportService
             'seat_type' => $r['seat_type'],
             'amount' => $this->money($r['cents']),
             'refunded' => $this->money($r['refund_cents']),
+            'booking_fee' => $this->money($r['fee_cents']),
             'status' => $r['status'],
             'status_label' => $labels[$r['status']] ?? $r['status'],
             'refund_completed_at' => $r['refund_completed_at']?->format('Y-m-d H:i:s'),

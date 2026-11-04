@@ -825,3 +825,23 @@ it('leaves the trip as it was when cancelling fails part way (Todo 3 finding 4)'
 
     expect($f['trip']->fresh()->status)->not->toBe('cancelled');
 });
+
+it('refunds the booking fee once with the first ticket of a purchase when the operator cancels (Feature A)', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    rfFakeGateway();
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $payment = Payment::create(['amount' => 94, 'fee_amount' => 10, 'payment_created' => now(), 'transaction_reference' => 'TXN-FEE-'.Str::random(6), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'gateway_reference' => 'cs_fee', 'gateway_payment_id' => 'pay_fee', 'items_payload' => []]);
+    $first = rfTicket($f, $f['trip'], [], 'gcash', $pax, $payment);
+    $second = rfTicket($f, $f['trip'], [], 'gcash', $pax, $payment);
+    $cash = rfTicket($f, $f['trip'], [], 'onsite');
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    $fees = TicketResolution::whereIn('ticket_id', [$first->ticket_id, $second->ticket_id])->pluck('fee_amount')->map(fn ($v) => (float) $v)->sort()->values()->all();
+    $amounts = collect(rfRefundCalls())->pluck('amount')->sort()->values()->all();
+
+    expect($fees)->toBe([0.0, 10.0])
+        ->and($amounts)->toBe([4700, 5700]) // 47 fare, and 47 fare + 10 fee
+        ->and((float) (TicketResolution::where('ticket_id', $cash->ticket_id)->value('fee_amount') ?? 0))->toBe(0.0);
+});

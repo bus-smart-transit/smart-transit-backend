@@ -11,6 +11,7 @@ use App\Repositories\OnsitePaymentRepository;
 use App\Repositories\PassengerRepository;
 use App\Repositories\PaymentRepository;
 use App\Repositories\TripRepository;
+use App\Support\BookingFee;
 use App\Support\Database\RlsContext;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -281,6 +282,19 @@ class PaymentService
                         'quantity' => 1,
                     ]];
 
+                    // Batch 45 Feature A: the booking fee is its own line on PayMongo's page and its own column here;
+                    // payments.amount stays the fares (after reward points), so revenue and rewards never include it.
+                    $bookingFee = BookingFee::online();
+                    if ($bookingFee > 0) {
+                        $lineItems[] = [
+                            'name' => 'Booking fee',
+                            'amount' => (int) round($bookingFee * 100),
+                            'currency' => 'PHP',
+                            'quantity' => 1,
+                        ];
+                    }
+                    $payment->fee_amount = $bookingFee;
+
                     $payment->amount = $netTotal;
                     $payment->items_payload = $reservedItems;
                     // Matches PayMongo's default checkout session expiry window.
@@ -378,6 +392,9 @@ class PaymentService
                 'reward_points_applied' => $prepared['reward_points_applied'],
                 'reward_discount' => $prepared['reward_discount'],
                 'net_amount' => $prepared['net_amount'],
+                // Batch 45 Feature A: what PayMongo charges = the fares (net_amount) + the booking fee.
+                'booking_fee' => (float) $payment->fee_amount,
+                'total_due' => round($prepared['net_amount'] + (float) $payment->fee_amount, 2),
                 'checkout_url' => $session['attributes']['checkout_url'],
             ];
 

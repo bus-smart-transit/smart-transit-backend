@@ -520,3 +520,32 @@ it('lets the replay window be changed, and switched off with 0', function () {
     config(['services.paymongo.webhook_tolerance_s' => 0]);
     hlPaid($this, $payment, time() - 30 * 86400)->assertOk();
 });
+
+it('adds the PHP 10 booking fee as its own line and column, apart from the fare and the reward points (Feature A)', function () {
+    $f = hlFixture();
+    $passenger = hlPassenger(0);
+
+    $response = hlCheckout($this, $passenger, $f)->assertSuccessful();
+    $payment = Payment::where('transaction_reference', $response->json('data.payment.transaction_reference'))->firstOrFail();
+    $fare = (float) $payment->amount;
+
+    expect((float) $payment->fee_amount)->toBe(10.0)
+        ->and((float) $response->json('data.booking_fee'))->toBe(10.0)
+        ->and((float) $response->json('data.total_due'))->toBe(round($fare + 10, 2))
+        ->and((float) $response->json('data.net_amount'))->toBe($fare);
+
+    $sent = Http::recorded(fn ($request) => str_contains($request->url(), '/v1/checkout_sessions'))->last()[0]->data()['data']['attributes']['line_items'];
+    expect($sent)->toHaveCount(2)
+        ->and($sent[0]['amount'])->toBe((int) round($fare * 100))
+        ->and($sent[1])->toMatchArray(['name' => 'Booking fee', 'amount' => 1000, 'quantity' => 1]);
+});
+
+it('sends no fee line when the fee is set to 0 (Feature A)', function () {
+    config(['fares.online_booking_fee' => 0]);
+    $f = hlFixture();
+
+    $response = hlCheckout($this, hlPassenger(0), $f)->assertSuccessful();
+
+    $sent = Http::recorded(fn ($request) => str_contains($request->url(), '/v1/checkout_sessions'))->last()[0]->data()['data']['attributes']['line_items'];
+    expect($sent)->toHaveCount(1)->and((float) $response->json('data.booking_fee'))->toBe(0.0);
+});

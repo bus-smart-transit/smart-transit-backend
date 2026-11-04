@@ -71,7 +71,8 @@ class RefundCancelledTripTickets implements ShouldQueue
             }
 
             $review = collect($pairs)->contains(fn (array $pair) => $pair[1]->status === TicketResolution::NEEDS_REVIEW);
-            $amount = collect($pairs)->sum(fn (array $pair) => (float) $pair[1]->amount);
+            // Fares plus the booking fee given back with them (Batch 45 Feature A).
+            $amount = collect($pairs)->sum(fn (array $pair) => (float) $pair[1]->amount + (float) $pair[1]->fee_amount);
             $intercept = config('mail.intercept_email');
 
             Mail::to($intercept ?: $buyer)->queue(new TripCancelledRefundMail(

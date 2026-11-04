@@ -29,4 +29,8 @@ return [
     // for centavos or 0.25 for quarter-peso steps. One setting for the whole system; tickets already issued keep
     // the amount they were sold at.
     'rounding_increment' => env('FARE_ROUNDING_INCREMENT', '1.00'),
+
+    // Batch 45 Feature A (decided 2026-11-04): a fixed booking fee per ONLINE payment, whatever the number of tickets
+    // (App\Support\BookingFee owns the rules). Cash sales pay none. 0 turns it off. Test-mode capstone only (L-65).
+    'online_booking_fee' => (float) env('ONLINE_BOOKING_FEE', 10),
 ];

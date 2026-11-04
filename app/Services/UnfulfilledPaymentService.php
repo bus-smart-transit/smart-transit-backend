@@ -99,6 +99,7 @@ class UnfulfilledPaymentService
                 AuditLogger::log('payment.refund_recorded', 'Payment', (int) $payment->payment_id, [
                     'transaction_reference' => $payment->transaction_reference,
                     'amount' => (float) $payment->amount,
+                    'fee_amount' => (float) $payment->fee_amount,
                     'note' => $payment->refund_note,
                 ]);
 
@@ -107,7 +108,8 @@ class UnfulfilledPaymentService
 
             // 2026-11-04 (Batch 45, Todo R): the buyer is told once the Operator records that the money went back.
             $refunded = Payment::findOrFail($paymentId);
-            app(RefundCompletedMailer::class)->send($refunded, (float) $refunded->amount);
+            // Everything the buyer paid comes back: the fares and the booking fee (Batch 45 Feature A).
+            app(RefundCompletedMailer::class)->send($refunded, (float) $refunded->amount + (float) $refunded->fee_amount);
 
             return $this->present(collect([$refunded]))[0];
         });
@@ -214,6 +216,8 @@ class UnfulfilledPaymentService
                 'status' => $payment->status,
                 'reconciliation_status' => $payment->idempotency_state === 'unknown' ? self::OUTCOME_UNKNOWN : null,
                 'amount' => (float) $payment->amount,
+                'fee_amount' => (float) $payment->fee_amount,
+                'total_paid' => round((float) $payment->amount + (float) $payment->fee_amount, 2),
                 'payment_channel' => $payment->payment_channel,
                 'paid_at' => $payment->payment_created?->toIso8601String(),
                 'payer' => [

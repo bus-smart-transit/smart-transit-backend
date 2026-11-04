@@ -60,6 +60,7 @@ class Payment extends Model
 
     protected $fillable = [
         'amount',
+        'fee_amount',
         'payment_created',
         'transaction_reference',
         'payment_method',
@@ -98,6 +99,7 @@ class Payment extends Model
             'payment_created' => 'datetime',
             'hold_expires_at' => 'datetime',
             'refunded_at' => 'datetime',
+            'fee_amount' => 'float',
             // Stores the reserved items (trip_id, seat_type, stop ids OR
             // coordinates, fare_rule_id, distance_km, amount) locked in at
             // checkout time, so the webhook can create the actual ticket

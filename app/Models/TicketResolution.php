@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -11,14 +12,19 @@ use Illuminate\Database\Eloquent\Model;
 class TicketResolution extends Model
 {
     public const REBOOK = 'rebook';
+
     public const REFUND = 'refund';
 
     public const PENDING = 'pending';
+
     public const SUCCEEDED = 'succeeded';
+
     public const FAILED = 'failed';
+
     public const NEEDS_REVIEW = 'needs_review';
 
     public const METHOD_GATEWAY = 'gateway';
+
     public const METHOD_CASH = 'cash';
 
     protected $table = 'ticket_resolutions';
@@ -27,7 +33,7 @@ class TicketResolution extends Model
         'ticket_id', 'trip_cancellation_id', 'resolution', 'status', 'method', 'amount', 'fare_paid', 'ridden_fare', 'basis',
         'actor_user_id', 'actor_role', 'on_behalf', 'note', 'rebooked_ticket_id', 'gateway_payment_id', 'gateway_refund_id',
         'gateway_status', 'failure_reason', 'not_before', 'requested_at', 'completed_at',
-        'conductor_shift_log_id',
+        'conductor_shift_log_id', 'fee_amount',
     ];
 
     protected function casts(): array
@@ -38,9 +44,10 @@ class TicketResolution extends Model
             'amount' => 'float',
             'fare_paid' => 'float',
             'ridden_fare' => 'float',
-            'not_before' => \App\Casts\UtcDateTime::class,
-            'requested_at' => \App\Casts\UtcDateTime::class,
-            'completed_at' => \App\Casts\UtcDateTime::class,
+            'fee_amount' => 'float',
+            'not_before' => UtcDateTime::class,
+            'requested_at' => UtcDateTime::class,
+            'completed_at' => UtcDateTime::class,
         ];
     }
 

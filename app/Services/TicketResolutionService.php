@@ -278,7 +278,8 @@ class TicketResolutionService
 
         $ticket = Ticket::with('payment')->findOrFail($resolution->ticket_id);
         $payment = $ticket->payment;
-        $amountCentavos = (int) round(((float) $resolution->amount) * 100);
+        // The fare part and, on the first refunded ticket of the purchase, the booking fee (Batch 45 Feature A).
+        $amountCentavos = (int) round(((float) $resolution->amount + (float) $resolution->fee_amount) * 100);
 
         try {
             $payMongo = app(PayMongoService::class);
@@ -393,10 +394,11 @@ class TicketResolutionService
         });
 
         if ($notify) {
-            $this->notifyPassenger($resolution->ticket_id, 'Refund processed', 'Your refund of ₱'.number_format((float) $resolution->amount, 2).' was sent back to your original payment method.', ['type' => 'ticket_refunded']);
+            $refundedTotal = (float) $resolution->amount + (float) $resolution->fee_amount;
+            $this->notifyPassenger($resolution->ticket_id, 'Refund processed', 'Your refund of ₱'.number_format($refundedTotal, 2).' was sent back to your original payment method.', ['type' => 'ticket_refunded']);
             $ticket = Ticket::with('payment')->find($resolution->ticket_id);
             if ($ticket?->payment) {
-                app(RefundCompletedMailer::class)->send($ticket->payment, (float) $resolution->amount, $ticket);
+                app(RefundCompletedMailer::class)->send($ticket->payment, $refundedTotal, $ticket);
             }
         }
 
@@ -566,6 +568,8 @@ class TicketResolutionService
             'status' => $resolution->status,
             'method' => $resolution->method,
             'amount' => $resolution->amount,
+            // Batch 45 Feature A: the booking fee given back with this refund (0 when this ticket did not carry it).
+            'fee_amount' => (float) $resolution->fee_amount,
             'on_behalf' => (bool) $resolution->on_behalf,
             'actor_role' => $resolution->actor_role,
             'rebooked_ticket_uuid' => $resolution->rebooked_ticket_id ? Ticket::whereKey($resolution->rebooked_ticket_id)->value('ticket_uuid') : null,
@@ -654,6 +658,26 @@ class TicketResolutionService
         return $resolution;
     }
 
+    /**
+     * Batch 45 Feature A: the Operator cancelled the trip, so the booking fee of the purchase is given back in full,
+     * once: with the first refunded ticket of that payment. The payment row is locked so two tickets of one purchase
+     * refunded at the same moment cannot both carry it.
+     */
+    private function bookingFeeToRefund(Ticket $ticket): float
+    {
+        $payment = Payment::whereKey($ticket->payment_id)->lockForUpdate()->first();
+        $fee = (float) ($payment->fee_amount ?? 0);
+        if ($fee <= 0) {
+            return 0.0;
+        }
+
+        $alreadyGiven = TicketResolution::whereIn('ticket_id', Ticket::where('payment_id', $payment->payment_id)->select('ticket_id'))
+            ->where('fee_amount', '>', 0)
+            ->exists();
+
+        return $alreadyGiven ? 0.0 : $fee;
+    }
+
     private function startRefund(Ticket $ticket, TripCancellation $cancellation, array $input, array $actor): TicketResolution
     {
         $ticket->loadMissing('payment');
@@ -674,6 +698,7 @@ class TicketResolutionService
             // Batch 29: a cash refund reduces the cash of the Conductor shift that SOLD the ticket, however late it is paid out.
             'conductor_shift_log_id' => $method === TicketResolution::METHOD_CASH ? $this->shiftCash->shiftIdForTicket((int) $ticket->ticket_id) : null,
             'amount' => $quote['amount'],
+            'fee_amount' => $method === TicketResolution::METHOD_GATEWAY ? $this->bookingFeeToRefund($ticket) : 0,
             'fare_paid' => $quote['fare_paid'],
             'ridden_fare' => $quote['ridden_fare'],
             'basis' => $quote['basis'] + ($quote['needs_review'] ? ['review_reason' => $quote['review_reason']] : []),

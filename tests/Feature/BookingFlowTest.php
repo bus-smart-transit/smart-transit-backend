@@ -192,7 +192,6 @@ it('rate limits the address search proxy', function () {
     $this->getJson('/api/booking/address-search?q=one more')->assertStatus(429);
 });
 
-
 it('lists every eligible departure on a chosen date for Book Later, earliest first, and today only those still to come', function () use ($eastWest) {
     [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
     $q = ['origin_stop_id' => $stops['E2']->stop_id, 'destination_stop_id' => $stops['E4']->stop_id, 'seat_type' => 'seated'];
@@ -242,7 +241,6 @@ it('tells the date picker today in Manila and the booking window', function () u
         'trips_per_page' => (int) config('booking.trips_per_page'),
     ]);
 });
-
 
 it('lists the available trips of the chosen date only, earliest first, paginated, with times and the fare', function () use ($eastWest) {
     [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
@@ -380,7 +378,7 @@ it('returns the booking window from one place, and a config change moves it', fu
     bkRoute($eastWest);
 
     $window = $this->getJson('/api/booking/window')->assertSuccessful()->json('data');
-    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03']);
+    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03', 'online_booking_fee' => 10]); // the fee: Batch 45 Feature A
 
     $meta = $this->getJson('/api/booking/stops')->assertSuccessful()->json('data.meta');
     expect($meta['last_bookable_date'])->toBe('2026-11-03');
