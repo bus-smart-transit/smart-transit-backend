@@ -101,7 +101,7 @@ function piPaid($test, Payment $payment)
 
 function piFailed($test, Payment $payment)
 {
-    return piWebhook($test, 'payment.failed', ['id' => 'pay_'.Str::random(6), 'type' => 'payment', 'attributes' => ['metadata' => ['payment_id' => (string) $payment->payment_id]]]);
+    return piWebhook($test, 'payment.failed', ['id' => 'pay_'.Str::random(6), 'type' => 'payment', 'attributes' => ['payment_intent_id' => $payment->fresh()->payment_intent_id, 'metadata' => ['payment_id' => (string) $payment->payment_id]]]);
 }
 
 beforeEach(function () {

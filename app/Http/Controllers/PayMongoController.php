@@ -35,7 +35,9 @@ class PayMongoController extends Controller
                 'checkout_session.payment.paid' => $this->handleCheckoutPaid($event),
                 'payment.paid' => $this->handlePaymentPaid($event),
                 'payment.failed' => $this->handlePaymentFailed($event),
-                'refund.succeeded', 'refund.failed', 'refund.updated' => $this->handleRefund($event),
+                // 2026-11-04 (Batch 45, Todo R): PayMongo sends payment.refunded / payment.refund.updated (its Events
+                // page); refund.* is kept for any older payload shape. All of them settle through handleRefund().
+                'payment.refunded', 'payment.refund.updated', 'refund.succeeded', 'refund.failed', 'refund.updated' => $this->handleRefund($event),
                 default => Log::info('Unhandled PayMongo event type', ['type' => $event->type]),
             };
         });
@@ -62,18 +64,29 @@ class PayMongoController extends Controller
      * checkout-session creation (observed: payment.failed often has
      * metadata === null). Tries metadata first, then falls back to matching
      * on payment_intent_id, which IS reliably present on both event types.
+     *
+     * 2026-11-04 (Batch 45, Todo W): PayMongo sends every event of the account to every webhook, and `payment_id` in
+     * the metadata is a plain number another app on the same account could also send. A payment found by that number
+     * is used only when the event also carries something that is that payment's own: its TXN reference (the checkout
+     * session's reference_number) or its payment intent.
      */
     private function resolvePaymentFromMetadata(array $resource): ?object
     {
         $paymentId = $resource['attributes']['metadata']['payment_id'] ?? null;
 
         if ($paymentId) {
-            return $this->paymentService->findById((int) $paymentId);
+            $payment = $this->paymentService->findById((int) $paymentId);
+            if ($payment && $this->eventBelongsTo($payment, $resource)) {
+                return $payment;
+            }
+            if ($payment) {
+                Log::warning('PayMongo webhook: metadata payment_id does not belong to this payment; ignored.', [
+                    'resource_id' => $resource['id'] ?? null,
+                ]);
+            }
         }
 
-        $paymentIntentId = $resource['attributes']['payment_intent_id']
-            ?? $resource['attributes']['payment_intent']['id']
-            ?? null;
+        $paymentIntentId = $this->eventPaymentIntentId($resource);
 
         if ($paymentIntentId) {
             $payment = $this->paymentService->findByPaymentIntentId($paymentIntentId);
@@ -87,6 +100,27 @@ class PayMongoController extends Controller
         ]);
 
         return null;
+    }
+
+    /** The event carries this payment's own TXN reference or payment intent (see resolvePaymentFromMetadata). */
+    private function eventBelongsTo(object $payment, array $resource): bool
+    {
+        $reference = $resource['attributes']['reference_number'] ?? null;
+        if (is_string($reference) && $reference !== '' && hash_equals((string) $payment->transaction_reference, $reference)) {
+            return true;
+        }
+
+        $intent = $this->eventPaymentIntentId($resource);
+
+        return is_string($intent) && $intent !== '' && ! empty($payment->payment_intent_id)
+            && hash_equals((string) $payment->payment_intent_id, $intent);
+    }
+
+    private function eventPaymentIntentId(array $resource): ?string
+    {
+        $intent = $resource['attributes']['payment_intent_id'] ?? $resource['attributes']['payment_intent']['id'] ?? null;
+
+        return is_string($intent) && $intent !== '' ? $intent : null;
     }
 
     private function handleCheckoutPaid(object $event): void
@@ -129,10 +163,30 @@ class PayMongoController extends Controller
     /**
      * Batch 28 Stage 3, item 6: the signed refund event is the only thing that settles a gateway refund (never the
      * client, never the refund request's own answer). Idempotent: see TicketResolutionService::handleGatewayRefund().
+     *
+     * 2026-11-04 (Batch 45, Todo R): payment.refunded carries the PAYMENT, with its refunds in `attributes.refunds`;
+     * each one is settled on its own. A refund resource (payment.refund.updated, or the older refund.* shape) is
+     * settled directly.
      */
     private function handleRefund(object $event): void
     {
-        $this->ticketResolutions->handleGatewayRefund($this->resourceToArray($event->resource));
+        $resource = $this->resourceToArray($event->resource);
+
+        if (($resource['type'] ?? null) === 'payment' || str_starts_with((string) ($resource['id'] ?? ''), 'pay_')) {
+            $paymentId = $resource['id'] ?? null;
+            foreach ((array) ($resource['attributes']['refunds'] ?? []) as $refund) {
+                if (! is_array($refund) || empty($refund['id'])) {
+                    continue;
+                }
+                $refund['attributes'] = (array) ($refund['attributes'] ?? []);
+                $refund['attributes']['payment_id'] ??= $paymentId;
+                $this->ticketResolutions->handleGatewayRefund($refund);
+            }
+
+            return;
+        }
+
+        $this->ticketResolutions->handleGatewayRefund($resource);
     }
 
     private function handlePaymentPaid(object $event): void

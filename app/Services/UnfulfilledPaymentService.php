@@ -23,7 +23,9 @@ use Illuminate\Validation\ValidationException;
 class UnfulfilledPaymentService
 {
     public const NEEDS_REFUND = 'needs_refund';
+
     public const REFUNDED = 'refunded';
+
     public const OUTCOME_UNKNOWN = 'outcome_unknown';
 
     public function __construct(private PaymentService $paymentService) {}
@@ -72,7 +74,7 @@ class UnfulfilledPaymentService
      * @return array<string, mixed>
      *
      * @throws ModelNotFoundException another Operator's payment, or no such payment
-     * @throws ValidationException    the payment is not waiting for a refund
+     * @throws ValidationException the payment is not waiting for a refund
      */
     public function recordRefund(int $paymentId, int $operatorCompanyUserId, object $user, string $note): array
     {
@@ -103,7 +105,11 @@ class UnfulfilledPaymentService
                 return (int) $payment->payment_id;
             });
 
-            return $this->present(collect([Payment::findOrFail($paymentId)]))[0];
+            // 2026-11-04 (Batch 45, Todo R): the buyer is told once the Operator records that the money went back.
+            $refunded = Payment::findOrFail($paymentId);
+            app(RefundCompletedMailer::class)->send($refunded, (float) $refunded->amount);
+
+            return $this->present(collect([$refunded]))[0];
         });
     }
 
@@ -113,8 +119,8 @@ class UnfulfilledPaymentService
      */
     public function recordCheckoutNotCharged(int $paymentId, int $operatorCompanyUserId, User $user, string $note): Payment
     {
-        return RlsContext::withBypass(function () use ($paymentId, $operatorCompanyUserId, $user, $note) {
-            $resolvedId = DB::transaction(function () use ($paymentId, $operatorCompanyUserId, $user, $note) {
+        return RlsContext::withBypass(function () use ($paymentId, $operatorCompanyUserId, $note) {
+            $resolvedId = DB::transaction(function () use ($paymentId, $operatorCompanyUserId, $note) {
                 $payment = Payment::whereKey($paymentId)->lockForUpdate()->first();
                 if (! $payment || ! $this->isOwnedBy($payment, $operatorCompanyUserId)) {
                     throw new ModelNotFoundException;

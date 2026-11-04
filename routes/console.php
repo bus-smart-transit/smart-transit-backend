@@ -25,6 +25,9 @@ Schedule::command('reports:generate')->dailyAt('01:00')->withoutOverlapping();
 // refund on the day of the payment); this sends the ones whose time has come.
 Schedule::command('refunds:release-deferred')->everyFifteenMinutes()->withoutOverlapping();
 
+// 2026-11-04 (Batch 45, Todo R): refunds still pending are checked with PayMongo, in case its refund event never came.
+Schedule::command('refunds:reconcile')->everyFifteenMinutes()->withoutOverlapping();
+
 // Batch 28 Stage 3, item 9: bus position history is kept 30 days (config/retention.php). The daily deletion is only
 // scheduled once LOCATION_HISTORY_PRUNE_SCHEDULE=true, after `fleet:prune-location-history --dry-run` has been checked.
 if (config('retention.location_history_schedule_enabled')) {

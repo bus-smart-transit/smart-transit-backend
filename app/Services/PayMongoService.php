@@ -132,6 +132,40 @@ class PayMongoService
     }
 
     /**
+     * 2026-11-04 (Batch 45, Todo R): what PayMongo itself says about one refund, for when its refund event has not
+     * reached us (`refunds:reconcile`). Null when PayMongo cannot be asked or does not know the refund.
+     *
+     * @return array<string, mixed>|null the refund resource (`data` of the response)
+     */
+    public function retrieveRefund(string $refundId): ?array
+    {
+        $this->requireSecretKey();
+        $startedAt = hrtime(true);
+        try {
+            $response = Http::withBasicAuth($this->secretKey, '')
+                ->withOptions(['verify' => $this->resolveVerifyOption()])
+                ->timeout(10)
+                ->connectTimeout(5)
+                ->get('https://api.paymongo.com/v1/refunds/'.urlencode($refundId));
+        } catch (\Throwable $e) {
+            $this->recordProviderRequest('refund.retrieve', $startedAt, 'network_error');
+
+            return null;
+        }
+
+        $this->recordProviderRequest(
+            'refund.retrieve',
+            $startedAt,
+            $response->successful() ? 'success' : ($response->serverError() ? 'provider_error' : 'rejected'),
+            $response->status(),
+        );
+
+        $data = $response->successful() ? $response->json('data') : null;
+
+        return is_array($data) ? $data : null;
+    }
+
+    /**
      * The pay_... id of the payment behind a checkout session. Payments made before the id was stored have only the
      * session id; a refund needs the payment id, so it is read from the session when it is first needed.
      */

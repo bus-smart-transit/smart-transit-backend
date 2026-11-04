@@ -1,5 +1,6 @@
 <?php
 
+use App\Mail\RefundCompletedMail;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\PassengerUser;
@@ -10,6 +11,7 @@ use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -188,6 +190,24 @@ it('records a refund: the payment becomes refunded with who, when and the note, 
     $fresh = $payment->fresh();
     expect($fresh->status)->toBe('refunded')->and((int) $fresh->refunded_by_user_id)->toBe((int) $operator->user_id);
     expect(DB::table('audit_logs')->where('action', 'payment.refund_recorded')->where('subject_id', $payment->payment_id)->exists())->toBeTrue();
+});
+
+// 2026-11-04 (Batch 45, Todo R): the buyer is told once the Operator records the refund.
+it('emails a guest buyer, or the signed-in passenger, once the Operator records the refund', function () {
+    config(['mail.intercept_email' => null]);
+    Mail::fake();
+    ['operator' => $operator, 'trip' => $trip] = nrOperator();
+    $guest = nrPayment($trip);
+    $pax = nrPassenger();
+    $member = nrPayment($trip, 'needs_refund', ['_passenger' => $pax]);
+
+    $this->actingAs($operator)->postJson("/api/operator/payments/{$guest->payment_id}/refunded", ['note' => 'PayMongo refund rf_guest'])->assertOk();
+    $this->actingAs($operator)->postJson("/api/operator/payments/{$member->payment_id}/refunded", ['note' => 'PayMongo refund rf_member'])->assertOk();
+    $this->actingAs($operator)->postJson("/api/operator/payments/{$guest->payment_id}/refunded", ['note' => 'rf_again'])->assertStatus(422);
+
+    Mail::assertQueued(RefundCompletedMail::class, 2);
+    Mail::assertQueued(RefundCompletedMail::class, fn ($mail) => $mail->hasTo('guest@example.com') && $mail->amount === 47.0 && $mail->reference === $guest->transaction_reference);
+    Mail::assertQueued(RefundCompletedMail::class, fn ($mail) => $mail->hasTo($pax->user->email) && $mail->wallet === 'GCash');
 });
 
 it('records a refund only once, and only for a payment that is waiting for one', function () {

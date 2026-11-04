@@ -15,12 +15,13 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\ReportingRepository;
 use App\Services\RewardService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -99,7 +100,7 @@ function hlPaid($test, Payment $payment, ?int $timestamp = null)
 
 function hlFailed($test, Payment $payment)
 {
-    return hlWebhook($test, 'payment.failed', ['id' => 'pay_'.Str::random(6), 'type' => 'payment', 'attributes' => ['metadata' => ['payment_id' => (string) $payment->payment_id]]]);
+    return hlWebhook($test, 'payment.failed', ['id' => 'pay_'.Str::random(6), 'type' => 'payment', 'attributes' => ['payment_intent_id' => $payment->fresh()->payment_intent_id, 'metadata' => ['payment_id' => (string) $payment->payment_id]]]);
 }
 
 /** A checkout whose hold then runs out: the scheduled job releases the seat and gives the points back. */
@@ -171,7 +172,7 @@ it('enforces the database unique index for an actor-scoped checkout key', functi
     expect(fn () => Payment::create(array_replace($attributes, [
         'transaction_reference' => 'IDEMPOTENCY-'.Str::random(8),
         'payment_uuid' => (string) Str::uuid(),
-    ])))->toThrow(\Illuminate\Database\QueryException::class);
+    ])))->toThrow(QueryException::class);
 });
 
 it('keeps the hold and reward redemption when PayMongo session creation has an unknown outcome', function () {
@@ -314,6 +315,7 @@ it('recovers an unknown checkout from a signed paid-session webhook by payment m
         'id' => 'cs_recovered_123',
         'type' => 'checkout_session',
         'attributes' => [
+            'reference_number' => $payment->transaction_reference,
             'metadata' => ['payment_id' => (string) $payment->payment_id],
             'payment_intent' => ['id' => 'pi_recovered_123'],
             'payments' => [['id' => 'pay_recovered_123']],

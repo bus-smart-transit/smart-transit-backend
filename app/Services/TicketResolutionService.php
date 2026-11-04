@@ -331,11 +331,17 @@ class TicketResolutionService
     }
 
     /**
-     * The signed PayMongo refund webhook (refund.succeeded / refund.failed / refund.updated). The only thing that
-     * decides a gateway refund's final state. Idempotent: a replay of the same event changes nothing, and a late
-     * "failed" never undoes a success.
+     * The signed PayMongo refund event (payment.refunded / payment.refund.updated, one refund resource at a time; see
+     * PayMongoController), or PayMongo's own answer about the refund (`refunds:reconcile`). The only thing that decides
+     * a gateway refund's final state. Idempotent: a replay of the same event changes nothing, and a late "failed"
+     * never undoes a success.
      *
-     * @param  array<string, mixed>  $refund  the refund resource of the event
+     * 2026-11-04 (Batch 45, Todo R): matched by the refund id we stored when the refund was requested. The
+     * `resolution_id` in the refund's metadata is a plain number another app on the same PayMongo account could also
+     * send, so it is used only when the request's answer was lost (no refund id stored yet) and the refund is for the
+     * same PayMongo payment. A refund that becomes successful emails the buyer once (RefundCompletedMailer).
+     *
+     * @param  array<string, mixed>  $refund  the refund resource
      */
     public function handleGatewayRefund(array $refund): bool
     {
@@ -344,8 +350,15 @@ class TicketResolutionService
         $status = strtolower((string) ($attributes['status'] ?? ''));
         $resolutionId = $attributes['metadata']['resolution_id'] ?? null;
 
-        $resolution = ($refundId ? TicketResolution::where('gateway_refund_id', $refundId)->first() : null)
-            ?? ($resolutionId ? TicketResolution::find((int) $resolutionId) : null);
+        $resolution = $refundId ? TicketResolution::where('gateway_refund_id', $refundId)->first() : null;
+        if (! $resolution && $resolutionId) {
+            $candidate = TicketResolution::find((int) $resolutionId);
+            $refundPaymentId = $attributes['payment_id'] ?? null;
+            if ($candidate && $candidate->gateway_refund_id === null && is_string($refundPaymentId) && $refundPaymentId !== ''
+                && $candidate->gateway_payment_id === $refundPaymentId) {
+                $resolution = $candidate;
+            }
+        }
         if (! $resolution || $resolution->method !== TicketResolution::METHOD_GATEWAY) {
             Log::warning('PayMongo refund webhook: no matching refund.', ['refund_id' => $refundId]);
 
@@ -381,9 +394,63 @@ class TicketResolutionService
 
         if ($notify) {
             $this->notifyPassenger($resolution->ticket_id, 'Refund processed', 'Your refund of ₱'.number_format((float) $resolution->amount, 2).' was sent back to your original payment method.', ['type' => 'ticket_refunded']);
+            $ticket = Ticket::with('payment')->find($resolution->ticket_id);
+            if ($ticket?->payment) {
+                app(RefundCompletedMailer::class)->send($ticket->payment, (float) $resolution->amount, $ticket);
+            }
         }
 
         return true;
+    }
+
+    /**
+     * 2026-11-04 (Batch 45, Todo R), run by `refunds:reconcile`: asks PayMongo about gateway refunds still pending
+     * `refunds.reconcile.after_minutes` after they were requested, and settles them through handleGatewayRefund (same
+     * rules as the event). One still pending after `refunds.reconcile.give_up_hours` goes to the Operator's review
+     * queue. Returns how many were settled and how many were handed to review.
+     *
+     * @return array{settled: int, review: int}
+     */
+    public function reconcilePending(): array
+    {
+        $now = Carbon::now('UTC');
+        $after = $now->copy()->subMinutes(max(0, (int) config('refunds.reconcile.after_minutes', 10)));
+        $giveUp = $now->copy()->subHours(max(1, (int) config('refunds.reconcile.give_up_hours', 72)));
+        $settled = 0;
+        $review = 0;
+
+        TicketResolution::where('method', TicketResolution::METHOD_GATEWAY)
+            ->where('status', TicketResolution::PENDING)
+            ->whereNotNull('gateway_refund_id')
+            ->where('requested_at', '<=', $after->format('Y-m-d H:i:s'))
+            ->orderBy('id')
+            ->get()
+            ->each(function (TicketResolution $resolution) use ($giveUp, &$settled, &$review) {
+                $refund = app(PayMongoService::class)->retrieveRefund((string) $resolution->gateway_refund_id);
+                $status = strtolower((string) ($refund['attributes']['status'] ?? ''));
+                if ($refund && in_array($status, ['succeeded', 'failed'], true) && ($refund['id'] ?? null) === $resolution->gateway_refund_id) {
+                    $this->handleGatewayRefund($refund);
+                    $settled++;
+
+                    return;
+                }
+
+                if ($resolution->requested_at && $resolution->requested_at->lte($giveUp)) {
+                    $reason = 'The payment provider has not finished this refund after '.(int) config('refunds.reconcile.give_up_hours', 72).' hours. Check it in PayMongo.';
+                    DB::transaction(function () use ($resolution, $reason) {
+                        $locked = TicketResolution::whereKey($resolution->id)->lockForUpdate()->first();
+                        if ($locked->status !== TicketResolution::PENDING) {
+                            return;
+                        }
+                        $locked->update(['status' => TicketResolution::FAILED, 'failure_reason' => $reason]);
+                        Ticket::whereKey($locked->ticket_id)->update(['status' => self::REVIEW]);
+                        AuditLogger::log('ticket.refund_failed', 'Ticket', (int) $locked->ticket_id, ['resolution_id' => $locked->id, 'source' => 'reconcile_timeout']);
+                    });
+                    $review++;
+                }
+            });
+
+        return ['settled' => $settled, 'review' => $review];
     }
 
     /**

@@ -28,6 +28,7 @@ function makeOnlinePayment(array $overrides = []): Payment
         'status' => 'pending',
         'payment_uuid' => (string) Str::uuid(),
         'gateway_reference' => 'cs_'.Str::random(12),
+        'payment_intent_id' => 'pi_'.Str::random(12),
         'items_payload' => [],
         'hold_expires_at' => now()->addMinutes(15),
     ], $overrides));
@@ -118,13 +119,51 @@ test('a valid failed webhook marks the payment failed once', function () {
     $payment = makeOnlinePayment();
     [$payload, $header] = signedWebhook('payment.failed', [
         'id' => 'pay_1', 'type' => 'payment',
-        'attributes' => ['metadata' => ['payment_id' => (string) $payment->payment_id]],
+        'attributes' => ['payment_intent_id' => $payment->payment_intent_id, 'metadata' => ['payment_id' => (string) $payment->payment_id]],
     ]);
 
     postWebhook($this, $payload, $header)->assertOk();
     postWebhook($this, $payload, $header)->assertOk();
 
     expect($payment->fresh()->status)->toBe('failed');
+});
+
+// 2026-11-04 (Batch 45, Todo W): PayMongo sends every event of the account to every webhook, so a second app on the
+// same account sends events whose metadata payment_id can be the same plain number as one of ours.
+test('another app\'s paid event with a colliding payment_id number confirms nothing', function () {
+    $payment = makeOnlinePayment();
+    [$payload, $header] = signedWebhook('checkout_session.payment.paid', [
+        'id' => 'cs_other_app', 'type' => 'checkout_session',
+        'attributes' => ['reference_number' => 'TXN-OTHERAPP', 'payment_intent' => ['id' => 'pi_other_app'], 'metadata' => ['payment_id' => (string) $payment->payment_id]],
+    ]);
+
+    postWebhook($this, $payload, $header)->assertOk();
+
+    expect($payment->fresh()->status)->toBe('pending');
+});
+
+test('another app\'s failed event with a colliding payment_id number fails nothing', function () {
+    $payment = makeOnlinePayment();
+    [$payload, $header] = signedWebhook('payment.failed', [
+        'id' => 'pay_other', 'type' => 'payment',
+        'attributes' => ['payment_intent_id' => 'pi_other_app', 'metadata' => ['payment_id' => (string) $payment->payment_id]],
+    ]);
+
+    postWebhook($this, $payload, $header)->assertOk();
+
+    expect($payment->fresh()->status)->toBe('pending');
+});
+
+test('a paid event found by its metadata is accepted when it carries the payment\'s own TXN reference', function () {
+    $payment = makeOnlinePayment(['gateway_reference' => null, 'payment_intent_id' => null]);
+    [$payload, $header] = signedWebhook('checkout_session.payment.paid', [
+        'id' => 'cs_lost_answer', 'type' => 'checkout_session',
+        'attributes' => ['reference_number' => $payment->transaction_reference, 'metadata' => ['payment_id' => (string) $payment->payment_id]],
+    ]);
+
+    postWebhook($this, $payload, $header)->assertOk();
+
+    expect($payment->fresh()->status)->toBe('paid');
 });
 
 test('a late failure event cannot undo a confirmed payment', function () {
@@ -134,7 +173,7 @@ test('a late failure event cannot undo a confirmed payment', function () {
     ]);
     [$failed, $failedHeader] = signedWebhook('payment.failed', [
         'id' => 'pay_2', 'type' => 'payment',
-        'attributes' => ['metadata' => ['payment_id' => (string) $payment->payment_id]],
+        'attributes' => ['payment_intent_id' => $payment->payment_intent_id, 'metadata' => ['payment_id' => (string) $payment->payment_id]],
     ]);
 
     postWebhook($this, $paid, $paidHeader)->assertOk();
@@ -176,7 +215,7 @@ test('status endpoint exposes nothing beyond state and 404s unknown or missing r
 
 test('checkout session sends only the chosen wallet and no billing details beyond an optional email', function () {
     Http::fake(['api.paymongo.com/*' => Http::response(['data' => ['id' => 'cs_1', 'attributes' => ['checkout_url' => 'https://pay.test']]])]);
-    $service = new PayMongoService();
+    $service = new PayMongoService;
     $items = [['name' => 'Ticket', 'amount' => 8000, 'currency' => 'PHP', 'quantity' => 1]];
 
     $maya = makeOnlinePayment(['payment_channel' => 'maya']);

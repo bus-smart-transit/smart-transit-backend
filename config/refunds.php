@@ -37,4 +37,13 @@ return [
 
     // PayMongo: the reason code sent with a refund (its documented values are duplicate, fraudulent, others).
     'gateway_reason' => env('REFUND_GATEWAY_REASON', 'others'),
+
+    // 2026-11-04 (Batch 45, Todo R): the refund event is the normal way a gateway refund is settled; this check
+    // (`refunds:reconcile`, every 15 minutes) asks PayMongo about refunds still pending after `after_minutes`, so a
+    // missed event cannot leave a ticket waiting for ever. After `give_up_hours` pending, the ticket goes to the
+    // Operator's review queue instead.
+    'reconcile' => [
+        'after_minutes' => (int) env('REFUND_RECONCILE_AFTER_MINUTES', 10),
+        'give_up_hours' => (int) env('REFUND_RECONCILE_GIVE_UP_HOURS', 72),
+    ],
 ];

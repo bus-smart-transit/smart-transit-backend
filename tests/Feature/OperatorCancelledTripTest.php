@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\RefundCancelledTripTickets;
+use App\Mail\RefundCompletedMail;
 use App\Mail\TripCancelledRefundMail;
 use App\Models\FareRule;
 use App\Models\Fleet;
@@ -626,4 +627,174 @@ it('never refunds a ticket twice when the refund job runs again', function () {
 
     expect(TicketResolution::where('ticket_id', $ticket->ticket_id)->count())->toBe(1);
     expect(rfRefundCalls())->toHaveCount(1);
+});
+
+// 2026-11-04 (Batch 45, Todo R): the refund events PayMongo really sends (docs.paymongo.com, Events), the check that
+// asks PayMongo when no event comes, and the "your refund is done" email.
+
+/** A signed event with any type and resource (payment.refunded carries the payment; payment.refund.updated a refund). */
+function rfEvent($test, string $type, array $resource)
+{
+    $payload = json_encode(['data' => ['id' => 'evt_'.Str::random(8), 'type' => 'event', 'attributes' => ['type' => $type, 'livemode' => false, 'data' => $resource, 'created_at' => time(), 'updated_at' => time()]]]);
+    $ts = time();
+    $sig = hash_hmac('sha256', $ts.'.'.$payload, RF_SECRET);
+
+    return $test->call('POST', '/api/webhooks/paymongo', [], [], [], ['CONTENT_TYPE' => 'application/json', 'HTTP_PAYMONGO_SIGNATURE' => "t={$ts},te={$sig},li="], $payload);
+}
+
+/** PayMongo's payment.refunded resource: the payment, with its refunds inside. */
+function rfPaymentRefunded(Payment $payment, string $refundId, string $status, int $centavos = 4700): array
+{
+    return ['id' => $payment->gateway_payment_id, 'type' => 'payment', 'attributes' => ['amount' => $centavos, 'status' => 'paid', 'refunds' => [
+        ['id' => $refundId, 'type' => 'refund', 'attributes' => ['amount' => $centavos, 'status' => $status, 'payment_id' => $payment->gateway_payment_id, 'reason' => 'others']],
+    ]]];
+}
+
+/** The refund request answers with $refundId; reading that refund back answers $readStatus (null: PayMongo cannot be reached). */
+function rfFakeGatewayWithRead(string $refundId, ?string $readStatus): void
+{
+    Http::fake(function ($request) use ($refundId, $readStatus) {
+        if ($request->method() === 'POST' && str_ends_with($request->url(), '/v1/refunds')) {
+            return Http::response(['data' => ['id' => $refundId, 'type' => 'refund', 'attributes' => ['status' => 'pending', 'amount' => 0]]]);
+        }
+        if ($request->method() === 'GET' && str_contains($request->url(), '/v1/refunds/'.$refundId)) {
+            return $readStatus === null
+                ? Http::response(['errors' => [['detail' => 'down']]], 503)
+                : Http::response(['data' => ['id' => $refundId, 'type' => 'refund', 'attributes' => ['status' => $readStatus, 'amount' => 4700]]]);
+        }
+
+        return Http::response([], 404);
+    });
+}
+
+function rfRefundReads(): int
+{
+    return Http::recorded(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), '/v1/refunds/'))->count();
+}
+
+it('settles a refund from PayMongo\'s payment.refunded event and emails the buyer once, also when the event comes again', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGateway('ref_pr_1');
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', $pax);
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    rfEvent($this, 'payment.refunded', rfPaymentRefunded($ticket->payment, 'ref_pr_1', 'succeeded'))->assertOk();
+    rfEvent($this, 'payment.refunded', rfPaymentRefunded($ticket->payment, 'ref_pr_1', 'succeeded'))->assertOk();
+
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::REFUNDED);
+    expect(TicketResolution::where('ticket_id', $ticket->ticket_id)->value('status'))->toBe(TicketResolution::SUCCEEDED);
+    Mail::assertQueued(RefundCompletedMail::class, 1);
+    Mail::assertQueued(RefundCompletedMail::class, fn ($mail) => $mail->hasTo($pax->user->email)
+        && $mail->amount === 47.0 && $mail->wallet === 'GCash' && $mail->reference === $ticket->payment->transaction_reference
+        && str_contains($mail->render(), 'We sent your money back'));
+});
+
+it('settles a refund from payment.refund.updated, and a failed one goes to review without a "done" email', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGateway('ref_ru_1');
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'maya', rfPassenger());
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    rfEvent($this, 'payment.refund.updated', ['id' => 'ref_ru_1', 'type' => 'refund', 'attributes' => ['amount' => 4700, 'status' => 'failed', 'payment_id' => $ticket->payment->gateway_payment_id]])->assertOk();
+
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::REVIEW);
+    Mail::assertNotQueued(RefundCompletedMail::class);
+});
+
+it('emails a guest buyer at the checkout email when the refund is done', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGateway('ref_guest_1');
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash');
+    $ticket->payment->update(['guest_email' => 'guest.buyer@example.com']);
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    rfEvent($this, 'payment.refunded', rfPaymentRefunded($ticket->payment, 'ref_guest_1', 'succeeded'))->assertOk();
+
+    Mail::assertQueued(RefundCompletedMail::class, fn ($mail) => $mail->hasTo('guest.buyer@example.com'));
+});
+
+it('ignores another app\'s refund event: a colliding resolution number is used only for our own PayMongo payment', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGateway('ref_lost_answer');
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', rfPassenger());
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    $resolution = TicketResolution::where('ticket_id', $ticket->ticket_id)->firstOrFail();
+    $resolution->update(['gateway_refund_id' => null]); // the request's answer was lost, so no refund id is stored
+
+    // Another app on the same PayMongo account: same resolution number, another payment.
+    rfEvent($this, 'payment.refund.updated', ['id' => 'ref_other_app', 'type' => 'refund', 'attributes' => ['status' => 'succeeded', 'payment_id' => 'pay_other_app', 'metadata' => ['resolution_id' => (string) $resolution->id]]])->assertOk();
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
+
+    // Our own refund, for our own PayMongo payment.
+    rfEvent($this, 'payment.refund.updated', ['id' => 'ref_ours', 'type' => 'refund', 'attributes' => ['status' => 'succeeded', 'payment_id' => $resolution->gateway_payment_id, 'metadata' => ['resolution_id' => (string) $resolution->id]]])->assertOk();
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::REFUNDED);
+    expect($resolution->fresh()->gateway_refund_id)->toBe('ref_ours');
+});
+
+it('asks PayMongo about a refund still pending after 10 minutes and settles it when no event came', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayWithRead('ref_rc_1', 'succeeded');
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', $pax);
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    Carbon::setTestNow(Carbon::now()->addMinutes(5));
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    expect(rfRefundReads())->toBe(0)->and($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
+
+    Carbon::setTestNow(Carbon::now()->addMinutes(6));
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    expect(rfRefundReads())->toBe(1);
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::REFUNDED);
+    Mail::assertQueued(RefundCompletedMail::class, fn ($mail) => $mail->hasTo($pax->user->email));
+
+    // Settled: the next run asks nothing more.
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    expect(rfRefundReads())->toBe(1);
+});
+
+it('keeps a refund PayMongo has not finished, and hands it to review after 3 days', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayWithRead('ref_rc_slow', 'pending');
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', rfPassenger());
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    Carbon::setTestNow(Carbon::now()->addHours(2));
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
+
+    Carbon::setTestNow(Carbon::now()->addHours(71));
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    $resolution = TicketResolution::where('ticket_id', $ticket->ticket_id)->firstOrFail();
+    expect($ticket->fresh()->status)->toBe(TicketResolutionService::REVIEW);
+    expect($resolution->status)->toBe(TicketResolution::FAILED)->and($resolution->failure_reason)->toContain('has not finished this refund');
+    Mail::assertNotQueued(RefundCompletedMail::class);
+});
+
+it('does nothing when PayMongo cannot be reached, and tries again on the next run', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayWithRead('ref_rc_down', null);
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', rfPassenger());
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    Carbon::setTestNow(Carbon::now()->addMinutes(20));
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+    $this->artisan('refunds:reconcile')->assertSuccessful();
+
+    expect(rfRefundReads())->toBe(2)->and($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
 });
