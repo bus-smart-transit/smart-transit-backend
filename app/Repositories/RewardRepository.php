@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Repositories;
 
 use App\Models\PassengerUser;
@@ -37,6 +38,16 @@ class RewardRepository
         return RewardTransaction::where('type', 'redeemed')
             ->where('payment_id', $paymentId)
             ->get();
+    }
+
+    /**
+     * Locks the passenger's points row (SELECT ... FOR UPDATE) until the transaction ends, so two point changes for the
+     * same passenger run one after the other. Read the ledger AFTER this call: a fresh query then sees what a
+     * transaction that held the lock before has committed. Must be called inside a DB::transaction().
+     */
+    public function lockPassengerPoints(int $passengerId): void
+    {
+        PassengerUser::where('passenger_id', $passengerId)->lockForUpdate()->value('reward_points');
     }
 
     public function getPoints(int $passengerId): float

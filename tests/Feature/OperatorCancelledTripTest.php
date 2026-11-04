@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\ShiftBlockService;
 use App\Services\TicketResolutionService;
 use App\Services\TripCancellationService;
+use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -797,4 +798,30 @@ it('does nothing when PayMongo cannot be reached, and tries again on the next ru
     $this->artisan('refunds:reconcile')->assertSuccessful();
 
     expect(rfRefundReads())->toBe(2)->and($ticket->fresh()->status)->toBe(TicketResolutionService::PENDING);
+});
+
+it('answers a second cancel of the same trip with a plain message and records the cancellation once (Todo 3 finding 3)', function () {
+    $f = rfFixture();
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    rfCancel($this, $f, $f['trip'])->assertStatus(422)->assertJsonPath('errors.trip.0', 'This trip is already cancelled.');
+
+    // Called again directly (a block cancel or a status override finding it already done): the same row comes back.
+    $again = app(TripCancellationService::class)->record($f['trip']->fresh(), 'scheduled', $f['operator'], 'again');
+
+    expect(TripCancellation::where('trip_id', $f['trip']->trip_id)->count())->toBe(1)
+        ->and($again->reason)->toBe('Bus breakdown');
+});
+
+it('leaves the trip as it was when cancelling fails part way (Todo 3 finding 4)', function () {
+    $f = rfFixture();
+    $this->mock(TripCancellationService::class, fn ($mock) => $mock->shouldReceive('record')->andThrow(new RuntimeException('flagging failed')));
+
+    try {
+        app(TripService::class)->cancelTrip($f['trip']->trip_id, $f['operator'], 'Bus breakdown');
+    } catch (RuntimeException) {
+        // expected
+    }
+
+    expect($f['trip']->fresh()->status)->not->toBe('cancelled');
 });

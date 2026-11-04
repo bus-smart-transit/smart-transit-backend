@@ -298,19 +298,28 @@ class TripService
      */
     public function cancelTrip(int $tripId, ?object $actor, ?string $reason = null): array
     {
-        $trip = $this->tripRepository->findById($tripId);
-        if (! $trip) {
-            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
-        }
-        if (in_array($trip->status, ['completed', 'cancelled'], true)) {
-            throw ValidationException::withMessages(['trip' => ['A completed or already cancelled trip cannot be cancelled.']]);
-        }
+        // 2026-11-04 (Todo 3 findings 3 and 4): one transaction with the trip row locked. A second cancel at the same
+        // moment waits, then finds the trip cancelled and gets the plain message (it used to fail with a server
+        // error), and a failure part way leaves nothing half done (a cancelled trip whose tickets were never flagged).
+        $previousStatus = DB::transaction(function () use ($tripId, $actor, $reason) {
+            $trip = $this->tripRepository->findByIdForUpdate($tripId);
+            if (! $trip) {
+                throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+            }
+            if (in_array($trip->status, ['completed', 'cancelled'], true)) {
+                throw ValidationException::withMessages(['trip' => [
+                    $trip->status === 'cancelled' ? 'This trip is already cancelled.' : 'A completed trip cannot be cancelled.',
+                ]]);
+            }
 
-        $previousStatus = $trip->status;
-        $this->tripRepository->updateStatus($tripId, 'cancelled');
-        $this->closeShiftLogsForTrip($tripId);
-        $this->cancellations->record($this->tripRepository->findById($tripId), $previousStatus, $actor, $reason);
-        app(ShiftBlockLifecycleService::class)->legEnded($tripId);
+            $previousStatus = $trip->status;
+            $this->tripRepository->updateStatus($tripId, 'cancelled');
+            $this->closeShiftLogsForTrip($tripId);
+            $this->cancellations->record($this->tripRepository->findById($tripId), $previousStatus, $actor, $reason);
+            app(ShiftBlockLifecycleService::class)->legEnded($tripId);
+
+            return $previousStatus;
+        });
 
         return [$this->tripRepository->findById($tripId), $previousStatus];
     }

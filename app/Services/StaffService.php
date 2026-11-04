@@ -6,6 +6,7 @@ use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
 use App\Repositories\StaffRepository;
 use App\Repositories\UserRepository;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -96,11 +97,16 @@ class StaffService
 
     // ── Staff listings (operator/admin views) ───────────────────────
 
-    public function listDrivers(?string $tripDate = null): object
+    /**
+     * 2026-11-04 (Todo 3 finding 2, Option A): staff are one shared pool, so an Operator's list carries only what
+     * scheduling needs (id, name, username, gender, availability, joined date). Phone, address, birth date and email
+     * stay with the Admin ($withContactDetails) and with the person's own profile.
+     */
+    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false): object
     {
         $drivers = $this->staffRepository->listByRole('driver');
         if ($tripDate === null) {
-            return $drivers;
+            return $this->presentStaff($drivers, $withContactDetails);
         }
 
         $assignedIds = Trip::query()
@@ -115,11 +121,38 @@ class StaffService
             ->pluck('staff_company_user_id');
         $unavailableIds = $assignedIds->merge($releasedIds)->map(fn ($id) => (int) $id)->unique();
 
-        return $drivers->reject(fn ($driver) => $unavailableIds->contains((int) $driver->company_user_id))->values();
+        return $this->presentStaff(
+            $drivers->reject(fn ($driver) => $unavailableIds->contains((int) $driver->company_user_id))->values(),
+            $withContactDetails,
+        );
     }
 
-    public function listConductors(): object
+    public function listConductors(bool $withContactDetails = false): object
     {
-        return $this->staffRepository->listByRole('conductor');
+        return $this->presentStaff($this->staffRepository->listByRole('conductor'), $withContactDetails);
+    }
+
+    private function presentStaff(Collection $staff, bool $withContactDetails): Collection
+    {
+        if ($withContactDetails) {
+            return $staff;
+        }
+
+        return $staff->map(fn ($member) => [
+            'company_user_id' => $member->company_user_id,
+            'company_user_uuid' => $member->company_user_uuid,
+            'user_id' => $member->user_id,
+            'name' => $member->name,
+            'gender' => $member->gender,
+            'is_available' => $member->is_available,
+            'available_since' => $member->available_since,
+            'created_at' => $member->created_at,
+            'user' => $member->user ? [
+                'user_id' => $member->user->user_id,
+                'username' => $member->user->username,
+                'role' => $member->user->role,
+                'created_at' => $member->user->created_at,
+            ] : null,
+        ])->values();
     }
 }

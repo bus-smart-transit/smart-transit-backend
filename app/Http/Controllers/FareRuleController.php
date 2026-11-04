@@ -7,13 +7,16 @@ use App\Http\Requests\FareListRequest;
 use App\Http\Requests\FareQuoteFromCoordinatesRequest;
 use App\Http\Requests\FareQuoteRequest;
 use App\Http\Requests\StoreFareRuleRequest;
+use App\Models\Fleet;
 use App\Services\AuditLogger;
 use App\Services\FareRuleService;
 use App\Services\FleetService;
 use App\Support\ServiceType;
 use App\Support\VehicleClass;
 use App\Traits\ApiResponse;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class FareRuleController extends Controller
 {
@@ -78,7 +81,7 @@ class FareRuleController extends Controller
             if (! $companyUserId) {
                 return $this->error('Staff profile not found.', 404);
             }
-            $filters['fleet_ids'] = \App\Models\Fleet::where('company_user_id', $companyUserId)->pluck('fleet_id')->all();
+            $filters['fleet_ids'] = Fleet::where('company_user_id', $companyUserId)->pluck('fleet_id')->all();
         }
 
         return $this->success($this->fareRuleService->listRules($filters), 'Fare rules retrieved successfully');
@@ -104,7 +107,7 @@ class FareRuleController extends Controller
 
             return $this->success(['amount' => $amount], 'Fare retrieved successfully');
         } catch (\RuntimeException $e) {
-            return $this->error($e->getMessage(), 422);
+            return $this->fareError($e);
         }
     }
 
@@ -116,7 +119,7 @@ class FareRuleController extends Controller
 
             return $this->success(['amount' => $amount], 'Fare retrieved successfully');
         } catch (\RuntimeException $e) {
-            return $this->error($e->getMessage(), 422);
+            return $this->fareError($e);
         }
     }
 
@@ -129,7 +132,7 @@ class FareRuleController extends Controller
 
             return $this->success($result, 'Fleet fares retrieved successfully');
         } catch (\RuntimeException $e) {
-            return $this->error($e->getMessage(), 422);
+            return $this->fareError($e);
         }
     }
 
@@ -147,7 +150,23 @@ class FareRuleController extends Controller
 
             return $this->success($result, 'Computed fares retrieved successfully');
         } catch (\RuntimeException $e) {
-            return $this->error($e->getMessage(), 422);
+            return $this->fareError($e);
         }
+    }
+
+    /**
+     * 2026-11-04 (Todo 3 finding 6): the fare rules' own refusals (RuntimeException) are shown as they are, but a
+     * database error is also a RuntimeException (PDOException) and its text holds SQL, so it is logged and the
+     * visitor gets a plain message instead.
+     */
+    private function fareError(\RuntimeException $e)
+    {
+        if ($e instanceof \PDOException || $e instanceof QueryException) {
+            Log::error('Fare lookup failed on a database error', ['message' => $e->getMessage()]);
+
+            return $this->error('Fares could not be loaded right now. Please try again.', 500);
+        }
+
+        return $this->error($e->getMessage(), 422);
     }
 }

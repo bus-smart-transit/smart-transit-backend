@@ -9,6 +9,7 @@ use App\Models\Trip;
 use App\Models\TripCancellation;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TripRepository;
 use App\Support\LegDistance;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,7 @@ class TripCancellationService
         private FleetLocationRepository $fleetLocationRepository,
         private CustomDropoffService $customDropoffService,
         private FcmService $fcmService,
+        private TripRepository $tripRepository,
     ) {}
 
     /**
@@ -48,15 +50,20 @@ class TripCancellationService
      */
     public function record(Trip $trip, string $previousStatus, ?object $actor = null, ?string $reason = null): TripCancellation
     {
-        $existing = TripCancellation::where('trip_id', $trip->trip_id)->first();
-        if ($existing) {
-            return $existing;
-        }
-
         $midRoute = in_array($previousStatus, ['departed', 'in-progress'], true);
         $lastPoint = $midRoute ? $this->resolveLastPoint($trip) : null;
 
-        $cancellation = DB::transaction(function () use ($trip, $midRoute, $lastPoint, $actor, $reason) {
+        // 2026-11-04 (Todo 3 finding 3): the trip row is locked before the check, so two cancels at the same moment
+        // (a double tap, or a block cancel and a trip cancel) wait for each other: the second one finds the first
+        // one's row instead of failing on the unique trip_id.
+        $existing = null;
+        $cancellation = DB::transaction(function () use ($trip, $midRoute, $lastPoint, $actor, $reason, &$existing) {
+            $this->tripRepository->findByIdForUpdate((int) $trip->trip_id);
+            $existing = TripCancellation::where('trip_id', $trip->trip_id)->first();
+            if ($existing) {
+                return $existing;
+            }
+
             $cancellation = TripCancellation::create([
                 'trip_id' => $trip->trip_id,
                 'cancelled_by_user_id' => $actor?->user_id ?? null,
@@ -74,6 +81,9 @@ class TripCancellationService
 
             return $cancellation;
         });
+        if ($existing) {
+            return $existing; // already recorded: tickets, notices and refunds were handled the first time
+        }
 
         AuditLogger::log('trip.cancelled_tickets_flagged', 'Trip', (int) $trip->trip_id, [
             'stage' => $cancellation->stage,

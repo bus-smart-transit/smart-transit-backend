@@ -1,8 +1,8 @@
 <?php
+
 namespace App\Services;
 
 use App\Repositories\RewardRepository;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class RewardService
@@ -15,9 +15,7 @@ class RewardService
     // (the report used to value a redeemed point at the earning rate, ₱20, which overstated every discount twentyfold).
     public const REDEMPTION_PESOS_PER_POINT = 1;
 
-    public function __construct(private RewardRepository $rewardRepository)
-    {
-    }
+    public function __construct(private RewardRepository $rewardRepository) {}
 
     /**
      * Called automatically inside TicketService::finalizeTicket() after a
@@ -27,8 +25,9 @@ class RewardService
     {
         $points = (int) floor($amountSpent / self::PESOS_PER_POINT);
 
-        if ($points <= 0)
+        if ($points <= 0) {
             return;
+        }
 
         DB::transaction(function () use ($passengerId, $points, $paymentId) {
             $this->rewardRepository->incrementPoints($passengerId, $points);
@@ -71,14 +70,21 @@ class RewardService
     public function returnRedeemedPoints(int $paymentId): int
     {
         return DB::transaction(function () use ($paymentId) {
-            $rows = $this->rewardRepository->redemptionRowsForPayment($paymentId);
-            $outstanding = -1 * (int) $rows->sum('points');
+            $passengerId = (int) ($this->rewardRepository->redemptionRowsForPayment($paymentId)->first()->passenger_id ?? 0);
+            if ($passengerId === 0) {
+                return 0;
+            }
+
+            // 2026-11-04 (Todo 3 finding 5): a failed-payment event and the hold-expiry job can finish at the same
+            // moment. The passenger's points row is locked first and the ledger read again after it, so the second
+            // caller sees the first one's return and gives nothing back twice.
+            $this->rewardRepository->lockPassengerPoints($passengerId);
+            $outstanding = -1 * (int) $this->rewardRepository->redemptionRowsForPayment($paymentId)->sum('points');
 
             if ($outstanding <= 0) {
                 return 0;
             }
 
-            $passengerId = (int) $rows->first()->passenger_id;
             $this->rewardRepository->incrementPoints($passengerId, $outstanding);
             $this->rewardRepository->createTransaction([
                 'passenger_id' => $passengerId,
@@ -98,14 +104,23 @@ class RewardService
      */
     public function reclaimRedeemedPoints(int $paymentId): bool
     {
-        $rows = $this->rewardRepository->redemptionRowsForPayment($paymentId);
-        $original = abs((int) $rows->min('points'));
+        return DB::transaction(function () use ($paymentId) {
+            $passengerId = (int) ($this->rewardRepository->redemptionRowsForPayment($paymentId)->first()->passenger_id ?? 0);
+            if ($passengerId === 0) {
+                return true; // no points were used
+            }
 
-        if ($rows->isEmpty() || $original <= 0 || -1 * (int) $rows->sum('points') > 0) {
-            return true; // no points were used, or they are still held
-        }
+            // Same lock as returnRedeemedPoints, so a reclaim and a return never both act on old numbers.
+            $this->rewardRepository->lockPassengerPoints($passengerId);
+            $rows = $this->rewardRepository->redemptionRowsForPayment($paymentId);
+            $original = abs((int) $rows->min('points'));
 
-        return $this->redeemPoints((int) $rows->first()->passenger_id, $original, 'Redeemed during checkout (payment confirmed late)', $paymentId);
+            if ($original <= 0 || -1 * (int) $rows->sum('points') > 0) {
+                return true; // no points were used, or they are still held
+            }
+
+            return $this->redeemPoints($passengerId, $original, 'Redeemed during checkout (payment confirmed late)', $paymentId);
+        });
     }
 
     public function getHistory(int $passengerId, int $page = 1, int $perPage = 50): object

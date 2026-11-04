@@ -99,8 +99,8 @@ class StaffAuthController extends Controller
     // state. A Driver or Conductor can mark themselves available for
     // extra/ad-hoc assignment independent of whether they're currently
     // on-shift or paired. Visible to Operators via listDrivers()/
-    // listConductors() (StaffUser attributes are returned as-is, so no
-    // extra wiring is needed there once the columns exist).
+    // listConductors() (is_available and available_since are part of the
+    // scheduling fields StaffService::presentStaff returns to Operators).
     public function updateAvailability(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
@@ -322,13 +322,13 @@ class StaffAuthController extends Controller
         ]);
 
         return $this->success(
-            $this->staffService->listDrivers($validated['trip_date'] ?? null),
+            $this->staffService->listDrivers($validated['trip_date'] ?? null, $request->user()?->role === 'admin'),
             'Drivers retrieved successfully',
         );
     }
 
-    public function listConductors()
+    public function listConductors(Request $request)
     {
-        return $this->success($this->staffService->listConductors(), 'Conductors retrieved successfully');
+        return $this->success($this->staffService->listConductors($request->user()?->role === 'admin'), 'Conductors retrieved successfully');
     }
 }
