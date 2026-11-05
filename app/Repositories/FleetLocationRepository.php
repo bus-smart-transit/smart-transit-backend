@@ -1,7 +1,10 @@
 <?php
+
 namespace App\Repositories;
-use Illuminate\Support\Facades\DB;
+
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class FleetLocationRepository
 {
@@ -12,26 +15,26 @@ class FleetLocationRepository
 
         if ($driver === 'sqlite') {
             // SQLite (test) path: store "lat,lng" string
-            $locationStr = $payload['latitude'] . ',' . $payload['longitude'];
+            $locationStr = $payload['latitude'].','.$payload['longitude'];
             DB::table('fleet_locations')->updateOrInsert(
                 ['fleet_id' => $payload['fleet_id']],
                 [
-                    'trip_id'     => $payload['trip_id']    ?? null,
-                    'location'    => $locationStr,
-                    'heading'     => $payload['heading']    ?? null,
-                    'speed_kmh'   => $payload['speed_kmh']  ?? null,
-                    'accuracy_m'  => $payload['accuracy']   ?? null,
+                    'trip_id' => $payload['trip_id'] ?? null,
+                    'location' => $locationStr,
+                    'heading' => $payload['heading'] ?? null,
+                    'speed_kmh' => $payload['speed_kmh'] ?? null,
+                    'accuracy_m' => $payload['accuracy'] ?? null,
                     'recorded_at' => now(),
-                    'updated_at'  => now(),
+                    'updated_at' => now(),
                 ]
             );
 
             DB::table('fleet_location_history')->insert([
-                'fleet_id'    => $payload['fleet_id'],
-                'trip_id'     => $payload['trip_id']    ?? null,
-                'location'    => $locationStr,
-                'heading'     => $payload['heading']    ?? null,
-                'speed_kmh'   => $payload['speed_kmh']  ?? null,
+                'fleet_id' => $payload['fleet_id'],
+                'trip_id' => $payload['trip_id'] ?? null,
+                'location' => $locationStr,
+                'heading' => $payload['heading'] ?? null,
+                'speed_kmh' => $payload['speed_kmh'] ?? null,
                 'recorded_at' => now(),
             ]);
 
@@ -39,7 +42,7 @@ class FleetLocationRepository
         }
 
         // PostgreSQL + PostGIS path
-        DB::statement("
+        DB::statement('
             INSERT INTO fleet_locations
                 (fleet_id, trip_id, location, heading, speed_kmh, accuracy_m, recorded_at, updated_at)
             VALUES
@@ -52,29 +55,29 @@ class FleetLocationRepository
                 accuracy_m  = EXCLUDED.accuracy_m,
                 recorded_at = EXCLUDED.recorded_at,
                 updated_at  = NOW()
-        ", [
+        ', [
             $payload['fleet_id'],
             $payload['trip_id'],
             $payload['longitude'], // lng first
             $payload['latitude'],  // lat second
-            $payload['heading']    ?? null,
-            $payload['speed_kmh']  ?? null,
-            $payload['accuracy']   ?? null,
+            $payload['heading'] ?? null,
+            $payload['speed_kmh'] ?? null,
+            $payload['accuracy'] ?? null,
         ]);
 
         // Append to history (time-series, no conflict handling)
-        DB::statement("
+        DB::statement('
             INSERT INTO fleet_location_history
                 (fleet_id, trip_id, location, heading, speed_kmh, recorded_at)
             VALUES
                 (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, NOW())
-        ", [
+        ', [
             $payload['fleet_id'],
             $payload['trip_id'],
             $payload['longitude'],
             $payload['latitude'],
-            $payload['heading']    ?? null,
-            $payload['speed_kmh']  ?? null,
+            $payload['heading'] ?? null,
+            $payload['speed_kmh'] ?? null,
         ]);
     }
 
@@ -98,13 +101,13 @@ class FleetLocationRepository
                 WHERE fleet_id = ?
             ", [$fleetId]);
         } else {
-            $row = DB::selectOne("
+            $row = DB::selectOne('
                 SELECT
                     ST_Y(location::geometry) AS latitude,
                     ST_X(location::geometry) AS longitude
                 FROM fleet_locations
                 WHERE fleet_id = ?
-            ", [$fleetId]);
+            ', [$fleetId]);
         }
 
         if (! $row || $row->latitude === null || $row->longitude === null) {
@@ -136,10 +139,10 @@ class FleetLocationRepository
                 WHERE fleet_id = ? AND trip_id = ?
             ", [$fleetId, $tripId]);
             $age = $row?->recorded_at
-                ? max(0, now(config('app.timezone'))->diffInSeconds(\Illuminate\Support\Carbon::parse($row->recorded_at, config('app.timezone')), true))
+                ? max(0, now(config('app.timezone'))->diffInSeconds(Carbon::parse($row->recorded_at, config('app.timezone')), true))
                 : null;
         } else {
-            $row = DB::selectOne("
+            $row = DB::selectOne('
                 SELECT
                     ST_Y(location::geometry) AS latitude,
                     ST_X(location::geometry) AS longitude,
@@ -148,7 +151,7 @@ class FleetLocationRepository
                     GREATEST(0, EXTRACT(EPOCH FROM (NOW() - recorded_at))) AS age_seconds
                 FROM fleet_locations
                 WHERE fleet_id = ? AND trip_id = ?
-            ", [$fleetId, $tripId]);
+            ', [$fleetId, $tripId]);
             $age = $row?->age_seconds;
         }
 
@@ -185,7 +188,7 @@ class FleetLocationRepository
             ", [$tripId, $limit]));
         }
 
-        return collect(DB::select("
+        return collect(DB::select('
             SELECT
                 history_id,
                 fleet_id,
@@ -199,7 +202,7 @@ class FleetLocationRepository
             WHERE trip_id = ?
             ORDER BY recorded_at DESC
             LIMIT ?
-        ", [$tripId, $limit]));
+        ', [$tripId, $limit]));
     }
 
     public function getAllActiveLocations(): Collection
@@ -215,6 +218,7 @@ class FleetLocationRepository
                 fl.speed_kmh,
                 fl.accuracy_m,
                 fl.recorded_at,
+                GREATEST(0, EXTRACT(EPOCH FROM (NOW() - fl.recorded_at))) AS age_seconds,
                 f.plate_number,
                 f.bus_company_name,
                 f.body_no,

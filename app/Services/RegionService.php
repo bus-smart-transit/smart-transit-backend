@@ -27,6 +27,9 @@ class RegionService
                 'max_lng' => (float) $bbox['max_lng'],
             ],
             'provinces' => config('region.provinces'),
+            // Batch 45 Feature C: the public map lists buses within this distance of the passenger (worked out on
+            // their device; config/tracking.php).
+            'nearby_radius_km' => (float) config('tracking.nearby_radius_km'),
         ];
     }
 

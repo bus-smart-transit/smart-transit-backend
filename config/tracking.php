@@ -19,6 +19,10 @@ return [
     'poll_seconds' => (int) env('TRACKING_POLL_SECONDS', 10),
     'backfill_days' => (int) env('TRACKING_BACKFILL_DAYS', 1),
 
+    // Batch 45 Feature C (decided 2026-11-04): the "buses near you" radius on the public map, in km. The passenger's
+    // location stays on their device: the page measures the distance itself from the public bus list.
+    'nearby_radius_km' => (float) env('TRACKING_NEARBY_RADIUS_KM', 5),
+
     // Seconds the public map's bus list (GET fleet/locations) is shared between callers; 0 turns the cache off.
     'active_locations_cache_seconds' => (int) env('TRACKING_ACTIVE_LOCATIONS_CACHE_SECONDS', 5),
 

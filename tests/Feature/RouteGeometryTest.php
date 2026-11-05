@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Services\FleetLocationService;
 use App\Services\RouteGeometryGenerator;
@@ -19,6 +20,7 @@ use App\Services\RouteService;
 use App\Services\RouteSnapService;
 use App\Services\StopCoordinateValidator;
 use App\Services\StopService;
+use App\Services\TripTimelineService;
 use App\Support\Geo\GeoLine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -294,7 +296,7 @@ it('ignores GPS fixes whose accuracy is worse than the configured threshold', fu
     $locations = Mockery::mock(FleetLocationRepository::class);
     $locations->shouldReceive('upsertLocation')->twice();
 
-    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class));
+    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class), app(TripTimelineService::class), app(TicketRepository::class));
 
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 850]))->toBeFalse();
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 12]))->toBeTrue();

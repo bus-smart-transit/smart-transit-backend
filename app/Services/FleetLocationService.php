@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Repositories\FleetLocationRepository;
+use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -13,6 +14,8 @@ class FleetLocationService
         private FleetLocationRepository $fleetLocationRepository,
         private TripRepository $tripRepository,
         private RouteSnapService $routeSnapService,
+        private TripTimelineService $timelineService,
+        private TicketRepository $ticketRepository,
     ) {}
 
     /**
@@ -72,9 +75,47 @@ class FleetLocationService
                     $row->leg_direction ?? 'outbound'
                 );
             }
+            $row->trip_progress = ! empty($row->trip_id) ? $this->tripProgress((int) $row->trip_id, $row->age_seconds ?? null) : null;
 
             return $row;
         });
+    }
+
+    /**
+     * Batch 45 Feature C (decided 2026-11-04, Item 11): what the "buses near you" panel shows for one running bus.
+     * - next stop and its ETA from the trip timeline (TripTimelineService, the one ETA owner);
+     * - eta_basis 'live' only while the timeline has live progress AND the GPS is fresh; with a GPS position older than
+     *   tracking.stale_seconds it falls back to the scheduled time ('scheduled', gps_stale true);
+     * - the scheduled time and the delay are given apart;
+     * - passengers = tickets on board now (status boarded), the count the Operator's occupancy uses; null when unknown.
+     * Null values mean "Not provided"; nothing is guessed.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function tripProgress(int $tripId, mixed $ageSeconds): ?array
+    {
+        try {
+            $timeline = $this->timelineService->build($tripId);
+        } catch (ValidationException) {
+            return null;
+        }
+
+        $stops = collect($timeline['stops'] ?? [])->where('custom', false)->values();
+        $next = $stops->first(fn (array $stop) => $stop['progress'] === 'current')
+            ?? $stops->first(fn (array $stop) => $stop['progress'] === 'upcoming');
+        $gpsStale = $ageSeconds !== null && (float) $ageSeconds > (int) config('tracking.stale_seconds');
+        $live = ($next['eta_source'] ?? null) === 'live' && ! $gpsStale;
+
+        return [
+            'next_stop' => $next['name'] ?? null,
+            'eta_time' => $next ? ($live ? $next['eta_time'] : $next['scheduled_time']) : null,
+            'eta_basis' => $next === null || ($live ? $next['eta_time'] : $next['scheduled_time']) === null ? null : ($live ? 'live' : 'scheduled'),
+            'scheduled_time' => $next['scheduled_time'] ?? null,
+            'delay_minutes' => $live ? ($timeline['refresh']['delay_minutes'] ?? null) : null,
+            'gps_stale' => $gpsStale,
+            'passengers' => $this->ticketRepository->countBoardedByType($tripId, 'seated')
+                + $this->ticketRepository->countBoardedByType($tripId, 'standing'),
+        ];
     }
 
     // $payload = ['latitude','longitude']

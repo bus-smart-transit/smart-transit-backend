@@ -187,6 +187,10 @@ it('adjusts ETAs and row states from real progress once the trip is under way', 
     expect($rows['Stop D']['eta_time'])->toBe('08:55');
     expect($rows['Stop D']['eta_source'])->toBe('live');
     expect($data['refresh']['eta_basis'])->toBe('live');
+    // Batch 45 Feature C: the scheduled time and the delay are given apart from the live ETA.
+    expect($rows['Stop C']['scheduled_time'])->toBe('08:30');
+    expect($rows['Stop D']['scheduled_time'])->toBe('08:45');
+    expect($data['refresh']['delay_minutes'])->toBe(10);
 });
 
 it('shows ETA unavailable instead of inventing times when offsets are missing', function () {
