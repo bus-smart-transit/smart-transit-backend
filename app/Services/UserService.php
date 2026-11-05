@@ -181,7 +181,13 @@ class UserService
     public function initiateStaffLoginOtp(array $credentials): array
     {
         try {
-            $user = $this->userRepository->findByField('email', $credentials['email']);
+            // 2026-11-05: crews (Driver, Chauffeur) may type their username instead of their email; anything with an "@"
+            // is an email. A username never finds an Operator or Admin (findCrewByUsername), and every miss gets the
+            // same answer as a wrong password.
+            $identifier = (string) $credentials['email'];
+            $user = str_contains($identifier, '@')
+                ? $this->userRepository->findByField('email', $identifier)
+                : $this->userRepository->findCrewByUsername($identifier);
 
             if (! $user || ! Hash::check($credentials['password'], $user->password)) {
                 throw ValidationException::withMessages([

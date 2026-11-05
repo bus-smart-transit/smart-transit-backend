@@ -8,7 +8,7 @@ use Illuminate\Console\Scheduling\Schedule;
 it('declares the jobs the system relies on', function () {
     $commands = collect(app(Schedule::class)->events())->map(fn ($event) => (string) $event->command)->implode("\n");
 
-    foreach (['payments:release-expired-holds', 'trips:notify-delayed', 'reports:generate', 'refunds:release-deferred'] as $job) {
+    foreach (['payments:release-expired-holds', 'trips:notify-delayed', 'reports:generate', 'refunds:release-deferred', 'refunds:reconcile', 'accounts:anonymize-deleted', 'shift:repair-stale --apply'] as $job) {
         expect($commands)->toContain($job);
     }
 });

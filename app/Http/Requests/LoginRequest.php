@@ -21,7 +21,10 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'email'],
+            // 2026-11-05: on the staff page a Driver or Chauffeur may type their username (UserService decides which).
+            'email' => $this->input('portal') === 'staff'
+                ? ['required', 'string', 'max:255', ...(str_contains((string) $this->input('email'), '@') ? ['email'] : [])]
+                : ['required', 'email'],
             'password' => ['required', 'string'],
             // 2026-10-30: the page the person signs in on; POST /auth/login serves both (SignInController).
             'portal' => ['required', 'in:passenger,staff'],

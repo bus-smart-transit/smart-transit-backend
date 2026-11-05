@@ -29,6 +29,17 @@ class UserRepository
     }
 
     /** 2026-10-29: the passenger account behind a passenger_uuid (sign-in sends the uuid, never the numeric id). */
+    /**
+     * 2026-11-05: a Driver or Chauffeur signing in with their username (any letter case). Other roles are never found
+     * this way: Operators and Admins sign in with their email only.
+     */
+    public function findCrewByUsername(string $username): ?User
+    {
+        return User::whereRaw('LOWER(username) = ?', [mb_strtolower(trim($username))])
+            ->whereIn('role', ['driver', 'conductor'])
+            ->first();
+    }
+
     public function findPassengerUserByUuid(string $passengerUuid): ?User
     {
         return PassengerUser::with('user')->where('passenger_uuid', $passengerUuid)->first()?->user;

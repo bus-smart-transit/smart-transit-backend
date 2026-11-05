@@ -28,6 +28,12 @@ Schedule::command('refunds:release-deferred')->everyFifteenMinutes()->withoutOve
 // 2026-11-04 (Batch 45, Todo R): refunds still pending are checked with PayMongo, in case its refund event never came.
 Schedule::command('refunds:reconcile')->everyFifteenMinutes()->withoutOverlapping();
 
+// 2026-11-05 (approved): an earlier day's unfinished trip and open crew shift used to lock the crew out the next day
+// (no new shift could start; the old one could not end while its trip was "boarding"). Just after midnight Manila the
+// cleanup cancels earlier days' trips that never started and have no valid ticket, and closes their open shifts. It
+// never touches a trip that departed or is in progress, nor one with valid tickets (those are listed for the Operator).
+Schedule::command('shift:repair-stale --apply')->dailyAt('00:30')->timezone('Asia/Manila')->withoutOverlapping();
+
 // 2026-11-05: passenger accounts deleted more than the grace days ago (config/privacy.php) have their personal data
 // erased. Nightly, Manila time.
 Schedule::command('accounts:anonymize-deleted')->dailyAt('02:00')->timezone('Asia/Manila')->withoutOverlapping();
