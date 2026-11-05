@@ -5,14 +5,13 @@ use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\ShiftBlock;
-use App\Repositories\FleetLocationRepository;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
+use App\Repositories\FleetLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -22,19 +21,19 @@ uses(RefreshDatabase::class);
 function makeBlockTestStaff(string $role): array
 {
     $user = User::create([
-        'username' => $role . '_block_' . uniqid(),
-        'email' => $role . '+block' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_block_'.uniqid(),
+        'email' => $role.'+block'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    $staff = StaffUser::create([
+    $staff = joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Block Test',
+        'name' => ucfirst($role).' Block Test',
         'phone_num' => '09170000040',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return [$user->fresh(), $staff];
 }
@@ -50,7 +49,7 @@ function makeBlockTestFleetRoute(int $operatorCompanyUserId): array
 
     $fleet = Fleet::create([
         'company_user_id' => $operatorCompanyUserId,
-        'plate_number' => 'BLK-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'BLK-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -96,7 +95,7 @@ test('operator can create a shift block with 4 legs and it locks driver+conducto
 
     // Same driver cannot be assigned to a second, separate trip that day.
     $this->actingAs($operatorUser)->patchJson(
-        "/api/operator/trips/" . Trip::first()->trip_id . "/driver",
+        '/api/operator/trips/'.Trip::first()->trip_id.'/driver',
         ['driver_id' => $driver->company_user_id],
     );
     // (Trip already belongs to the block and has this driver — instead

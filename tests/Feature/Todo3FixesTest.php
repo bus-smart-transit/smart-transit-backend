@@ -75,7 +75,7 @@ it('still shows a fare rule refusal as it is', function () {
 function t3fStaff(string $role, string $name): User
 {
     $user = User::create(['username' => 't3f'.$role.Str::random(4), 'email' => "t3f.{$role}.".Str::random(4).'@example.com', 'password' => 'right-password-1', 'role' => $role]);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => $name, 'phone_num' => '0917'.random_int(1000000, 9999999), 'address' => 'Secret Street 1', 'birth_date' => '1990-01-01']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => $name, 'phone_num' => '0917'.random_int(1000000, 9999999), 'address' => 'Secret Street 1', 'birth_date' => '1990-01-01']));
 
     return $user;
 }
@@ -83,9 +83,10 @@ function t3fStaff(string $role, string $name): User
 it('gives an Operator only the scheduling fields of Drivers and Chauffeurs, and the Admin everything (Todo 3 finding 2)', function () {
     t3fStaff('driver', 'Shared Driver');
     t3fStaff('conductor', 'Shared Chauffeur');
+    $operator = t3fStaff('operator', 'Any Operator');
 
     foreach (['operator/drivers', 'operator/conductors'] as $url) {
-        $this->actingAs(t3fStaff('operator', 'Any Operator'), 'sanctum');
+        $this->actingAs($operator, 'sanctum');
         $row = $this->getJson("/api/{$url}")->assertSuccessful()->json('data.0');
         app('auth')->forgetGuards();
 

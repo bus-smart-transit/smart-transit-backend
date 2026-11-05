@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\StaffUser;
+use Tests\TestCase;
+
 /*
 |--------------------------------------------------------------------------
 | Test Case
@@ -11,7 +14,7 @@
 |
 */
 
-pest()->extend(Tests\TestCase::class)
+pest()->extend(TestCase::class)
  // ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)
     ->in('Feature');
 
@@ -44,4 +47,30 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/**
+ * Batch 46 (least privilege): a Driver or Chauffeur belongs to one Operator. Older tests build one Operator and its crew
+ * in any order, so their staff helpers call this: a new Driver or Chauffeur joins the first Operator, and a new
+ * Operator takes on every Driver and Chauffeur that has no Operator yet. Tests about two companies set the link
+ * themselves (see CrewCompanyScopeTest).
+ */
+function joinTestCompany(StaffUser $staff): StaffUser
+{
+    $role = $staff->user()->value('role');
+    $crew = fn () => StaffUser::whereNull('operator_company_user_id')
+        ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor']));
+
+    if ($role === 'operator') {
+        if (! StaffUser::where('company_user_id', '!=', $staff->company_user_id)->whereHas('user', fn ($q) => $q->where('role', 'operator'))->exists()) {
+            $crew()->update(['operator_company_user_id' => $staff->company_user_id]);
+        }
+    } elseif (in_array($role, ['driver', 'conductor'], true) && $staff->operator_company_user_id === null) {
+        $operatorId = StaffUser::whereHas('user', fn ($q) => $q->where('role', 'operator'))->orderBy('company_user_id')->value('company_user_id');
+        if ($operatorId) {
+            $staff->update(['operator_company_user_id' => $operatorId]);
+        }
+    }
+
+    return $staff;
 }

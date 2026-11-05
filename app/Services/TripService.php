@@ -35,6 +35,7 @@ class TripService
         private TripCancellationService $cancellations,
         private RouteDurationFactorService $durationFactors,
         private FleetScheduleGuard $fleetGuard,
+        private StaffService $staff,
     ) {}
 
     /**
@@ -93,24 +94,15 @@ class TripService
         // the same way assignDriver()/assignConductor() already do, so a
         // trip can never be created (and a PIN never generated for it) with
         // a driver_id/conductor_id that isn't actually a driver/conductor.
+        // Batch 46: the crew must also belong to the Operator scheduling the trip (StaffService::assertCrewOf).
         if (! empty($payload['driver_id'])) {
-            $driver = $this->StaffRepository->findById($payload['driver_id']);
-            if (! $driver || $driver->user?->role !== 'driver') {
-                throw ValidationException::withMessages([
-                    'driver_id' => ['The selected user is not a driver.'],
-                ]);
-            }
+            $driver = $this->staff->assertCrewOf((int) $payload['company_user_id'], $payload['driver_id'], 'driver', 'driver_id');
 
             $this->assertNotAlreadyAssignedThatDay('driver', $payload['driver_id'], $payload['trip_date']);
         }
 
         if (! empty($payload['conductor_id'])) {
-            $conductor = $this->StaffRepository->findById($payload['conductor_id']);
-            if (! $conductor || $conductor->user?->role !== 'conductor') {
-                throw ValidationException::withMessages([
-                    'conductor_id' => ['The selected user is not a conductor.'],
-                ]);
-            }
+            $conductor = $this->staff->assertCrewOf((int) $payload['company_user_id'], $payload['conductor_id'], 'conductor', 'conductor_id');
 
             $this->assertNotAlreadyAssignedThatDay('conductor', $payload['conductor_id'], $payload['trip_date']);
         }
@@ -526,18 +518,13 @@ class TripService
 
     public function assignDriver(int $tripId, array $payload): void
     {
-        $driver = $this->StaffRepository->findById($payload['driver_id']);
-
-        if (! $driver || $driver->user->role !== 'driver') {
-            throw ValidationException::withMessages([
-                'driver_id' => ['The selected user is not a driver.'],
-            ]);
-        }
-
         $targetTrip = $this->tripRepository->findById($tripId);
         if (! $targetTrip) {
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
+
+        // Batch 46: a driver of the trip owner's own company only.
+        $driver = $this->staff->assertCrewOf((int) $targetTrip->company_user_id, $payload['driver_id'], 'driver', 'driver_id');
 
         // S2 corrected model: hard one-assignment-per-day exclusivity —
         // see assertNotAlreadyAssignedThatDay().
@@ -571,18 +558,13 @@ class TripService
 
     public function assignConductor(int $tripId, array $payload): void
     {
-        $conductor = $this->StaffRepository->findById($payload['conductor_id']);
-
-        if (! $conductor || $conductor->user->role !== 'conductor') {
-            throw ValidationException::withMessages([
-                'conductor_id' => ['The selected user is not a conductor.'],
-            ]);
-        }
-
         $targetTrip = $this->tripRepository->findById($tripId);
         if (! $targetTrip) {
             throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
         }
+
+        // Batch 46: a Chauffeur of the trip owner's own company only.
+        $conductor = $this->staff->assertCrewOf((int) $targetTrip->company_user_id, $payload['conductor_id'], 'conductor', 'conductor_id');
 
         $this->assertNotAlreadyAssignedThatDay('conductor', $payload['conductor_id'], $targetTrip->trip_date->format('Y-m-d'), $tripId);
 

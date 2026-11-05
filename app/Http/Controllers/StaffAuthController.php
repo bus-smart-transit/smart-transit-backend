@@ -309,7 +309,8 @@ class StaffAuthController extends Controller
     {
         $result = $this->staffService->createStaffAccount(
             $request->validated(),
-            $request->user()->role
+            $request->user()->role,
+            $request->user()->companyProfile?->company_user_id,
         );
 
         return $this->success($result, 'Account created successfully');
@@ -322,13 +323,33 @@ class StaffAuthController extends Controller
         ]);
 
         return $this->success(
-            $this->staffService->listDrivers($validated['trip_date'] ?? null, $request->user()?->role === 'admin'),
+            $this->staffService->listDrivers(
+                $validated['trip_date'] ?? null,
+                $request->user()?->role === 'admin',
+                $this->crewScopeOf($request),
+            ),
             'Drivers retrieved successfully',
         );
     }
 
     public function listConductors(Request $request)
     {
-        return $this->success($this->staffService->listConductors($request->user()?->role === 'admin'), 'Conductors retrieved successfully');
+        return $this->success(
+            $this->staffService->listConductors($request->user()?->role === 'admin', $this->crewScopeOf($request)),
+            'Conductors retrieved successfully',
+        );
+    }
+
+    /**
+     * Batch 46 (least privilege): an Operator sees only their own crew. The Admin sees everyone (null). An Operator
+     * without a staff profile gets 0, which matches nobody.
+     */
+    private function crewScopeOf(Request $request): ?int
+    {
+        if ($request->user()?->role === 'admin') {
+            return null;
+        }
+
+        return (int) ($request->user()?->companyProfile?->company_user_id ?? 0);
     }
 }

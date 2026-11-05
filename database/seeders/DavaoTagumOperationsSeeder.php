@@ -12,6 +12,7 @@ use App\Models\Trip;
 use App\Services\ShiftBlockService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -134,8 +135,8 @@ class DavaoTagumOperationsSeeder extends Seeder
     /** Tries each driver/conductor pair until the block rules accept one. */
     private function createBlockFor(FleetRoute $fleetRoute, int $operatorId, string $date, array $legTimes): bool
     {
-        $drivers = $this->staffWithRole('driver');
-        $conductors = $this->staffWithRole('conductor');
+        $drivers = $this->staffWithRole('driver', $operatorId);
+        $conductors = $this->staffWithRole('conductor', $operatorId);
         $service = app(ShiftBlockService::class);
 
         foreach ($drivers as $driver) {
@@ -161,10 +162,14 @@ class DavaoTagumOperationsSeeder extends Seeder
         return false;
     }
 
-    /** @return \Illuminate\Support\Collection<int, StaffUser> */
-    private function staffWithRole(string $role)
+    /** @return Collection<int, StaffUser> */
+    private function staffWithRole(string $role, int $operatorId)
     {
-        return StaffUser::whereHas('user', fn ($q) => $q->where('role', $role))->orderBy('company_user_id')->get();
+        // Batch 46: only the crew of the Operator who owns the bus.
+        return StaffUser::whereHas('user', fn ($q) => $q->where('role', $role))
+            ->where('operator_company_user_id', $operatorId)
+            ->orderBy('company_user_id')
+            ->get();
     }
 
     private function say(string $message, bool $warn = false): void

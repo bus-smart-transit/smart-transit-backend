@@ -20,7 +20,7 @@ function opsSeedStaff(string $role): StaffUser
 {
     $user = User::create(['username' => $role.'_'.uniqid(), 'email' => $role.'+'.uniqid().'@t.test', 'password' => bcrypt('x'), 'role' => $role]);
 
-    return StaffUser::create(['company_user_uuid' => (string) Str::uuid(), 'user_id' => $user->user_id, 'name' => Str::title($role), 'phone_num' => '0917', 'address' => 'x']);
+    return joinTestCompany(StaffUser::create(['company_user_uuid' => (string) Str::uuid(), 'user_id' => $user->user_id, 'name' => Str::title($role), 'phone_num' => '0917', 'address' => 'x']));
 }
 
 function opsSeedFixture(bool $withRoute = true): array

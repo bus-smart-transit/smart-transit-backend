@@ -7,6 +7,7 @@ use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
 use App\Services\FcmService;
+use App\Services\TripAssignmentRequestService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -22,19 +23,19 @@ uses(RefreshDatabase::class);
 function makeStaffMemberForAssignmentNotificationTest(string $role): StaffUser
 {
     $user = User::create([
-        'username' => $role . '_' . uniqid(),
-        'email' => $role . '+' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_'.uniqid(),
+        'email' => $role.'+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    return StaffUser::create([
+    return joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Notification Test',
+        'name' => ucfirst($role).' Notification Test',
         'phone_num' => '09170000025',
         'address' => 'Test Address',
-    ]);
+    ]));
 }
 
 function makeUnassignedTripForNotificationTest(int $companyUserId): Trip
@@ -47,7 +48,7 @@ function makeUnassignedTripForNotificationTest(int $companyUserId): Trip
 
     $fleet = Fleet::create([
         'company_user_id' => $companyUserId,
-        'plate_number' => 'NOTIF-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'NOTIF-'.fake()->unique()->numerify('###'),
         'capacity' => 40,
         'seated_capacity' => 30,
         'standing_capacity' => 10,
@@ -116,6 +117,7 @@ test('assigning a driver does not notify any other driver', function () {
             ->once()
             ->withArgs(function ($user) use ($assignedDriver, $otherDriver) {
                 expect($user->user_id)->not->toBe($otherDriver->user_id);
+
                 return $user->user_id === $assignedDriver->user_id;
             })
             ->andReturn(true);
@@ -138,7 +140,7 @@ test('scheduling a new trip with driver and conductor assigned up front notifies
     $route = Route::create(['route_name' => 'Schedule Notification Route', 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create([
         'company_user_id' => $operator->company_user_id,
-        'plate_number' => 'SCHED-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'SCHED-'.fake()->unique()->numerify('###'),
         'capacity' => 40,
         'seated_capacity' => 30,
         'standing_capacity' => 10,
@@ -158,6 +160,7 @@ test('scheduling a new trip with driver and conductor assigned up front notifies
             ->twice()
             ->withArgs(function ($user, $title) use (&$notifiedUserIds) {
                 $notifiedUserIds[] = $user->user_id;
+
                 return $title === 'New Trip Assignment';
             })
             ->andReturn(true);
@@ -195,7 +198,7 @@ test('a driver asking to decline a trip notifies the owning Operator', function 
             ->andReturn(true);
     });
 
-    app(\App\Services\TripAssignmentRequestService::class)
+    app(TripAssignmentRequestService::class)
         ->requestDecline($trip->trip_id, 'driver', $driver->company_user_id, 'sick', null);
 });
 

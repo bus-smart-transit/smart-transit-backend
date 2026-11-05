@@ -56,6 +56,8 @@ class StaffUser extends Model
         'is_available',
         'available_since',
         'gender',
+        // Batch 46: the Operator a Driver or Chauffeur belongs to (null for Operators and Admins).
+        'operator_company_user_id',
     ];
 
     protected function casts(): array

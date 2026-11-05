@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Validator;
 class CreateStaffAccount extends Command
 {
     protected $signature = 'staff:create
-        {role : operator, admin, driver or conductor}
+        {role : operator or admin (an Operator adds their own Drivers and Chauffeurs in the app)}
         {email : an address this person can read (the login code is emailed)}
         {name : full name}
         {phone : mobile number}
@@ -24,7 +24,8 @@ class CreateStaffAccount extends Command
 
     protected $description = 'Create one staff account; the password is asked for at a hidden prompt';
 
-    private const ROLES = ['operator', 'admin', 'driver', 'conductor'];
+    /** Batch 46: a Driver or Chauffeur belongs to an Operator, so they are added in the Operator portal, not here. */
+    private const ROLES = ['operator', 'admin'];
 
     public function handle(): int
     {

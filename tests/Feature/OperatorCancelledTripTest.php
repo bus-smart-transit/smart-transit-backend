@@ -39,7 +39,7 @@ const RF_SECRET = 'whsk_rf_secret';
 function rfStaff(string $role): User
 {
     $user = User::create(['username' => 'rf'.Str::random(8), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Rf '.ucfirst($role), 'phone_num' => '09170000041', 'address' => 'x']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Rf '.ucfirst($role), 'phone_num' => '09170000041', 'address' => 'x']));
 
     return $user->fresh();
 }

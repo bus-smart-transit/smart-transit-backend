@@ -21,7 +21,7 @@ uses(RefreshDatabase::class);
 function saStaff(string $role): User
 {
     $user = User::create(['username' => $role.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' '.Str::random(3), 'phone_num' => '0917', 'address' => 'x']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' '.Str::random(3), 'phone_num' => '0917', 'address' => 'x']));
 
     return $user->fresh();
 }
@@ -184,7 +184,7 @@ it('does not let another driver, or another Operator, act on the block', functio
     $this->actingAs($driver)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/decline", ['reason_code' => 'sick'])->assertSuccessful();
 
     $this->actingAs($other)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertUnprocessable();
-    $this->actingAs($other)->patchJson("/api/driver/assignments/block-999999/accept")->assertUnprocessable(); // not found looks the same as not yours
+    $this->actingAs($other)->patchJson('/api/driver/assignments/block-999999/accept')->assertUnprocessable(); // not found looks the same as not yours
 
     $requestId = $this->actingAs($operator)->getJson('/api/operator/trip-requests')->json('data.requests.0.id');
     $rival = saStaff('operator');

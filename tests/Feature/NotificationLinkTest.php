@@ -6,6 +6,7 @@ use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
+use App\Models\UserNotification;
 use App\Services\FcmService;
 use App\Services\TripService;
 use App\Support\Notifications\NotificationLink;
@@ -21,19 +22,19 @@ uses(RefreshDatabase::class);
 function notificationLinkStaff(string $role): StaffUser
 {
     $user = User::create([
-        'username' => $role . '_' . uniqid(),
-        'email' => $role . '+' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_'.uniqid(),
+        'email' => $role.'+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    return StaffUser::create([
+    return joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Link Test',
+        'name' => ucfirst($role).' Link Test',
         'phone_num' => '09170000026',
         'address' => 'Test Address',
-    ]);
+    ]));
 }
 
 function notificationLinkTrip(int $companyUserId): Trip
@@ -41,7 +42,7 @@ function notificationLinkTrip(int $companyUserId): Trip
     $route = Route::create(['route_name' => 'Link Test Route', 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create([
         'company_user_id' => $companyUserId,
-        'plate_number' => 'LINK-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'LINK-'.fake()->unique()->numerify('###'),
         'capacity' => 40,
         'seated_capacity' => 30,
         'standing_capacity' => 10,
@@ -90,6 +91,7 @@ it('puts trip id, role and link in the data of an assigned-driver notification',
     $this->mock(FcmService::class, function ($mock) use (&$captured) {
         $mock->shouldReceive('sendToUser')->once()->withArgs(function ($user, $title, $body, $data) use (&$captured) {
             $captured = $data;
+
             return true;
         })->andReturn(true);
     });
@@ -113,6 +115,7 @@ it('puts trip id, role and link in the data of an assigned-conductor notificatio
     $this->mock(FcmService::class, function ($mock) use (&$captured) {
         $mock->shouldReceive('sendToUser')->once()->withArgs(function ($user, $title, $body, $data) use (&$captured) {
             $captured = $data;
+
             return true;
         })->andReturn(true);
     });
@@ -130,7 +133,7 @@ it('stores the link in the in-app notification so the bell list can open it', fu
 
     app(TripService::class)->assignDriver($trip->trip_id, ['driver_id' => $driver->company_user_id]);
 
-    $row = \App\Models\UserNotification::where('user_id', $driver->user_id)->where('type', 'trip_assigned')->first();
+    $row = UserNotification::where('user_id', $driver->user_id)->where('type', 'trip_assigned')->first();
     expect($row)->not->toBeNull();
     $data = is_array($row->data) ? $row->data : json_decode((string) $row->data, true);
     expect($data['link'])->toBe("/employee/driver/dashboard?tab=dashboard&trip={$trip->trip_id}")

@@ -23,7 +23,7 @@ const SC_PAST = 'This date has passed. Contact your operator.';
 function scStaff(string $role): User
 {
     $user = User::create(['username' => $role.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' '.Str::random(3), 'phone_num' => '0917', 'address' => 'x']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' '.Str::random(3), 'phone_num' => '0917', 'address' => 'x']));
 
     return $user->fresh();
 }
@@ -39,6 +39,8 @@ function scBlock($test, string $date, array $times = ['06:00', '09:00', '12:00',
     $operator = scStaff('operator');
     $driver = scStaff('driver');
     $conductor = scStaff('conductor');
+    // Batch 46: each call builds its own company, so its crew belongs to its own Operator.
+    StaffUser::whereIn('company_user_id', [scCid($driver), scCid($conductor)])->update(['operator_company_user_id' => scCid($operator)]);
     $route = Route::create(['route_name' => 'Sched Route', 'origin' => 'Alpha', 'destination' => 'Omega']);
     $fleet = Fleet::create(['company_user_id' => scCid($operator), 'plate_number' => 'SC-'.fake()->unique()->numerify('####'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active']);
     $fleetRoute = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '06:00', 'end_time' => '22:00', 'status' => 'active']);
@@ -238,7 +240,6 @@ it('lists the Operator blocks by the derived status filter', function () {
     expect($row['lifecycle_status'])->toBe('completed');
     expect($row['schedule_section'])->toBe('today');
 });
-
 
 it('requires the assignment to be accepted before a shift starts, for the Driver and the Chauffeur', function () {
     [$block, , $driver, $conductor] = scBlock($this, '2026-10-04');

@@ -22,11 +22,21 @@ class StaffRepository
         return StaffUser::with('user')->where('user_id', $userId)->first();
     }
 
-    // List all staff of a specific role — e.g. all drivers or all conductors
-    public function listByRole(string $role): Collection
+    /**
+     * Staff of one role (drivers or conductors). Batch 46: with $operatorCompanyUserId only that Operator's own crew;
+     * null lists everyone (the Admin).
+     */
+    public function listByRole(string $role, ?int $operatorCompanyUserId = null): Collection
     {
         return StaffUser::with('user')
-            ->whereHas('user', fn($q) => $q->where('role', $role))
+            ->whereHas('user', fn ($q) => $q->where('role', $role))
+            ->when($operatorCompanyUserId !== null, fn ($q) => $q->where('operator_company_user_id', $operatorCompanyUserId))
             ->get();
+    }
+
+    /** The role of the account behind a company_users row (null when unknown). */
+    public function roleOf(int $companyUserId): ?string
+    {
+        return StaffUser::with('user')->find($companyUserId)?->user?->role;
     }
 }

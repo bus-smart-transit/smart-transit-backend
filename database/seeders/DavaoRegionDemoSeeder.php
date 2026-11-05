@@ -135,6 +135,14 @@ class DavaoRegionDemoSeeder extends Seeder
             );
         }
 
+        // Batch 46 (least privilege): every demo Driver and Chauffeur belongs to the demo Operator's company.
+        $operatorId = $made['operator']->company_user_id;
+        foreach (self::STAFF as [$username, , $role]) {
+            if (in_array($role, ['driver', 'conductor'], true)) {
+                $made[$username]->update(['operator_company_user_id' => $operatorId]);
+            }
+        }
+
         return $made;
     }
 

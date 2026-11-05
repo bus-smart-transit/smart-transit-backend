@@ -44,6 +44,13 @@ it('refuses an unknown role, a taken email and a bad phone before asking for a p
     User::create(['username' => 'taken', 'email' => 'taken@example.com', 'password' => 'whatever-123', 'role' => 'driver']);
 
     $this->artisan('staff:create', ['role' => 'passenger', 'email' => 'new@example.com', 'name' => 'New', 'phone' => '09171234567', 'address' => 'Tagum City'])->assertFailed();
-    $this->artisan('staff:create', ['role' => 'driver', 'email' => 'taken@example.com', 'name' => 'New', 'phone' => '09171234567', 'address' => 'Tagum City'])->assertFailed();
-    $this->artisan('staff:create', ['role' => 'driver', 'email' => 'other@example.com', 'name' => 'New', 'phone' => 'call me', 'address' => 'Tagum City'])->assertFailed();
+    $this->artisan('staff:create', ['role' => 'operator', 'email' => 'taken@example.com', 'name' => 'New', 'phone' => '09171234567', 'address' => 'Tagum City'])->assertFailed();
+    $this->artisan('staff:create', ['role' => 'operator', 'email' => 'other@example.com', 'name' => 'New', 'phone' => 'call me', 'address' => 'Tagum City'])->assertFailed();
+});
+
+it('refuses a Driver or Chauffeur, who are added by their Operator in the app (Batch 46)', function () {
+    $this->artisan('staff:create', ['role' => 'driver', 'email' => 'drv@example.com', 'name' => 'New', 'phone' => '09171234567', 'address' => 'Tagum City'])->assertFailed();
+    $this->artisan('staff:create', ['role' => 'conductor', 'email' => 'cdr@example.com', 'name' => 'New', 'phone' => '09171234567', 'address' => 'Tagum City'])->assertFailed();
+
+    expect(User::whereIn('email', ['drv@example.com', 'cdr@example.com'])->exists())->toBeFalse();
 });

@@ -30,13 +30,13 @@ function makeStaffUser(string $role): User
         'role' => $role,
     ]);
 
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'user_id' => $user->user_id,
         'company_user_uuid' => (string) Str::uuid(),
         'name' => fake()->name(),
         'phone_num' => fake()->phoneNumber(),
         'address' => fake()->address(),
-    ]);
+    ]));
 
     return $user->fresh();
 }

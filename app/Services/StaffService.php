@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
 use App\Repositories\StaffRepository;
@@ -49,7 +50,11 @@ class StaffService
     // Operator → can create driver and conductor accounts only
     // Driver / Conductor → cannot create any accounts (blocked by route middleware)
 
-    public function createStaffAccount(array $payload, string $createdByRole): array
+    /**
+     * @param  int|null  $creatorCompanyUserId  the creating Operator's company_users id: a Driver or Chauffeur made by an
+     *                                          Operator belongs to that Operator (Batch 46).
+     */
+    public function createStaffAccount(array $payload, string $createdByRole, ?int $creatorCompanyUserId = null): array
     {
         $targetRole = $payload['role'];
 
@@ -90,6 +95,9 @@ class StaffService
             'address' => $payload['address'] ?? '',
             'birth_date' => $payload['birth_date'] ?? null,
             'gender' => $payload['gender'] ?? null,
+            'operator_company_user_id' => $createdByRole === 'operator' && in_array($targetRole, self::OPERATOR_CREATABLE_ROLES, true)
+                ? $creatorCompanyUserId
+                : null,
         ]);
 
         return ['user' => $user, 'profile' => $companyUser];
@@ -102,9 +110,10 @@ class StaffService
      * scheduling needs (id, name, username, gender, availability, joined date). Phone, address, birth date and email
      * stay with the Admin ($withContactDetails) and with the person's own profile.
      */
-    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false): object
+    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $operatorCompanyUserId = null): object
     {
-        $drivers = $this->staffRepository->listByRole('driver');
+        // Batch 46 (least privilege): an Operator lists only their own crew; null (the Admin) lists everyone.
+        $drivers = $this->staffRepository->listByRole('driver', $operatorCompanyUserId);
         if ($tripDate === null) {
             return $this->presentStaff($drivers, $withContactDetails);
         }
@@ -127,9 +136,36 @@ class StaffService
         );
     }
 
-    public function listConductors(bool $withContactDetails = false): object
+    public function listConductors(bool $withContactDetails = false, ?int $operatorCompanyUserId = null): object
     {
-        return $this->presentStaff($this->staffRepository->listByRole('conductor'), $withContactDetails);
+        return $this->presentStaff($this->staffRepository->listByRole('conductor', $operatorCompanyUserId), $withContactDetails);
+    }
+
+    /**
+     * Batch 46 (decided 2026-11-05, least privilege): the one rule for putting a crew member on a trip or shift block.
+     * The person must have the right role AND belong to the Operator who owns the trip or block. Another company's crew
+     * gets the same answer as a person with the wrong role, so nothing about other companies is revealed. An owner that is an Admin (the
+     * Admin portal is rewritten in Batch 48) is not limited.
+     *
+     * @return StaffUser the checked crew member
+     *
+     * @throws ValidationException
+     */
+    public function assertCrewOf(int $ownerCompanyUserId, mixed $staffCompanyUserId, string $role, string $field): object
+    {
+        $staff = $staffCompanyUserId ? $this->staffRepository->findById((int) $staffCompanyUserId) : null;
+        $label = $role === 'driver' ? 'driver' : 'Chauffeur';
+        $refuse = fn () => throw ValidationException::withMessages([$field => ["Choose a {$label} from your own staff."]]);
+
+        if (! $staff || $staff->user?->role !== $role) {
+            $refuse();
+        }
+        if ($this->staffRepository->roleOf($ownerCompanyUserId) !== 'admin'
+            && (int) $staff->operator_company_user_id !== $ownerCompanyUserId) {
+            $refuse();
+        }
+
+        return $staff;
     }
 
     private function presentStaff(Collection $staff, bool $withContactDetails): Collection

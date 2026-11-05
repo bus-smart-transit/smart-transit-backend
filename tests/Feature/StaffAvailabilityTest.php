@@ -13,19 +13,19 @@ uses(RefreshDatabase::class);
 function makeStaffForAvailabilityTest(string $role): User
 {
     $user = User::create([
-        'username' => $role . '_' . uniqid(),
-        'email' => $role . '+' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_'.uniqid(),
+        'email' => $role.'+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Availability Test',
+        'name' => ucfirst($role).' Availability Test',
         'phone_num' => '09170000022',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return $user;
 }
@@ -57,18 +57,18 @@ test('conductor can toggle availability independent of shift state', function ()
 
 test('operator cannot toggle availability (role-restricted feature)', function () {
     $operatorUser = User::create([
-        'username' => 'operator_' . uniqid(),
-        'email' => 'operator+' . uniqid() . '@smarttransit.test',
+        'username' => 'operator_'.uniqid(),
+        'email' => 'operator+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'operator',
     ]);
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $operatorUser->user_id,
         'name' => 'Operator Availability Test',
         'phone_num' => '09170000023',
         'address' => 'Test Address',
-    ]);
+    ]));
     $token = $operatorUser->createToken('test-token')->plainTextToken;
 
     // No /operator/availability route exists at all (feature is
@@ -90,18 +90,18 @@ test('operator staff listing surfaces driver availability status', function () {
     $driver->companyProfile->forceFill(['is_available' => true, 'available_since' => now()])->save();
 
     $operatorUser = User::create([
-        'username' => 'operator_' . uniqid(),
-        'email' => 'operator+' . uniqid() . '@smarttransit.test',
+        'username' => 'operator_'.uniqid(),
+        'email' => 'operator+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'operator',
     ]);
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $operatorUser->user_id,
         'name' => 'Operator List Test',
         'phone_num' => '09170000024',
         'address' => 'Test Address',
-    ]);
+    ]));
     $operatorToken = $operatorUser->createToken('test-token')->plainTextToken;
 
     $response = $this->withHeader('Authorization', "Bearer $operatorToken")

@@ -6,6 +6,7 @@ use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
+use App\Services\TripAssignmentRequestService;
 use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -21,19 +22,19 @@ uses(RefreshDatabase::class);
 function makeStaffMemberForTripAccept(string $role): array
 {
     $user = User::create([
-        'username' => $role . '_' . uniqid(),
-        'email' => $role . '+' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_'.uniqid(),
+        'email' => $role.'+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    $staff = StaffUser::create([
+    $staff = joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Accept Test',
+        'name' => ucfirst($role).' Accept Test',
         'phone_num' => '09170000020',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return [$user, $staff];
 }
@@ -48,7 +49,7 @@ function makeTripForAcceptTest(int $companyUserId, ?int $driverId, ?int $conduct
 
     $fleet = Fleet::create([
         'company_user_id' => $companyUserId,
-        'plate_number' => 'ACC-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'ACC-'.fake()->unique()->numerify('###'),
         'capacity' => 40,
         'seated_capacity' => 30,
         'standing_capacity' => 10,
@@ -115,9 +116,11 @@ test('a departed trip can no longer be accepted', function () {
 })->throws(ValidationException::class);
 
 test('reassigning a driver resets acceptance and requires re-accepting', function () {
+    // Batch 46: the trip belongs to a real Operator whose own drivers A and B are.
+    [, $operator] = makeStaffMemberForTripAccept('operator');
     [, $driverA] = makeStaffMemberForTripAccept('driver');
     [, $driverB] = makeStaffMemberForTripAccept('driver');
-    $trip = makeTripForAcceptTest($driverA->company_user_id, $driverA->company_user_id, null);
+    $trip = makeTripForAcceptTest($operator->company_user_id, $driverA->company_user_id, null);
 
     app(TripService::class)->acceptTrip($trip->trip_id, 'driver', $driverA->company_user_id);
     expect($trip->fresh()->driver_accepted_at)->not->toBeNull();
@@ -136,9 +139,9 @@ test('a trip that was already accepted can no longer be declined (C6 guardrail)'
     app(TripService::class)->acceptTrip($trip->trip_id, 'driver', $driver->company_user_id);
     expect($trip->fresh()->driver_accepted_at)->not->toBeNull();
 
-    expect(fn () => app(\App\Services\TripAssignmentRequestService::class)
+    expect(fn () => app(TripAssignmentRequestService::class)
         ->requestDecline($trip->trip_id, 'driver', $driver->company_user_id, 'sick', null))
-        ->toThrow(\Illuminate\Validation\ValidationException::class);
+        ->toThrow(ValidationException::class);
 
     $unchanged = $trip->fresh();
     expect((int) $unchanged->driver_id)->toBe($driver->company_user_id);

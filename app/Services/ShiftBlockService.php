@@ -44,6 +44,7 @@ class ShiftBlockService
         private TripCancellationService $cancellations,
         private FleetScheduleGuard $fleetGuard,
         private LegPlanningService $legPlanning,
+        private StaffService $staff,
     ) {}
 
     /**
@@ -73,6 +74,8 @@ class ShiftBlockService
      */
     public function previewRange(array $payload): array
     {
+        // Batch 46: refuse another company's crew up front, so the preview never reads their schedule.
+        $this->assertCrewPair($payload);
         $dates = $this->rangeDates((string) $payload['from_date'], (string) $payload['to_date']);
         $windowFrom = Carbon::parse($dates[0])->subDays(self::restWindowDays())->toDateString();
         $windowTo = Carbon::parse(end($dates))->addDays(self::restWindowDays())->toDateString();
@@ -191,6 +194,21 @@ class ShiftBlockService
      *
      * @return array{0: object, 1: object, 2: object, 3: list<string>} fleet route, driver, conductor, leg times
      */
+    /**
+     * The block's driver and Chauffeur, checked by StaffService::assertCrewOf (right role, owner's own company).
+     *
+     * @return array{0: StaffUser, 1: StaffUser}
+     */
+    private function assertCrewPair(array $payload): array
+    {
+        $owner = (int) $payload['company_user_id'];
+
+        return [
+            $this->staff->assertCrewOf($owner, $payload['driver_id'] ?? null, 'driver', 'driver_id'),
+            $this->staff->assertCrewOf($owner, $payload['conductor_id'] ?? null, 'conductor', 'conductor_id'),
+        ];
+    }
+
     private function assertBlockCanBeCreated(array $payload): array
     {
         $fleetRoute = $this->fleetRouteRepository->findWithRoute($payload['fleet_route_id']);
@@ -198,16 +216,8 @@ class ShiftBlockService
             throw ValidationException::withMessages(['fleet_route_id' => ['Fleet route not found.']]);
         }
 
-        $driver = $this->staffRepository->findById($payload['driver_id']);
-        if (! $driver || $driver->user?->role !== 'driver') {
-            throw ValidationException::withMessages(['driver_id' => ['The selected user is not a driver.']]);
-        }
-
-        // Driver-Conductor Pair Rule: both roles must be valid and distinct.
-        $conductor = $this->staffRepository->findById($payload['conductor_id']);
-        if (! $conductor || $conductor->user?->role !== 'conductor') {
-            throw ValidationException::withMessages(['conductor_id' => ['The selected user is not a conductor.']]);
-        }
+        // Driver-Conductor Pair Rule: both roles must be valid and distinct, and (Batch 46) both of the owner's company.
+        [$driver, $conductor] = $this->assertCrewPair($payload);
 
         $blockTypes = config('shift_blocks.block_types');
         if (! in_array($payload['block_type'], $blockTypes, true)) {
@@ -489,10 +499,7 @@ class ShiftBlockService
         $update = [];
 
         if (! empty($payload['driver_id']) && (int) $payload['driver_id'] !== (int) $block->driver_id) {
-            $driver = $this->staffRepository->findById($payload['driver_id']);
-            if (! $driver || $driver->user?->role !== 'driver') {
-                throw ValidationException::withMessages(['driver_id' => ['The selected user is not a driver.']]);
-            }
+            $this->staff->assertCrewOf((int) $block->company_user_id, $payload['driver_id'], 'driver', 'driver_id');
             if ($this->shiftBlockRepository->hasBlockOnDate('driver', $payload['driver_id'], $block->scheduled_date->format('Y-m-d'), $blockId)) {
                 throw ValidationException::withMessages(['driver_id' => ['This driver already has a shift block scheduled for this date.']]);
             }
@@ -503,10 +510,7 @@ class ShiftBlockService
         }
 
         if (! empty($payload['conductor_id']) && (int) $payload['conductor_id'] !== (int) $block->conductor_id) {
-            $conductor = $this->staffRepository->findById($payload['conductor_id']);
-            if (! $conductor || $conductor->user?->role !== 'conductor') {
-                throw ValidationException::withMessages(['conductor_id' => ['The selected user is not a conductor.']]);
-            }
+            $this->staff->assertCrewOf((int) $block->company_user_id, $payload['conductor_id'], 'conductor', 'conductor_id');
             if ($this->shiftBlockRepository->hasBlockOnDate('conductor', $payload['conductor_id'], $block->scheduled_date->format('Y-m-d'), $blockId)) {
                 throw ValidationException::withMessages(['conductor_id' => ['This conductor already has a shift block scheduled for this date.']]);
             }

@@ -20,19 +20,19 @@ uses(RefreshDatabase::class);
 function makeBellTestStaff(string $role): array
 {
     $user = User::create([
-        'username' => $role . '_bell_' . uniqid(),
-        'email' => $role . '+bell' . uniqid() . '@smarttransit.test',
+        'username' => $role.'_bell_'.uniqid(),
+        'email' => $role.'+bell'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
 
-    $staff = StaffUser::create([
+    $staff = joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
-        'name' => ucfirst($role) . ' Bell Test',
+        'name' => ucfirst($role).' Bell Test',
         'phone_num' => '09170000099',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return [$user->fresh(), $staff];
 }
@@ -47,7 +47,7 @@ function makeBellTestTrip(int $companyUserId, ?string $tripDate = null): Trip
 
     $fleet = Fleet::create([
         'company_user_id' => $companyUserId,
-        'plate_number' => 'BEL-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'BEL-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
