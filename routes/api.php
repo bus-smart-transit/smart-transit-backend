@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminOverviewController;
 use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BookingController;
@@ -456,6 +457,8 @@ Route::prefix('admin')
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
+        // Batch 48 Phase 2: the Super Admin Dashboard counts.
+        Route::get('overview', [AdminOverviewController::class, 'show']);
 
         // Admin creates operator accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');

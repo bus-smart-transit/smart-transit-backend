@@ -2,6 +2,7 @@
 
 use App\Models\Company;
 use App\Models\StaffUser;
+use App\Models\Stop;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -93,4 +94,20 @@ it('ends a Super Admin session idle for more than 15 minutes, and keeps one used
     app('auth')->forgetGuards();
     $this->withToken($recent)->getJson('/api/admin/profile')->assertOk();
     expect(DB::table('personal_access_tokens')->where('tokenable_id', $admin->user_id)->count())->toBe(1);
+});
+
+it('gives the Super Admin Dashboard counts across every company and the needs-attention list', function () {
+    $company = Company::firstOrCreate(['company_name' => 'Saf Bus Co']);
+    Company::create(['company_name' => 'Second Co']);
+    safUser('operator', true);
+    safUser('operator')->forceFill(['deactivated_at' => now()])->save();
+    Stop::create(['stop_name' => 'Old', 'latitude' => 7.0, 'longitude' => 125.6, 'company_id' => $company->company_id, 'location_source' => 'name']);
+    Stop::create(['stop_name' => 'New', 'latitude' => 7.1, 'longitude' => 125.6, 'company_id' => $company->company_id, 'location_source' => 'pinned']);
+    DB::table('failed_jobs')->insert(['uuid' => (string) Str::uuid(), 'connection' => 'database', 'queue' => 'default', 'payload' => '{}', 'exception' => 'x', 'failed_at' => now()]);
+
+    $this->actingAs(safUser('admin'), 'sanctum');
+    $data = $this->getJson('/api/admin/overview')->assertOk()->json('data');
+
+    expect($data['counts'])->toMatchArray(['companies' => 2, 'operators' => 1, 'trips_today' => 0, 'tickets_paid_today' => 0])
+        ->and(collect($data['attention'])->pluck('count', 'key')->all())->toBe(['needs_refund' => 0, 'failed_jobs' => 1, 'stops_not_pinned' => 1]);
 });
