@@ -469,6 +469,8 @@ Route::prefix('admin')
         Route::patch('users/{userId}/deactivate', [AdminAccountsController::class, 'deactivate'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-deactivate');
         Route::patch('users/{userId}/reactivate', [AdminAccountsController::class, 'reactivate'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-reactivate');
         Route::patch('users/{userId}/company-admin', [AdminAccountsController::class, 'setCompanyAdmin'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-company-admin');
+        // Batch 48 Phase 4: the Audit log page (filters and pages).
+        Route::get('audit-log', [AdminAccountsController::class, 'auditLog'])->middleware('throttle:60,1,admin-audit-log');
 
         // Admin creates operator accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\AddCompanyAdminRequest;
+use App\Services\AdminAuditService;
 use App\Services\AdminCompanyService;
 use App\Services\AdminUserService;
 use App\Services\AuditLogger;
@@ -91,6 +92,20 @@ class AdminAccountsController extends Controller
         AuditLogger::log($user['is_company_admin'] ? 'company.admin_on' : 'company.admin_off', 'User', $userId);
 
         return $this->success($user, $user['is_company_admin'] ? 'They are now a Company Admin.' : 'They are no longer a Company Admin.');
+    }
+
+    /** Batch 48 Phase 4: the Audit log page (read only). */
+    public function auditLog(Request $request, AdminAuditService $audit): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'role' => ['sometimes', 'nullable', 'in:passenger,driver,conductor,operator,admin,system'],
+            'from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'to' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
+            'page' => ['sometimes', 'integer', 'min:1', 'max:10000'],
+        ]);
+
+        return $this->success($audit->page($validated, (int) ($validated['page'] ?? 1)), 'Audit log retrieved');
     }
 
     private function actor(Request $request): int

@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
@@ -13,6 +14,14 @@ use Illuminate\Support\Facades\Request;
  */
 class AuditLogger
 {
+    /** Batch 48 Phase 4: entries written so far in this process (AuditAdminWrites adds one only when none was). */
+    private static int $writes = 0;
+
+    public static function writes(): int
+    {
+        return self::$writes;
+    }
+
     /**
      * Log an action on behalf of the currently authenticated user (any guard).
      */
@@ -22,19 +31,21 @@ class AuditLogger
         ?int $subjectId = null,
         array $context = []
     ): void {
-        $user      = null;
+        $user = null;
         $actorType = null;
-        $actorId   = null;
+        $actorId = null;
 
         foreach (['sanctum', 'web'] as $guard) {
             $user = auth($guard)->user();
-            if ($user) break;
+            if ($user) {
+                break;
+            }
         }
 
         if ($user) {
             // Distinguish passenger users from staff (company_users)
             $actorType = method_exists($user, 'companyProfile') ? 'staff' : 'passenger';
-            $actorId   = $user->getKey();
+            $actorId = $user->getKey();
         }
 
         static::insert($actorType, $actorId, $action, $subjectType, $subjectId, $context);
@@ -64,15 +75,16 @@ class AuditLogger
     ): void {
         try {
             DB::table('audit_logs')->insert([
-                'actor_type'   => $actorType,
-                'actor_id'     => $actorId,
-                'action'       => $action,
+                'actor_type' => $actorType,
+                'actor_id' => $actorId,
+                'action' => $action,
                 'subject_type' => $subjectType,
-                'subject_id'   => $subjectId,
-                'context'      => empty($context) ? null : json_encode($context),
-                'ip_address'   => Request::ip(),
-                'created_at'   => now(),
+                'subject_id' => $subjectId,
+                'context' => empty($context) ? null : json_encode($context),
+                'ip_address' => Request::ip(),
+                'created_at' => now(),
             ]);
+            self::$writes++;
         } catch (\Throwable) {
             // Audit failure must never crash the main request.
         }

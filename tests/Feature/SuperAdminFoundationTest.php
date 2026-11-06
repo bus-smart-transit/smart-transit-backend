@@ -111,3 +111,11 @@ it('gives the Super Admin Dashboard counts across every company and the needs-at
     expect($data['counts'])->toMatchArray(['companies' => 2, 'operators' => 1, 'trips_today' => 0, 'tickets_paid_today' => 0])
         ->and(collect($data['attention'])->pluck('count', 'key')->all())->toBe(['needs_refund' => 0, 'failed_jobs' => 1, 'stops_not_pinned' => 1]);
 });
+
+it('writes one audit line per Super Admin change: the specific entry when there is one, the general one otherwise', function () {
+    $this->actingAs(safUser('admin'), 'sanctum');
+    $this->postJson('/api/admin/companies', ['company_name' => 'One Line Co'])->assertSuccessful();
+
+    expect(DB::table('audit_logs')->where('action', 'company.create')->count())->toBe(1)
+        ->and(DB::table('audit_logs')->where('action', 'like', 'admin.%')->count())->toBe(0);
+});

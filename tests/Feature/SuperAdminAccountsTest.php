@@ -103,3 +103,25 @@ it('never turns off your own account or the last Super Admin, and gives or takes
     $this->patchJson("/api/admin/users/{$passenger->user_id}/company-admin", ['is_company_admin' => true])->assertUnprocessable();
     $this->patchJson('/api/admin/users/999999/deactivate')->assertNotFound();
 });
+
+it('pages the audit log newest first with who did it, filtered by action, role and date', function () {
+    $admin = saaStaff('admin', null, false, 'Ada Admin');
+    $operator = saaStaff('operator', Company::create(['company_name' => 'Saa Bus Co']), true, 'Owen Operator');
+    DB::table('audit_logs')->insert([
+        ['actor_type' => 'staff', 'actor_id' => $operator->user_id, 'action' => 'fare.update', 'subject_type' => 'FareRule', 'subject_id' => 4, 'context' => json_encode(['note' => 'x']), 'created_at' => '2026-11-01 09:00:00'],
+        ['actor_type' => 'system', 'actor_id' => null, 'action' => 'refund.reconcile', 'subject_type' => null, 'subject_id' => null, 'context' => null, 'created_at' => '2026-11-03 09:00:00'],
+        ['actor_type' => 'staff', 'actor_id' => $admin->user_id, 'action' => 'company.create', 'subject_type' => 'Company', 'subject_id' => 1, 'context' => null, 'created_at' => '2026-11-05 09:00:00'],
+    ]);
+    $this->actingAs($admin, 'sanctum');
+
+    $all = $this->getJson('/api/admin/audit-log')->assertOk()->json('data');
+    expect(collect($all['entries'])->pluck('action')->all())->toBe(['company.create', 'refund.reconcile', 'fare.update'])
+        ->and($all['entries'][2]['who'])->toBe(['name' => 'Owen Operator', 'username' => $operator->username, 'role_label' => 'Operator'])
+        ->and($all['entries'][2]['subject'])->toBe('FareRule 4')
+        ->and($all['entries'][1]['who']['name'])->toBe('System');
+
+    expect(collect($this->getJson('/api/admin/audit-log?action=FARE')->json('data.entries'))->pluck('action')->all())->toBe(['fare.update'])
+        ->and(collect($this->getJson('/api/admin/audit-log?role=system')->json('data.entries'))->pluck('action')->all())->toBe(['refund.reconcile'])
+        ->and(collect($this->getJson('/api/admin/audit-log?from=2026-11-02&to=2026-11-04')->json('data.entries'))->pluck('action')->all())->toBe(['refund.reconcile']);
+    $this->getJson('/api/admin/audit-log?from=2026-11-05&to=2026-11-01')->assertUnprocessable();
+});
