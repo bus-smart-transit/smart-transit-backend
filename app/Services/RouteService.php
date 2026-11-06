@@ -10,6 +10,7 @@ use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use App\Support\CompanyScope;
 use App\Support\Geo\GeoLine;
+use App\Support\StopSpacing;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -247,6 +248,12 @@ class RouteService
         ));
 
         $this->geometryGenerator->queueRegeneration($routeId);
+
+        // 2026-11-06 (Batch 47 part A): a stop well off the way between its neighbours gets a warning (not a refusal).
+        $newStop = $this->stopRepository->findById((int) $payload['stop_id']);
+        $routeStop->setAttribute('warnings', $newStop && $newStop->latitude !== null && $newStop->longitude !== null
+            ? StopSpacing::detourWarnings($orderedStops, (float) $newStop->latitude, (float) $newStop->longitude, (int) $payload['stop_order'], (string) $this->routeRepository->findById($routeId)?->route_name)
+            : []);
 
         return $routeStop;
     }

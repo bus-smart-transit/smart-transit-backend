@@ -110,3 +110,27 @@ it('refuses to move a stop while a trip on its route is running, and moves it ot
         ->and((float) $move['from']['latitude'])->toBe(7.07)
         ->and((float) $move['to']['latitude'])->toBe(7.08);
 });
+
+it('warns when a stop is well off the way between its neighbours on a route, when added or moved', function () {
+    $admin = spAdmin();
+    $companyId = $admin->companyProfile->company_id;
+    $route = Route::create(['route_name' => 'Sp Line', 'origin' => 'A', 'destination' => 'B', 'company_id' => $companyId]);
+    $first = Stop::create(['stop_name' => 'First', 'latitude' => 7.00, 'longitude' => 125.60, 'company_id' => $companyId]);
+    $last = Stop::create(['stop_name' => 'Last', 'latitude' => 7.10, 'longitude' => 125.60, 'company_id' => $companyId]);
+    $between = Stop::create(['stop_name' => 'Between', 'latitude' => 7.05, 'longitude' => 125.601, 'company_id' => $companyId]);
+    $offWay = Stop::create(['stop_name' => 'Off the way', 'latitude' => 7.05, 'longitude' => 125.75, 'company_id' => $companyId]);
+    RouteStop::create(['route_id' => $route->route_id, 'stop_id' => $first->stop_id, 'stop_order' => 1, 'distance_from_origin_km' => 0, 'stop_type' => 'terminal']);
+    RouteStop::create(['route_id' => $route->route_id, 'stop_id' => $last->stop_id, 'stop_order' => 3, 'distance_from_origin_km' => 11, 'stop_type' => 'terminal']);
+
+    $this->actingAs($admin, 'sanctum');
+    $onTheWay = $this->postJson("/api/operator/routes/{$route->route_id}/stops", ['stop_id' => $between->stop_id, 'stop_order' => 2])->assertSuccessful()->json('data');
+    expect($onTheWay['warnings'])->toBe([]);
+
+    $this->putJson("/api/operator/stops/{$between->stop_id}", ['latitude' => 7.05, 'longitude' => 125.70])
+        ->assertSuccessful()
+        ->assertJsonPath('data.warnings.0', fn (string $text) => str_starts_with($text, 'On Sp Line, this stop adds about') && str_contains($text, 'between "First" and "Last"'));
+
+    // A last stop has one neighbour and is not checked; the off-the-way stop added at the end gets no warning.
+    $atEnd = $this->postJson("/api/operator/routes/{$route->route_id}/stops", ['stop_id' => $offWay->stop_id, 'stop_order' => 4])->assertSuccessful()->json('data');
+    expect($atEnd['warnings'])->toBe([]);
+});

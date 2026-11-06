@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use App\Repositories\TripRepository;
+use App\Support\StopSpacing;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -23,6 +25,7 @@ class StopService
         private RouteGeometryGenerator $geometryGenerator,
         private RegionService $regionService,
         private TripRepository $trips,
+        private RouteRepository $routeRepository,
     ) {}
 
     /** @param array{stop_name: string, latitude: float, longitude: float, stop_code?: ?string, municipality?: ?string, location_label?: ?string, company_id?: ?int} $payload */
@@ -115,7 +118,10 @@ class StopService
 
         $stop = $this->stopRepository->findById($stopId);
         if ($stop && $moved) {
-            $stop->setAttribute('warnings', $this->nearbyWarnings($stopId, (float) $stop->latitude, (float) $stop->longitude, $stop->company_id));
+            $stop->setAttribute('warnings', array_merge(
+                $this->nearbyWarnings($stopId, (float) $stop->latitude, (float) $stop->longitude, $stop->company_id),
+                $this->detourWarnings($stopId, (float) $stop->latitude, (float) $stop->longitude),
+            ));
         }
 
         return $stop;
@@ -142,6 +148,23 @@ class StopService
         $clean = trim((string) preg_replace('/\s+/', ' ', (string) $label));
 
         return $clean === '' ? null : $clean;
+    }
+
+    /** For each route the stop is on: a warning when its new place is well off the way between its neighbours. */
+    private function detourWarnings(int $stopId, float $lat, float $lng): array
+    {
+        $warnings = [];
+        foreach ($this->routeStopRepository->routeIdsForStop($stopId) as $routeId) {
+            $ordered = $this->routeStopRepository->getOrderedStops((int) $routeId);
+            $own = $ordered->first(fn ($rs) => (int) $rs->stop_id === $stopId);
+            if (! $own) {
+                continue;
+            }
+            $routeName = (string) $this->routeRepository->findById((int) $routeId)?->route_name;
+            array_push($warnings, ...StopSpacing::detourWarnings($ordered, $lat, $lng, (int) $own->stop_order, $routeName, $stopId));
+        }
+
+        return $warnings;
     }
 
     /** A plain warning for each stop of the same company closer than config('stops.duplicate_warning_m'). */
