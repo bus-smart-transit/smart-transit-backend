@@ -424,10 +424,9 @@ it('offers no drop-off options on a route that is off, and none on an express tr
     expect($express['available'])->toBeFalse()->and($express['reason'])->toContain('express');
 });
 
-it('keeps an operator to their own routes and lets an admin manage any', function () {
+it('keeps an operator to their own routes', function () {
     [$route, $stops, , , $operator] = drFixture();
     [$other, $otherStops, , , $otherOperator] = drFixture('designated_points', 126.0, 6.0, null, 'Other');
-    $admin = drStaff('admin');
     $point = ['route_id' => $route->route_id, 'name' => 'Typed point', 'kind' => 'landmark', 'latitude' => 7.22, 'longitude' => 125.0002, 'municipality' => 'Mati City'];
 
     $created = $this->actingAs($operator)->postJson('/api/operator/dropoff/points', $point)->assertCreated()->json('data');
@@ -435,13 +434,13 @@ it('keeps an operator to their own routes and lets an admin manage any', functio
 
     $this->actingAs($otherOperator)->postJson('/api/operator/dropoff/points', $point)->assertForbidden();
     $this->actingAs($otherOperator)->putJson("/api/operator/dropoff/points/{$created['id']}", $point)->assertForbidden();
-    $this->actingAs($admin)->postJson('/api/admin/dropoff/points', ['name' => 'Admin point', 'latitude' => 7.31] + $point)->assertCreated();
+    $this->actingAs($operator)->postJson('/api/operator/dropoff/points', ['name' => 'Second point', 'latitude' => 7.31] + $point)->assertCreated();
 
     // Listing and filtering: an operator sees only their routes.
     $mine = $this->actingAs($operator)->getJson('/api/operator/dropoff/points')->json('data');
     expect(collect($mine)->pluck('route_id')->unique()->all())->toBe([$route->route_id]);
-    $this->actingAs($admin)->getJson("/api/admin/dropoff/points?route_id={$route->route_id}&is_active=1")->assertSuccessful();
-    $this->actingAs($admin)->getJson('/api/admin/dropoff/points?municipality=Mati%20City')->assertSuccessful()->assertJsonCount(2, 'data');
+    $this->actingAs($operator)->getJson("/api/operator/dropoff/points?route_id={$route->route_id}&is_active=1")->assertSuccessful();
+    $this->actingAs($operator)->getJson('/api/operator/dropoff/points?municipality=Mati%20City')->assertSuccessful()->assertJsonCount(2, 'data');
 
     // Deactivate (the only way a point is switched off; tickets keep their history).
     $this->actingAs($operator)->putJson("/api/operator/dropoff/points/{$created['id']}", array_merge($point, ['is_active' => false]))->assertSuccessful()->assertJsonPath('data.is_active', false);
@@ -462,7 +461,9 @@ it('validates a point on the server: on the route line, inside the region, a rea
     // A route with no generated path cannot take a point.
     $bare = Route::create(['route_name' => 'No path', 'origin' => 'A', 'destination' => 'B']);
     config(['region.bbox' => ['min_lat' => 5.3, 'max_lat' => 8.1, 'min_lng' => 124.9, 'max_lng' => 126.7]]);
-    $this->actingAs(drStaff('admin'))->postJson('/api/admin/dropoff/points', array_merge($base, ['route_id' => $bare->route_id]))->assertStatus(422)->assertJsonValidationErrors(['route_id']);
+    // Batch 48 Phase 7: the route's own Operator (the Super Admin's copy of this route was removed).
+    FleetRoute::create(['fleet_id' => Fleet::where('company_user_id', $operator->companyProfile->company_user_id)->value('fleet_id'), 'route_id' => $bare->route_id, 'start_time' => '06:00', 'end_time' => '22:00', 'status' => 'active']);
+    $this->actingAs($operator)->postJson('/api/operator/dropoff/points', array_merge($base, ['route_id' => $bare->route_id]))->assertStatus(422)->assertJsonValidationErrors(['route_id']);
 });
 
 it('creates a restricted area from two stop ids, and refuses stops that are not on the route or out of order', function () {

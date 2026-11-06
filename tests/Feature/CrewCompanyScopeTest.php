@@ -83,14 +83,14 @@ it('lists only the signed-in Operator\'s own Drivers and Chauffeurs', function (
         ->and($chauffeurs->all())->toBe(['My Chauffeur']);
 });
 
-it('still lets the Admin see every Driver and Chauffeur', function () {
+it('still lets the Super Admin see every Driver (Users page)', function () {
     $mine = ccsStaff('operator', 'Mine Operator');
     ccsStaff('driver', 'My Driver', $mine);
     ccsStaff('driver', 'Nobody\'s Driver');
 
     $this->actingAs(ccsStaff('admin', 'The Admin'), 'sanctum');
 
-    expect(collect($this->getJson('/api/admin/drivers')->assertSuccessful()->json('data'))->pluck('name')->sort()->values()->all())
+    expect(collect($this->getJson('/api/admin/users?role=driver')->assertSuccessful()->json('data.users'))->pluck('name')->sort()->values()->all())
         ->toBe(['My Driver', 'Nobody\'s Driver']);
 });
 

@@ -148,12 +148,12 @@ it('lets an operator register and edit the label fields, and rejects unsafe text
         'plate_number' => 'NEW-002', 'bus_company_name' => '<script>alert(1)</script>', 'seated_capacity' => 30, 'standing_capacity' => 10, 'fleet_type' => 'public',
     ])->assertUnprocessable()->assertJsonValidationErrors('bus_company_name');
 
-    $this->actingAs($admin)->putJson("/api/admin/fleets/{$fleetId}", ['body_no' => 'B-8', 'seated_capacity' => 20])->assertSuccessful();
+    $this->actingAs($operator)->patchJson("/api/operator/fleets/{$fleetId}", ['body_no' => 'B-8', 'seated_capacity' => 20])->assertSuccessful();
     $fleet = Fleet::find($fleetId);
     expect($fleet->body_no)->toBe('B-8');
     expect((int) $fleet->capacity)->toBe(30); // 20 seated + 10 standing
 
-    $this->actingAs($admin)->putJson("/api/admin/fleets/{$fleetId}", ['body_no' => ''])->assertSuccessful();
+    $this->actingAs($operator)->patchJson("/api/operator/fleets/{$fleetId}", ['body_no' => ''])->assertSuccessful();
     expect(Fleet::find($fleetId)->body_no)->toBeNull(); // empty clears it
     expect(BusLabel::for(Fleet::find($fleetId)))->toBeNull();
 });

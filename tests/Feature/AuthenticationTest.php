@@ -166,7 +166,7 @@ describe('Authentication & Authorization', function () {
         $driverToken = $driverLogin->json('data.token');
 
         $response = $this->withHeader('Authorization', "Bearer $driverToken")
-            ->getJson('/api/admin/drivers');
+            ->getJson('/api/admin/users');
 
         $response->assertStatus(403);
     });
@@ -181,7 +181,7 @@ describe('Authentication & Authorization', function () {
         $conductorToken = $conductorLogin->json('data.token');
 
         $response = $this->withHeader('Authorization', "Bearer $conductorToken")
-            ->getJson('/api/admin/fleets');
+            ->getJson('/api/admin/users');
 
         $response->assertStatus(403);
     });
@@ -199,7 +199,7 @@ describe('Authentication & Authorization', function () {
         // scoped equivalent (POST /operator/accounts) but must not reach
         // the admin-gated route directly.
         $response = $this->withHeader('Authorization', "Bearer $operatorToken")
-            ->getJson('/api/admin/drivers');
+            ->getJson('/api/admin/users');
 
         $response->assertStatus(403);
     });

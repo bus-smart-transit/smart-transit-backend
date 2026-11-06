@@ -49,7 +49,7 @@ function safAdminRoutes(): array
 
 it('refuses every Super Admin route to Company Admins, Operators, Drivers, Chauffeurs and Passengers, and to no sign-in', function () {
     $routes = safAdminRoutes();
-    expect(count($routes))->toBeGreaterThan(40);
+    expect(count($routes))->toBeGreaterThan(20);
 
     $others = [safUser('operator', true), safUser('operator'), safUser('driver'), safUser('conductor'), safUser('passenger')];
     foreach ($others as $user) {
@@ -70,15 +70,17 @@ it('refuses every Super Admin route to Company Admins, Operators, Drivers, Chauf
 it('records each successful Super Admin change in the audit log without the request body, and not reads or refusals', function () {
     $this->actingAs(safUser('admin'), 'sanctum');
 
+    // A change whose controller writes no entry of its own: the 2FA preference. (Batch 48 Phase 7 removed the old
+    // admin/routes and admin/accounts used here before.)
     $this->getJson('/api/admin/profile')->assertOk();
-    $this->postJson('/api/admin/routes', ['route_name' => 'Saf Route', 'origin' => 'A', 'destination' => 'B'])->assertSuccessful();
-    $this->postJson('/api/admin/accounts', ['email' => 'not-an-email'])->assertUnprocessable();
+    $this->patchJson('/api/admin/2fa-preference', ['enabled' => true])->assertSuccessful();
+    $this->postJson('/api/admin/companies', ['company_name' => ''])->assertUnprocessable();
 
     $entries = DB::table('audit_logs')->where('action', 'like', 'admin.%')->get();
     expect($entries)->toHaveCount(1)
-        ->and($entries[0]->action)->toBe('admin.post')
-        ->and(json_decode((string) $entries[0]->context, true))->toMatchArray(['route' => 'api/admin/routes'])
-        ->and((string) $entries[0]->context)->not->toContain('Saf Route');
+        ->and($entries[0]->action)->toBe('admin.patch')
+        ->and(json_decode((string) $entries[0]->context, true))->toMatchArray(['route' => 'api/admin/2fa-preference'])
+        ->and((string) $entries[0]->context)->not->toContain('enabled');
 });
 
 it('ends a Super Admin session idle for more than 15 minutes, and keeps one used recently', function () {

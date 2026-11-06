@@ -21,8 +21,8 @@ class ReportingService
      */
     private function ensureFleetExists(int $fleetId): void
     {
-        if (!$this->fleetRepository->findById($fleetId)) {
-            throw (new ModelNotFoundException())->setModel('Fleet', $fleetId);
+        if (! $this->fleetRepository->findById($fleetId)) {
+            throw (new ModelNotFoundException)->setModel('Fleet', $fleetId);
         }
     }
 
@@ -119,7 +119,7 @@ class ReportingService
 
     private function validateDateRange(string $startDate, string $endDate): void
     {
-        if (!$this->isValidDate($startDate) || !$this->isValidDate($endDate)) {
+        if (! $this->isValidDate($startDate) || ! $this->isValidDate($endDate)) {
             throw ValidationException::withMessages([
                 'dates' => ['Invalid date format. Use YYYY-MM-DD.'],
             ]);
@@ -141,15 +141,6 @@ class ReportingService
     private function isValidDate(string $date): bool
     {
         return preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) && strtotime($date) !== false;
-    }
-
-    /**
-     * List audit log entries. Moved here from a route closure in
-     * routes/api.php so the routing layer stays free of data access.
-     */
-    public function listAuditLogs(array $filters, int $limit = 100): Collection
-    {
-        return $this->reportingRepository->getAuditLogs($filters, min($limit, 500));
     }
 
     /**

@@ -27,7 +27,7 @@ class ReportingController extends Controller
     {
         $companyUser = $request->user()?->companyProfile;
 
-        if (!$companyUser) {
+        if (! $companyUser) {
             abort(404, 'Staff profile not found.');
         }
 
@@ -38,7 +38,7 @@ class ReportingController extends Controller
 
         $owned = $this->fleetService->isOwnedByOperator($fleetId, $companyUser->company_user_id);
 
-        if (!$owned) {
+        if (! $owned) {
             abort(403, 'You do not have access to reports for this fleet.');
         }
     }
@@ -112,24 +112,6 @@ class ReportingController extends Controller
         );
 
         return $this->success($report, 'Payment channel breakdown retrieved successfully');
-    }
-
-    /**
-     * Admin-only audit log viewer. Data access moved out of routes/api.php
-     * (was a raw DB::table() closure there) into the Controller -> Service
-     * -> Repository chain, matching the rest of the app's layering.
-     */
-    public function auditLogs(Request $request)
-    {
-        $logs = $this->reportingService->listAuditLogs([
-            'action' => $request->query('action'),
-            'actor_type' => $request->query('actor_type'),
-            'actor_id' => $request->query('actor_id'),
-            'subject_type' => $request->query('subject_type'),
-            'subject_id' => $request->query('subject_id'),
-        ], (int) $request->query('limit', 100));
-
-        return $this->success($logs, 'Audit logs retrieved');
     }
 
     /**

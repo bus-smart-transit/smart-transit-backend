@@ -70,13 +70,14 @@ it('lets many people on one network sign up, while one email is still limited', 
         ->and($same->last())->toBe(429);
 });
 
-it('gives the Admin the same 10-a-minute limits on accounts, stops and routes', function (string $method, string $uri, string $throttle) {
-    expect(rlaMiddleware($method, $uri))->toContain($throttle);
+// Batch 48 Phase 7: the Super Admin's account and company changes each have their own limit (the old admin copies of
+// the accounts, stops and routes actions were removed).
+it('gives the Super Admin\'s account and company changes their own limits', function (string $method, string $uri, string $throttle) {
+    expect(rlaMiddleware($method, $uri))->toContain($throttle)->toContain('throttle:120,1,admin');
 })->with([
-    ['POST', 'api/admin/accounts', 'throttle:10,1,mgmt-accounts-post'],
-    ['POST', 'api/admin/stops', 'throttle:10,1,mgmt-stops-post'],
-    ['PUT', 'api/admin/stops/{stop}', 'throttle:10,1,mgmt-stops-put'],
-    ['POST', 'api/admin/routes', 'throttle:10,1,mgmt-routes-post'],
+    ['POST', 'api/admin/companies', 'throttle:20,1,admin-companies-post'],
+    ['POST', 'api/admin/companies/{companyId}/company-admins', 'throttle:10,1,admin-company-admins-post'],
+    ['PATCH', 'api/admin/users/{userId}/deactivate', 'throttle:20,1,admin-users-deactivate'],
 ]);
 
 it('limits Operator actions that send email or call map services to 10 a minute', function (string $method, string $url) {

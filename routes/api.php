@@ -476,68 +476,12 @@ Route::prefix('admin')
         // Batch 48 Phase 5: payments to refund by hand across every company (read only; the Operator records refunds).
         Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'adminIndex'])->middleware('throttle:60,1,admin-refund-list');
 
-        // Admin creates operator accounts
-        Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
-        Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
-        Route::get('conductors', [StaffAuthController::class, 'listConductors']);
-
-        // Stops
-        Route::apiResource('stops', StopController::class)
-            ->middlewareFor('store', 'throttle:10,1,mgmt-stops-post')
-            ->middlewareFor('update', 'throttle:10,1,mgmt-stops-put');
-
-        // Routes + stops
-        Route::apiResource('routes', RouteController::class)
-            ->middlewareFor('store', 'throttle:10,1,mgmt-routes-post');
-        Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
-        Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
-        Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
-        Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress']);
-        Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1,mgmt-routes-geometry-regenerate-post');
-        Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
-
-        // Fleets
-        Route::apiResource('fleets', FleetController::class);
-        Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
-
-        // Fare rules + recalculation (step-up required — irreversible pricing change)
-        Route::get('fare-rules', [FareRuleController::class, 'listRules']);
-        Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');
-        Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,admin-fare-rules-patch']);
-        Route::post('fare-rules/{fareRuleId}/copy', [FareRuleController::class, 'copyRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,admin-fare-rules-copy']);
-        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
-
-        // Trips — full control
-        Route::post('trips', [TripController::class, 'store']);
-        Route::patch('trips/{tripId}/fleet', [TripController::class, 'changeFleet']);
-        Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
-        Route::patch('trips/{tripId}/conductor', [TripController::class, 'assignConductor']);
-        Route::patch('trips/{tripId}/dispatch-decision', [TripController::class, 'saveDispatchDecision']);
-        Route::patch('trips/{tripId}/boarding', [TripController::class, 'startBoarding']);
-        Route::patch('trips/{tripId}/depart', [TripController::class, 'depart']);
-        Route::patch('trips/{tripId}/complete', [TripController::class, 'complete']);
+        // Batch 48 Phase 7 (user approved): the Super Admin oversees and does not run a company. The old copies of the
+        // Operator's stop, route, bus, fare, trip, refund, drop-off and duration-factor actions, the old account and
+        // crew lists and the old audit list were removed; each company does these in the Operator portal. Kept: the
+        // emergency trip status override (only the Super Admin may force any status) and the read-only reports.
         Route::patch('trips/{tripId}/status', [TripController::class, 'overrideStatus']);
-        Route::patch('trips/{tripId}/cancel', [TripController::class, 'cancel'])->middleware('throttle:20,1,mgmt-trips-cancel-patch');
-        // Batch 28 Stage 3, item 6: staff-assisted rebook/refund (acts for the passenger, recorded with the actor).
-        Route::get('ticket-resolutions', [TicketResolutionController::class, 'queue']);
-        Route::get('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffShow'])->middleware('throttle:60,1,mgmt-tickets-resolution');
-        Route::post('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffChoose'])->middleware('throttle:30,1,mgmt-tickets-resolution-post');
-        Route::post('ticket-resolutions/{resolutionId}/cash', [TicketResolutionController::class, 'recordCash'])->middleware('throttle:30,1,mgmt-ticket-resolutions-cash-post');
-        Route::post('ticket-resolutions/{resolutionId}/review', [TicketResolutionController::class, 'review'])->middleware('throttle:30,1,mgmt-ticket-resolutions-review-post');
-        // Batch 28 Stage 3, item 7: peak-hour duration windows ("configured", never measured) and the read-only report.
-        Route::get('duration-factors', [RouteDurationFactorController::class, 'index']);
-        Route::post('duration-factors', [RouteDurationFactorController::class, 'store'])->middleware('throttle:30,1,mgmt-duration-factors-post');
-        Route::put('duration-factors/{id}', [RouteDurationFactorController::class, 'update'])->middleware('throttle:30,1,mgmt-duration-factors-put');
-        Route::delete('duration-factors/{id}', [RouteDurationFactorController::class, 'destroy'])->middleware('throttle:30,1,mgmt-duration-factors-delete');
-        Route::get('duration-report', [RouteDurationFactorController::class, 'report'])->middleware('throttle:20,1,mgmt-duration-report');
-        // Batch 28 Stage 3, item 10: designated alighting points and restricted areas for custom drop-off.
-        Route::get('dropoff/points', [DropoffRulesController::class, 'points']);
-        Route::post('dropoff/points', [DropoffRulesController::class, 'storePoint'])->middleware('throttle:30,1,mgmt-dropoff-points-post');
-        Route::put('dropoff/points/{id}', [DropoffRulesController::class, 'updatePoint'])->middleware('throttle:30,1,mgmt-dropoff-points-put');
-        Route::get('dropoff/restrictions', [DropoffRulesController::class, 'restrictions']);
-        Route::post('dropoff/restrictions', [DropoffRulesController::class, 'storeRestriction'])->middleware('throttle:30,1,mgmt-dropoff-restrictions-post');
-        Route::put('dropoff/restrictions/{id}', [DropoffRulesController::class, 'updateRestriction'])->middleware('throttle:30,1,mgmt-dropoff-restrictions-put');
-        Route::post('dropoff/restrictions/{id}/review', [DropoffRulesController::class, 'reviewRestriction'])->middleware('throttle:30,1,mgmt-dropoff-restrictions-review-post');
+
         // Fleet reports — financial audit, route adherence, occupancy trends
         Route::get('fleets/{fleetId}/reports/financial', [ReportingController::class, 'financialAudit']);
         Route::get('fleets/{fleetId}/reports/revenue-by-route', [ReportingController::class, 'revenueByRoute']);
@@ -551,9 +495,6 @@ Route::prefix('admin')
         Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1,fin-summary');
         Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1,fin-log');
         Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1,fin-export');
-
-        // Audit log viewer — admin only
-        Route::get('audit-logs', [ReportingController::class, 'auditLogs']);
 
         // Stored scheduled reports (nightly generated)
         Route::get('reports/stored', [ReportingController::class, 'storedReports']);

@@ -2,12 +2,11 @@
 
 namespace App\Repositories;
 
-use App\Models\Trip;
-use App\Models\Ticket;
 use App\Models\Payment;
 use App\Models\RewardTransaction;
+use App\Models\Ticket;
+use App\Models\Trip;
 use App\Services\RewardService;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -15,7 +14,7 @@ class ReportingRepository
 {
     private function isRevenueStatus(?string $status): bool
     {
-        if (!$status) {
+        if (! $status) {
             return false;
         }
 
@@ -33,17 +32,17 @@ class ReportingRepository
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->pluck('trip_id');
 
-        $payments = \App\Models\Payment::whereIn('payment_id', function ($sub) use ($fleetTripIds) {
+        $payments = Payment::whereIn('payment_id', function ($sub) use ($fleetTripIds) {
             $sub->select('payment_id')
                 ->from('tickets')
                 ->whereIn('trip_id', $fleetTripIds);
         })->whereIn('status', ['paid', 'completed', 'success', 'succeeded'])->get();
 
-        $totalRevenue  = $payments->sum('amount');
+        $totalRevenue = $payments->sum('amount');
         $onlineRevenue = $payments->where('payment_method', 'online')->sum('amount');
         $onsiteRevenue = $payments->where('payment_method', 'cash')->sum('amount');
 
-        $totalTickets = \App\Models\Ticket::whereIn('trip_id', $fleetTripIds)
+        $totalTickets = Ticket::whereIn('trip_id', $fleetTripIds)
             ->whereIn('payment_id', $payments->pluck('payment_id'))
             ->distinct('ticket_id')
             ->count('ticket_id');
@@ -54,22 +53,22 @@ class ReportingRepository
 
         return [
             'fleet_id' => $fleetId,
-            'period'   => [
+            'period' => [
                 'start_date' => $startDate,
-                'end_date'   => $endDate,
+                'end_date' => $endDate,
             ],
             'revenue' => [
-                'total'       => round((float) $totalRevenue, 2),
-                'online'      => round((float) $onlineRevenue, 2),
+                'total' => round((float) $totalRevenue, 2),
+                'online' => round((float) $onlineRevenue, 2),
                 'onsite_cash' => round((float) $onsiteRevenue, 2),
-                'currency'    => 'PHP',
+                'currency' => 'PHP',
             ],
             'tickets' => [
-                'total'              => $totalTickets,
-                'average_per_trip'   => $completedTrips > 0 ? round($totalTickets / $completedTrips, 2) : 0,
+                'total' => $totalTickets,
+                'average_per_trip' => $completedTrips > 0 ? round($totalTickets / $completedTrips, 2) : 0,
             ],
             'trips' => [
-                'completed'                => $completedTrips,
+                'completed' => $completedTrips,
                 'average_revenue_per_trip' => $completedTrips > 0 ? round($totalRevenue / $completedTrips, 2) : 0,
             ],
         ];
@@ -81,7 +80,7 @@ class ReportingRepository
     public function getRevenueByRoute(int $fleetId, string $startDate, string $endDate): Collection
     {
         $trips = Trip::with('fleetRoute.route', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->get();
 
@@ -91,7 +90,7 @@ class ReportingRepository
             $routeId = $trip->fleetRoute->route_id;
             $routeName = $trip->fleetRoute->route->route_name ?? "Route {$routeId}";
 
-            if (!isset($routeData[$routeId])) {
+            if (! isset($routeData[$routeId])) {
                 $routeData[$routeId] = [
                     'route_id' => $routeId,
                     'route_name' => $routeName,
@@ -107,12 +106,12 @@ class ReportingRepository
 
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -145,7 +144,7 @@ class ReportingRepository
     public function getRouteAdherence(int $fleetId, string $startDate, string $endDate): array
     {
         $trips = Trip::with('fleetRoute.route.routeStops.stop')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['departed', 'completed'])
             ->get();
@@ -153,10 +152,10 @@ class ReportingRepository
         $gpsByTrip = $this->getGpsPointsForTrips($trips->pluck('trip_id')->all(), DB::getDriverName())
             ->groupBy('trip_id');
 
-        $totalTrips       = count($trips);
-        $tripAdherences   = [];
-        $stopCoverageSum  = 0;
-        $deviatedTrips    = 0;
+        $totalTrips = count($trips);
+        $tripAdherences = [];
+        $stopCoverageSum = 0;
+        $deviatedTrips = 0;
         $PROXIMITY_METERS = 300; // metres — bus considered "at" a stop if within 300 m
 
         foreach ($trips as $trip) {
@@ -173,13 +172,14 @@ class ReportingRepository
             if ($gpsPoints->isEmpty()) {
                 // No GPS data — fall back to completion-based proxy
                 $tripAdherences[] = [
-                    'trip_id'           => $trip->trip_id,
-                    'trip_date'         => $trip->trip_date,
-                    'status'            => $trip->status,
+                    'trip_id' => $trip->trip_id,
+                    'trip_date' => $trip->trip_date,
+                    'status' => $trip->status,
                     'stop_coverage_pct' => $trip->status === 'completed' ? 100.0 : null,
-                    'gps_points'        => 0,
-                    'data_source'       => 'proxy',
+                    'gps_points' => 0,
+                    'data_source' => 'proxy',
                 ];
+
                 continue;
             }
 
@@ -206,29 +206,29 @@ class ReportingRepository
             }
 
             $tripAdherences[] = [
-                'trip_id'           => $trip->trip_id,
-                'trip_date'         => $trip->trip_date,
-                'status'            => $trip->status,
-                'stops_scheduled'   => $stopCount,
-                'stops_visited'     => $stopsVisited,
+                'trip_id' => $trip->trip_id,
+                'trip_date' => $trip->trip_date,
+                'status' => $trip->status,
+                'stops_scheduled' => $stopCount,
+                'stops_visited' => $stopsVisited,
                 'stop_coverage_pct' => $coveragePct,
-                'gps_points'        => $gpsPoints->count(),
-                'data_source'       => 'gps',
+                'gps_points' => $gpsPoints->count(),
+                'data_source' => 'gps',
             ];
         }
 
-        $tripsWithData  = count($tripAdherences);
-        $avgCoverage    = $tripsWithData > 0 ? round($stopCoverageSum / $tripsWithData, 1) : null;
+        $tripsWithData = count($tripAdherences);
+        $avgCoverage = $tripsWithData > 0 ? round($stopCoverageSum / $tripsWithData, 1) : null;
 
         return [
             'fleet_id' => $fleetId,
-            'period'   => ['start_date' => $startDate, 'end_date' => $endDate],
-            'summary'  => [
-                'total_trips'             => $totalTrips,
-                'trips_with_gps_data'     => collect($tripAdherences)->where('data_source', 'gps')->count(),
-                'avg_stop_coverage_pct'   => $avgCoverage,
-                'deviated_trips'          => $deviatedTrips,
-                'adherence_rate_pct'      => $tripsWithData > 0
+            'period' => ['start_date' => $startDate, 'end_date' => $endDate],
+            'summary' => [
+                'total_trips' => $totalTrips,
+                'trips_with_gps_data' => collect($tripAdherences)->where('data_source', 'gps')->count(),
+                'avg_stop_coverage_pct' => $avgCoverage,
+                'deviated_trips' => $deviatedTrips,
+                'adherence_rate_pct' => $tripsWithData > 0
                     ? round((($tripsWithData - $deviatedTrips) / $tripsWithData) * 100, 1)
                     : null,
             ],
@@ -273,11 +273,12 @@ class ReportingRepository
      */
     private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
     {
-        $R    = 6371000; // Earth radius in metres
+        $R = 6371000; // Earth radius in metres
         $dLat = deg2rad($lat2 - $lat1);
         $dLng = deg2rad($lng2 - $lng1);
-        $a    = sin($dLat / 2) ** 2
+        $a = sin($dLat / 2) ** 2
               + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
         return $R * 2 * asin(sqrt($a));
     }
 
@@ -287,7 +288,7 @@ class ReportingRepository
     public function getOccupancyTrends(int $fleetId, string $startDate, string $endDate): array
     {
         $trips = Trip::with('fleetRoute.fleet')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['boarding', 'departed', 'completed'])
             ->get();
@@ -313,7 +314,7 @@ class ReportingRepository
             }
         }
 
-        $tripsWithPassengers = count(array_filter($trips->pluck('total_occupancy')->toArray(), fn($x) => $x > 0));
+        $tripsWithPassengers = count(array_filter($trips->pluck('total_occupancy')->toArray(), fn ($x) => $x > 0));
         $averageOccupancy = $tripsWithPassengers > 0 ? $totalOccupancy / $tripsWithPassengers : 0;
 
         // Calculate average per hour
@@ -349,7 +350,7 @@ class ReportingRepository
     public function getDailySummary(int $fleetId, string $date): array
     {
         $trips = Trip::with('fleetRoute.route', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->where('trip_date', $date)
             ->get();
 
@@ -369,12 +370,12 @@ class ReportingRepository
 
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -407,7 +408,7 @@ class ReportingRepository
     public function getPaymentChannelBreakdown(int $fleetId, string $startDate, string $endDate): array
     {
         $trips = Trip::with('tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->get();
 
@@ -417,12 +418,12 @@ class ReportingRepository
         foreach ($trips as $trip) {
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -431,7 +432,7 @@ class ReportingRepository
 
             foreach ($paymentMap as $payment) {
                 $channel = $payment->payment_channel ?? 'unknown';
-                if (!isset($channelData[$channel])) {
+                if (! isset($channelData[$channel])) {
                     $channelData[$channel] = [
                         'channel' => $channel,
                         'total_amount' => 0,
@@ -487,36 +488,6 @@ class ReportingRepository
     }
 
     /**
-     * Query the audit_logs table (no Eloquent model — raw log table) with
-     * optional filters. Moved here from a route closure in routes/api.php
-     * to keep data access out of the routing layer.
-     */
-    public function getAuditLogs(array $filters, int $limit): Collection
-    {
-        $query = DB::table('audit_logs')
-            ->orderByDesc('created_at')
-            ->limit($limit);
-
-        if (!empty($filters['action'])) {
-            $query->where('action', $filters['action']);
-        }
-        if (!empty($filters['actor_type'])) {
-            $query->where('actor_type', $filters['actor_type']);
-        }
-        if (!empty($filters['actor_id'])) {
-            $query->where('actor_id', (int) $filters['actor_id']);
-        }
-        if (!empty($filters['subject_type'])) {
-            $query->where('subject_type', $filters['subject_type']);
-        }
-        if (!empty($filters['subject_id'])) {
-            $query->where('subject_id', (int) $filters['subject_id']);
-        }
-
-        return $query->get();
-    }
-
-    /**
      * Query the scheduled_reports table (no Eloquent model — raw table) with
      * optional filters. Moved here from a route closure in routes/api.php
      * to keep data access out of the routing layer.
@@ -528,16 +499,16 @@ class ReportingRepository
             ->orderByDesc('generated_at')
             ->limit($limit);
 
-        if (!empty($filters['fleet_id'])) {
+        if (! empty($filters['fleet_id'])) {
             $query->where('fleet_id', (int) $filters['fleet_id']);
         }
-        if (!empty($filters['report_type'])) {
+        if (! empty($filters['report_type'])) {
             $query->where('report_type', $filters['report_type']);
         }
-        if (!empty($filters['date'])) {
+        if (! empty($filters['date'])) {
             $query->where('report_date', $filters['date']);
         }
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 

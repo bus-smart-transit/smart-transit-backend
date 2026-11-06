@@ -85,11 +85,15 @@ it('judges a past date on the Manila calendar, not UTC', function () {
         ->assertStatus(422)->assertJsonValidationErrors(['date']);
 });
 
-it('lets an admin edit a stop code, rejecting duplicates and unsafe formats', function () {
+it('lets a company admin edit a stop code, rejecting duplicates and unsafe formats', function () {
     [$a, $b] = linkStops();
-    $admin = User::create(['username' => 'adm', 'email' => 'adm@example.com', 'password' => bcrypt('x'), 'role' => 'admin']);
+    // Batch 48 Phase 7: stops are changed by their company's admin (the Super Admin's copy of this route was removed).
+    $admin = User::create(['username' => 'adm', 'email' => 'adm@example.com', 'password' => bcrypt('x'), 'role' => 'operator']);
+    joinTestCompany(StaffUser::create(['user_id' => $admin->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Adm', 'phone_num' => '+639171234567', 'address' => 'x']));
+    $admin = $admin->fresh();
+    testCompanyClaimsRoutesAndStops($admin);
 
-    $put = fn (Stop $stop, array $body) => $this->actingAs($admin)->putJson("/api/admin/stops/{$stop->stop_id}", $body);
+    $put = fn (Stop $stop, array $body) => $this->actingAs($admin)->putJson("/api/operator/stops/{$stop->stop_id}", $body);
 
     $put($a, ['stop_code' => 'alpha'])->assertSuccessful();
     expect($a->fresh()->stop_code)->toBe('alpha');

@@ -249,14 +249,13 @@ it('reports the median actual leg duration per route, direction and hour, with s
     expect(RouteDurationFactor::count())->toBe(0);
 });
 
-it('keeps an operator to the routes their buses run, lets an admin manage any, and labels every factor configured', function () {
+it('keeps an operator to the routes their buses run, and labels every factor configured', function () {
     $f = dfFixture();
     $rival = dfStaff('operator');
-    $admin = dfStaff('admin');
     $payload = ['route_id' => $f['route']->route_id, 'start_time' => '07:00', 'end_time' => '09:00', 'factor' => 1.3, 'source' => 'measured'];
 
     $this->actingAs($rival)->postJson('/api/operator/duration-factors', $payload)->assertStatus(403);
-    $created = $this->actingAs($admin)->postJson('/api/admin/duration-factors', $payload)->assertCreated()->json('data');
+    $created = $this->actingAs($f['operator'])->postJson('/api/operator/duration-factors', $payload)->assertCreated()->json('data');
     expect($created['label'])->toBe('configured (copied from the duration report)')->and($created['label'])->not->toContain('heavy')->and(json_encode($created))->not->toMatch('/heavy|moderate|normal/i');
 
     $this->actingAs($rival)->getJson('/api/operator/duration-factors')->assertSuccessful()->assertJsonCount(0, 'data');

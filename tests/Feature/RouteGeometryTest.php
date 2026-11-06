@@ -404,23 +404,26 @@ it('does not offer a redraw to staff roles that cannot manage routes', function 
     Queue::assertNothingPushed();
 });
 
-it('allows Admin redraws and blocks another redraw during the configured per-route cooldown', function () {
+it('allows company admin redraws and blocks another redraw during the configured per-route cooldown', function () {
     config(['cache.default' => 'array', 'route_geometry.redraw_cooldown_minutes' => 15]);
     Cache::flush();
     Queue::fake();
-    $admin = makeRouteRedrawStaff('admin');
+    // Batch 48 Phase 7: redraws are the company's (the Super Admin's copy of these routes was removed).
+    $admin = makeRouteRedrawStaff('operator');
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
+    assignRouteRedrawFleet($route, $admin);
+    testCompanyClaimsRoutesAndStops();
 
     $this->actingAs($admin)
-        ->postJson("/api/admin/routes/{$route->route_id}/geometry/regenerate")
+        ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
         ->assertSuccessful();
-    $this->actingAs($admin)->getJson("/api/admin/routes/{$route->route_id}")
+    $this->actingAs($admin)->getJson("/api/operator/routes/{$route->route_id}")
         ->assertSuccessful()
         ->assertJsonPath('data.can_regenerate_geometry', true);
 
     Cache::forget(RouteGeometryGenerator::pendingCacheKey($route->route_id));
     $this->actingAs($admin)
-        ->postJson("/api/admin/routes/{$route->route_id}/geometry/regenerate")
+        ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
         ->assertStatus(429);
     Queue::assertPushed(GenerateRouteGeometry::class, 1);
 });

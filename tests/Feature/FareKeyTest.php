@@ -3,13 +3,14 @@
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
+use App\Models\Payment;
 use App\Models\Route;
 use App\Models\RouteStop;
 use App\Models\StaffUser;
 use App\Models\Stop;
-use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
+use App\Repositories\RouteGeometryRepository;
 use App\Services\FareCalculationService;
 use App\Services\FareRuleResolver;
 use App\Services\FareRuleService;
@@ -205,7 +206,7 @@ it('applies the rule\'s own rounding mode to the ticket and snapshots it', funct
     $reserved = fkPrice($trip, $stops, 'A', 'B'); // 10 km: 10 + 4.97 = 14.97
     expect($reserved['amount'])->toBe(15.0)->and($reserved['rounding_mode'])->toBe('ceiling')->and($reserved['fare_rule_id'])->toBe($rule->fare_rule_id);
 
-    $payment = \App\Models\Payment::create(['amount' => 15, 'payment_created' => now(), 'transaction_reference' => 'TXN-FK-'.Str::upper(Str::random(8)), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => []]);
+    $payment = Payment::create(['amount' => 15, 'payment_created' => now(), 'transaction_reference' => 'TXN-FK-'.Str::upper(Str::random(8)), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => []]);
     $ticket = app(TicketService::class)->finalizeTicket($reserved, null, $payment->payment_id);
     expect($ticket->fresh()->rounding_mode)->toBe('ceiling');
     expect([$ticket->fresh()->boarding_distance_m, $ticket->fresh()->alighting_distance_m])->toBe([0, 10000]);
@@ -214,7 +215,7 @@ it('applies the rule\'s own rounding mode to the ticket and snapshots it', funct
 it('prices the even (reverse) leg and a custom drop-off from the class rule', function () {
     [$route, $stops, $operator] = fkRoute();
     $route->update(['allow_custom_dropoff' => true]);
-    app(\App\Repositories\RouteGeometryRepository::class)->save($route->route_id, ['type' => 'LineString', 'coordinates' => [[125.0, 7.0], [125.0, 7.1], [125.0, 7.2], [125.0, 7.3], [125.0, 7.4]]]);
+    app(RouteGeometryRepository::class)->save($route->route_id, ['type' => 'LineString', 'coordinates' => [[125.0, 7.0], [125.0, 7.1], [125.0, 7.2], [125.0, 7.3], [125.0, 7.4]]]);
     fkRule('aircon', 'regular', 13.00, 2.25);
     $fleet = fkFleet($operator, $route, 'aircon');
 
@@ -279,8 +280,9 @@ it('stores the vehicle class canonically, rejects an unknown one and refuses ove
     // A general rule needs a class.
     expect(fn () => $service->createFareRule(['seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1]))->toThrow(ValidationException::class);
 
-    $admin = fkStaff('admin');
-    $fleetResponse = test()->actingAs($admin)->putJson('/api/admin/fleets/'.fkFleet($operator, $route, null)->fleet_id, ['vehicle_class' => 'nonsense']);
+    // Batch 48 Phase 7: buses are edited by their Company Admin (the Super Admin's copy of this route was removed).
+    $operator->companyProfile->forceFill(['is_company_admin' => true])->save();
+    $fleetResponse = test()->actingAs($operator->fresh())->patchJson('/api/operator/fleets/'.fkFleet($operator, $route, null)->fleet_id, ['vehicle_class' => 'nonsense']);
     $fleetResponse->assertStatus(422)->assertJsonValidationErrors(['vehicle_class']);
 });
 
@@ -294,9 +296,7 @@ it('lists fare rules with filters, and an operator sees general rules plus only 
     FareRule::create(['fleet_id' => $mine->fleet_id, 'base_fare' => 1, 'fare_per_km' => 1, 'status' => 'active', 'seat_type' => 'seated']);
     FareRule::create(['fleet_id' => $theirs->fleet_id, 'base_fare' => 2, 'fare_per_km' => 2, 'status' => 'active', 'seat_type' => 'seated']);
 
-    $admin = fkStaff('admin');
-    expect(test()->actingAs($admin)->getJson('/api/admin/fare-rules')->assertSuccessful()->json('data'))->toHaveCount(4);
-    expect(test()->actingAs($admin)->getJson('/api/admin/fare-rules?service_type=express&vehicle_class=ordinary')->json('data'))->toHaveCount(1);
+    expect(test()->actingAs($operator)->getJson('/api/operator/fare-rules?service_type=express&vehicle_class=ordinary')->json('data'))->toHaveCount(1);
 
     $seen = test()->actingAs($operator)->getJson('/api/operator/fare-rules')->assertSuccessful()->json('data');
     expect($seen)->toHaveCount(3); // 2 general + their own override; the other operator's override stays hidden

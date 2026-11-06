@@ -97,8 +97,9 @@ it('gives an Operator only the scheduling fields of Drivers and Chauffeurs, and 
     }
 
     $this->actingAs(t3fStaff('admin', 'The Admin'), 'sanctum');
-    $adminRow = $this->getJson('/api/admin/drivers')->assertSuccessful()->json('data.0');
-    expect($adminRow['address'])->toBe('Secret Street 1')->and($adminRow['user']['email'])->toContain('@example.com');
+    // Batch 48 Phase 7: the Super Admin sees a Driver's email on the Users page (its old driver list was removed).
+    $adminRow = $this->getJson('/api/admin/users?role=driver')->assertSuccessful()->json('data.users.0');
+    expect($adminRow['email'])->toContain('@example.com');
 });
 
 it('still leaves out a Driver already busy on the asked date', function () {

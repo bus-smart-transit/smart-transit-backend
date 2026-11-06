@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
-// Regression tests for GET /api/admin/audit-logs and GET /api/admin/reports/stored.
+// Regression tests for GET /api/admin/audit-log (Batch 48 Phase 4 replaced audit-logs) and GET /api/admin/reports/stored.
 // These previously lived as raw DB::table() closures directly in routes/api.php
 // (a Controller -> Service -> Repository layering violation) and were moved to
 // ReportingController -> ReportingService -> ReportingRepository.
@@ -60,10 +60,10 @@ test('admin can list audit logs, newest first, with an action filter', function 
         ],
     ]);
 
-    $response = $this->actingAs($admin)->getJson('/api/admin/audit-logs?action=trip.decline');
+    $response = $this->actingAs($admin)->getJson('/api/admin/audit-log?action=trip.decline');
 
     $response->assertSuccessful()->assertJsonPath('status', 'success');
-    $data = $response->json('data');
+    $data = $response->json('data.entries');
 
     expect($data)->toHaveCount(1);
     expect($data[0]['action'])->toBe('trip.decline');
@@ -83,7 +83,7 @@ test('a non-admin cannot access the audit log viewer', function () {
         'address' => fake()->address(),
     ])->user;
 
-    $this->actingAs($operator)->getJson('/api/admin/audit-logs')->assertStatus(403);
+    $this->actingAs($operator)->getJson('/api/admin/audit-log')->assertStatus(403);
 });
 
 test('admin can list stored reports filtered by fleet and type', function () {
@@ -91,7 +91,7 @@ test('admin can list stored reports filtered by fleet and type', function () {
     $operator = makeAdminUser();
     $fleet = Fleet::create([
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'plate_number' => 'ZZZ-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'ZZZ-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
