@@ -19,6 +19,7 @@ use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
+use App\Http\Controllers\PlaceSearchController;
 use App\Http\Controllers\RegionController;
 use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\ReportingController;
@@ -203,6 +204,8 @@ Route::prefix('operator')
         Route::post('routes', [RouteController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-routes-post']);
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
         Route::get('stops', [StopController::class, 'index']);
+        // 2026-11-06 (Batch 47 part A): place search for Add stop (Photon while typing, Nominatim on Search); own limit.
+        Route::get('places', [PlaceSearchController::class, 'search'])->middleware('throttle:60,1,mgmt-places');
         Route::post('stops', [StopController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-stops-post']);
         Route::put('stops/{stopId}', [StopController::class, 'update'])->middleware(['company.admin', 'throttle:10,1,mgmt-stops-put']);
         Route::delete('stops/{stopId}', [StopController::class, 'destroy'])->middleware('company.admin');

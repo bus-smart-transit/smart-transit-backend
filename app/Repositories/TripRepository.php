@@ -250,6 +250,15 @@ class TripRepository
             ->update(['conductor_id' => $conductorCompanyUserId, 'conductor_accepted_at' => null]) > 0;
     }
 
+    /** 2026-11-06 (Batch 47 part A): is a trip on one of these routes boarding or on the road right now? */
+    public function anyRunningOnRoutes(array $routeIds): bool
+    {
+        return Trip::query()
+            ->whereHas('fleetRoute', fn ($q) => $q->whereIn('route_id', $routeIds))
+            ->whereIn('status', ['boarding', 'departed', 'in-progress', 'in_progress'])
+            ->exists();
+    }
+
     /**
      * 2026-11-06: the most seats and standing places sold on one trip of this bus that is not completed or cancelled
      * (a bus's places may not drop below that).

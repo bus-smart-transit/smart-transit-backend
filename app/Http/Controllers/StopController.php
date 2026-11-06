@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreStopRequest;
 use App\Http\Requests\UpdateStopRequest;
+use App\Services\AuditLogger;
 use App\Services\StopService;
 use App\Support\CompanyScope;
 use App\Traits\ApiResponse;
@@ -30,7 +31,10 @@ class StopController extends Controller
             $payload['company_id'] = $request->user()?->companyProfile?->company_id;
         }
 
-        return $this->success($this->stopService->createStop($payload), 'Stop created successfully');
+        $stop = $this->stopService->createStop($payload);
+        AuditLogger::log('stop.create', 'Stop', (int) $stop->stop_id, ['name' => $stop->stop_name, 'latitude' => $stop->latitude, 'longitude' => $stop->longitude]);
+
+        return $this->success($stop, 'Stop created successfully');
     }
 
     public function update(UpdateStopRequest $request, int $stopId)
@@ -38,8 +42,17 @@ class StopController extends Controller
         if ($denied = $this->ownStopOr404($request, $stopId)) {
             return $denied;
         }
+        $before = $this->stopService->findStop($stopId);
 
-        return $this->success($this->stopService->updateStop($stopId, $request->validated()), 'Stop updated successfully');
+        $stop = $this->stopService->updateStop($stopId, $request->validated());
+        $moved = $stop && ((float) $before->latitude !== (float) $stop->latitude || (float) $before->longitude !== (float) $stop->longitude);
+        AuditLogger::log($moved ? 'stop.move' : 'stop.update', 'Stop', $stopId, array_filter([
+            'changed' => array_keys($request->validated()),
+            'from' => $moved ? ['latitude' => $before->latitude, 'longitude' => $before->longitude] : null,
+            'to' => $moved ? ['latitude' => $stop->latitude, 'longitude' => $stop->longitude] : null,
+        ]));
+
+        return $this->success($stop, 'Stop updated successfully');
     }
 
     public function destroy(Request $request, int $stopId)
@@ -47,7 +60,9 @@ class StopController extends Controller
         if ($denied = $this->ownStopOr404($request, $stopId)) {
             return $denied;
         }
+        $before = $this->stopService->findStop($stopId);
         $this->stopService->deleteStop($stopId);
+        AuditLogger::log('stop.delete', 'Stop', $stopId, ['name' => $before?->stop_name, 'latitude' => $before?->latitude, 'longitude' => $before?->longitude]);
 
         return $this->success(null, 'Stop deleted successfully');
     }

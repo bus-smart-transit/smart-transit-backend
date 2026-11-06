@@ -4,9 +4,16 @@ namespace App\Services;
 
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
-use Illuminate\Support\Facades\Http;
+use App\Repositories\TripRepository;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * Stops. 2026-11-06 (Batch 47 part A): a stop's place is where a company admin pins it on the map; the system no
+ * longer guesses coordinates from the name. The pin must be inside the region and near a road
+ * (StopCoordinateValidator). A move is refused while a trip on one of its routes is running; otherwise future trips
+ * use the new place (the route line, distances and stop times are redrawn in the queue) and sold tickets keep their
+ * price. A stop of the same company very close by gives a warning, not a refusal.
+ */
 class StopService
 {
     public function __construct(
@@ -15,25 +22,33 @@ class StopService
         private RouteStopRepository $routeStopRepository,
         private RouteGeometryGenerator $geometryGenerator,
         private RegionService $regionService,
+        private TripRepository $trips,
     ) {}
 
-    // $payload = ['stop_name','latitude','longitude','municipality'(optional)]
+    /** @param array{stop_name: string, latitude: float, longitude: float, stop_code?: ?string, municipality?: ?string, location_label?: ?string, company_id?: ?int} $payload */
     public function createStop(array $payload): object
     {
-        $coordinates = $this->resolveCoordinates($payload);
-        $this->coordinateValidator->assertValid($coordinates['latitude'], $coordinates['longitude']);
+        $lat = (float) $payload['latitude'];
+        $lng = (float) $payload['longitude'];
+        $this->coordinateValidator->assertValid($lat, $lng);
 
-        return $this->stopRepository->create(array_filter([
+        $stop = $this->stopRepository->create(array_filter([
             'stop_name' => $payload['stop_name'],
             'stop_code' => $payload['stop_code'] ?? null, // null = the model derives one from the name
-            'latitude' => $coordinates['latitude'],
-            'longitude' => $coordinates['longitude'],
+            'latitude' => $lat,
+            'longitude' => $lng,
             'municipality' => $this->regionService->canonicalMunicipality($payload['municipality'] ?? null),
-            'company_id' => $payload['company_id'] ?? null, // 2026-11-06: owner (null: the platform Admin's)
-        ], fn ($value, $key) => ! in_array($key, ['stop_code', 'company_id'], true) || $value !== null, ARRAY_FILTER_USE_BOTH));
+            'company_id' => $payload['company_id'] ?? null, // owner (null: the platform Admin's)
+            'location_label' => $this->label($payload['location_label'] ?? null),
+            'location_source' => 'pinned',
+            'pinned_at' => now(),
+        ], fn ($value, $key) => ! in_array($key, ['stop_code', 'company_id', 'location_label'], true) || $value !== null, ARRAY_FILTER_USE_BOTH));
+
+        $stop->setAttribute('warnings', $this->nearbyWarnings($stop->stop_id, $lat, $lng, $stop->company_id));
+
+        return $stop;
     }
 
-    /** Every stop, or (2026-11-06) one company's. */
     public function listStops(?int $companyId = null): object
     {
         return $this->stopRepository->all($companyId);
@@ -51,27 +66,30 @@ class StopService
             ->contains(fn ($routeCompanyId) => (int) $routeCompanyId !== $companyId);
     }
 
-    // $payload = ['stop_name','latitude','longitude'] (all optional via sometimes)
+    /** $payload: stop_name, stop_code, municipality, location_label, latitude + longitude (a new pin), all optional. */
     public function updateStop(int $stopId, array $payload): ?object
     {
-        $update = $payload;
-
-        if (array_key_exists('latitude', $payload) || array_key_exists('longitude', $payload) || array_key_exists('location', $payload)) {
-            $existingStop = $this->stopRepository->findById($stopId);
-            $mergeSource = [
-                'stop_name' => $payload['stop_name'] ?? $existingStop?->stop_name,
-                'location' => $payload['location'] ?? null,
-                'latitude' => $payload['latitude'] ?? null,
-                'longitude' => $payload['longitude'] ?? null,
-            ];
-
-            $coordinates = $this->resolveCoordinates($mergeSource, false);
-            $this->coordinateValidator->assertValid($coordinates['latitude'], $coordinates['longitude']);
-            $update['latitude'] = $coordinates['latitude'];
-            $update['longitude'] = $coordinates['longitude'];
+        $existing = $this->stopRepository->findById($stopId);
+        if (! $existing) {
+            return null;
         }
+        $update = array_intersect_key($payload, array_flip(['stop_name', 'stop_code', 'municipality', 'location_label']));
 
-        unset($update['location']);
+        $moved = false;
+        if (array_key_exists('latitude', $payload) && array_key_exists('longitude', $payload) && $payload['latitude'] !== null && $payload['longitude'] !== null) {
+            $lat = (float) $payload['latitude'];
+            $lng = (float) $payload['longitude'];
+            $moved = abs($lat - (float) $existing->latitude) > 0.0000001 || abs($lng - (float) $existing->longitude) > 0.0000001;
+            if ($moved) {
+                $routeIds = $this->routeStopRepository->routeIdsForStop($stopId);
+                if ($routeIds !== [] && $this->trips->anyRunningOnRoutes($routeIds)) {
+                    throw ValidationException::withMessages(['latitude' => ['A trip on a route with this stop is running now. Move the stop after the trip ends.']]);
+                }
+                $this->coordinateValidator->assertValid($lat, $lng);
+            }
+            // Saving a pin (moved or confirmed in place) marks the stop as pinned on the map.
+            $update += ['latitude' => $lat, 'longitude' => $lng, 'location_source' => 'pinned', 'pinned_at' => now()];
+        }
 
         // A blank code means "leave it as it is"; a stop always keeps one.
         if (array_key_exists('stop_code', $update) && blank($update['stop_code'])) {
@@ -80,17 +98,27 @@ class StopService
         if (array_key_exists('municipality', $update)) {
             $update['municipality'] = $this->regionService->canonicalMunicipality($update['municipality']);
         }
+        if (array_key_exists('location_label', $update)) {
+            $update['location_label'] = $this->label($update['location_label']);
+        }
 
-        $this->stopRepository->update($stopId, $update);
+        if ($update !== []) {
+            $this->stopRepository->update($stopId, $update);
+        }
 
-        // Moving a stop changes every route that passes through it.
-        if (isset($update['latitude']) || isset($update['longitude'])) {
+        // Moving a stop changes every route that passes through it: redraw line, distances and stop times.
+        if ($moved) {
             foreach ($this->routeStopRepository->routeIdsForStop($stopId) as $routeId) {
                 $this->geometryGenerator->queueRegeneration($routeId);
             }
         }
 
-        return $this->stopRepository->findById($stopId);
+        $stop = $this->stopRepository->findById($stopId);
+        if ($stop && $moved) {
+            $stop->setAttribute('warnings', $this->nearbyWarnings($stopId, (float) $stop->latitude, (float) $stop->longitude, $stop->company_id));
+        }
+
+        return $stop;
     }
 
     public function deleteStop(int $stopId): bool
@@ -108,62 +136,22 @@ class StopService
         return $deleted;
     }
 
-    private function resolveCoordinates(array $payload, bool $requireCoordinates = true): array
+    /** "Downtown / Poblacion": trimmed, spaces collapsed; empty means none. */
+    private function label(?string $label): ?string
     {
-        $lat = isset($payload['latitude']) ? (float) $payload['latitude'] : null;
-        $lng = isset($payload['longitude']) ? (float) $payload['longitude'] : null;
+        $clean = trim((string) preg_replace('/\s+/', ' ', (string) $label));
 
-        if ($lat !== null && $lng !== null) {
-            return [
-                'latitude' => $lat,
-                'longitude' => $lng,
-            ];
-        }
+        return $clean === '' ? null : $clean;
+    }
 
-        $queryParts = array_filter([
-            $payload['location'] ?? null,
-            $payload['stop_name'] ?? null,
-            config('region.geocode_hint'),
-        ]);
-        $query = trim(implode(' ', $queryParts));
+    /** A plain warning for each stop of the same company closer than config('stops.duplicate_warning_m'). */
+    private function nearbyWarnings(int $stopId, float $lat, float $lng, mixed $companyId): array
+    {
+        $meters = (int) config('stops.duplicate_warning_m', 30);
 
-        if ($query !== '') {
-            try {
-                $response = Http::timeout(5)
-                    ->acceptJson()
-                    ->withHeaders([
-                        'User-Agent' => 'smart-transit-stop-geocoder/1.0',
-                        'Accept-Language' => 'en',
-                    ])
-                    ->get('https://nominatim.openstreetmap.org/search', [
-                        'q' => $query,
-                        'format' => 'json',
-                        'limit' => 1,
-                    ]);
-
-                $row = $response->successful() ? ($response->json()[0] ?? null) : null;
-                $resolvedLat = isset($row['lat']) ? (float) $row['lat'] : null;
-                $resolvedLng = isset($row['lon']) ? (float) $row['lon'] : null;
-
-                if ($resolvedLat !== null && $resolvedLng !== null) {
-                    return [
-                        'latitude' => $resolvedLat,
-                        'longitude' => $resolvedLng,
-                    ];
-                }
-            } catch (\Throwable) {
-                // Fall through to validation exception below.
-            }
-        }
-
-        if (! $requireCoordinates) {
-            throw ValidationException::withMessages([
-                'location' => ['Unable to resolve stop coordinates. Please provide a clearer location name or manual coordinates.'],
-            ]);
-        }
-
-        throw ValidationException::withMessages([
-            'location' => ['Unable to resolve stop coordinates automatically. Please provide a clearer location name.'],
-        ]);
+        return $this->stopRepository->closeTo($lat, $lng, $meters, $companyId !== null ? (int) $companyId : null, $stopId)
+            ->map(fn ($other) => "\"{$other->stop_name}\" is only ".max(1, (int) round($other->distance_m)).' m away. Is this the same stop?')
+            ->values()
+            ->all();
     }
 }

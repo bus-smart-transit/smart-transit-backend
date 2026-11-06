@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Stop;
+use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -17,6 +18,31 @@ class StopRepository
     public function findById(int $stopId): ?Stop
     {
         return Stop::find($stopId);
+    }
+
+    /**
+     * 2026-11-06 (Batch 47 part A): the stops of the same company (or with no company) within $meters of a point,
+     * nearest first, each with distance_m. Distance worked out in PHP on a small box, so it works on SQLite too.
+     */
+    public function closeTo(float $lat, float $lng, int $meters, ?int $companyId, int $exceptStopId): Collection
+    {
+        $dLat = $meters / 111320;
+        $dLng = $meters / (111320 * max(0.01, cos(deg2rad($lat))));
+
+        return Stop::query()
+            ->whereBetween('latitude', [$lat - $dLat, $lat + $dLat])
+            ->whereBetween('longitude', [$lng - $dLng, $lng + $dLng])
+            ->where('stop_id', '!=', $exceptStopId)
+            ->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId), fn ($q) => $q->whereNull('company_id'))
+            ->get()
+            ->map(function (Stop $stop) use ($lat, $lng) {
+                $stop->setAttribute('distance_m', GeoLine::haversineM($lat, $lng, (float) $stop->latitude, (float) $stop->longitude));
+
+                return $stop;
+            })
+            ->filter(fn (Stop $stop) => $stop->distance_m <= $meters)
+            ->sortBy('distance_m')
+            ->values();
     }
 
     /** Every stop, or (2026-11-06) only one company's when $companyId is given. */

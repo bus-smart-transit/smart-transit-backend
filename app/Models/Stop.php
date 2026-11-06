@@ -51,6 +51,10 @@ class Stop extends Model
         'geofence_radius_m',
         'municipality',
         'company_id', // 2026-11-06: the company that owns the stop (null: the Admin's)
+        // 2026-11-06 (Batch 47 part A): a typed area label, and whether the place was pinned on the map or found by name.
+        'location_label',
+        'location_source',
+        'pinned_at',
     ];
 
     protected static function booted(): void
