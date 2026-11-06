@@ -56,8 +56,8 @@ class StaffUser extends Model
         'is_available',
         'available_since',
         'gender',
-        // Batch 46: the Operator a Driver or Chauffeur belongs to (null for Operators and Admins).
-        'operator_company_user_id',
+        // Batch 46: the company an Operator, Driver or Chauffeur works for (null for the Admin).
+        'company_id',
     ];
 
     protected function casts(): array
@@ -79,5 +79,11 @@ class StaffUser extends Model
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /** Batch 46: the company this person works for. */
+    public function company()
+    {
+        return $this->belongsTo(Company::class, 'company_id', 'company_id');
     }
 }

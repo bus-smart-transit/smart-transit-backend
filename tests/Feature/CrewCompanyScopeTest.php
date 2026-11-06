@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Company;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -31,7 +32,8 @@ function ccsStaff(string $role, string $name, ?User $operator = null): User
         'name' => $name,
         'phone_num' => '0917'.random_int(1000000, 9999999),
         'address' => 'Tagum City',
-        'operator_company_user_id' => $operator?->companyProfile?->company_user_id,
+        'company_id' => $role === 'operator' ? Company::create(['company_name' => 'Co '.Str::random(8)])->company_id : $operator?->companyProfile?->company_id,
+        'is_available' => in_array($role, ['driver', 'conductor'], true),
     ]);
 
     return $user->fresh();
@@ -104,10 +106,11 @@ it('makes a Driver or Chauffeur added by an Operator belong to that Operator', f
         'password_confirmation' => 'Strong-password-123',
         'phone_num' => '09171234567',
         'address' => 'Tagum City',
+        'birth_date' => '1990-05-06',
     ])->assertSuccessful();
 
     $profile = User::where('email', 'ccs.new.driver@example.com')->first()->companyProfile;
-    expect((int) $profile->operator_company_user_id)->toBe(ccsId($mine));
+    expect((int) $profile->company_id)->toBe((int) $mine->companyProfile->company_id);
 });
 
 it('refuses to put another company\'s Driver or Chauffeur on a trip, without naming them', function () {
@@ -188,4 +191,33 @@ it('refuses a person with the wrong role even inside the company', function () {
 
     expect(fn () => app(StaffService::class)->assertCrewOf(ccsId($mine), ccsId($myChauffeur), 'driver', 'driver_id'))
         ->toThrow(ValidationException::class, 'Choose a driver from your own staff.');
+});
+
+it('lets every Operator of one company see and assign the same staff, and shows the company name (decided 2026-11-06)', function () {
+    $first = ccsStaff('operator', 'First Dispatcher');
+    $second = ccsStaff('operator', 'Second Dispatcher');
+    $second->companyProfile->forceFill(['company_id' => $first->companyProfile->company_id])->save();
+    $driver = ccsStaff('driver', 'Shared Driver', $first);
+    $trip = ccsTrip($second->fresh());
+
+    $this->actingAs($second->fresh(), 'sanctum');
+    expect(collect($this->getJson('/api/operator/drivers')->json('data'))->pluck('name')->all())->toBe(['Shared Driver']);
+    $this->patchJson("/api/operator/trips/{$trip->trip_id}/driver", ['driver_id' => ccsId($driver)])->assertSuccessful();
+
+    $companyName = Company::find($first->companyProfile->company_id)->company_name;
+    expect($this->getJson('/api/operator/staff')->json('data.company.company_name'))->toBe($companyName)
+        ->and($this->getJson('/api/operator/profile')->json('data.company.company_name'))->toBe($companyName);
+});
+
+it('lets an Operator without a company see no staff and add none', function () {
+    $loose = ccsStaff('operator', 'Loose Operator');
+    $loose->companyProfile->forceFill(['company_id' => null])->save();
+    ccsStaff('driver', 'Someone', ccsStaff('operator', 'Other'));
+
+    $this->actingAs($loose->fresh(), 'sanctum');
+    expect($this->getJson('/api/operator/drivers')->json('data'))->toBe([]);
+    $this->postJson('/api/operator/accounts', [
+        'role' => 'driver', 'name' => 'New Driver', 'email' => 'ccs.loose@example.com', 'password' => 'Strong-password-123',
+        'phone_num' => '09171234567', 'address' => 'Tagum City', 'birth_date' => '1990-05-06',
+    ])->assertUnprocessable()->assertJsonPath('errors.role.0', 'Your account is not linked to a company yet. Ask the Admin to link it first.');
 });

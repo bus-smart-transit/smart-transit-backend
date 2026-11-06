@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
+use App\Repositories\CompanyRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\UserRepository;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -25,6 +27,7 @@ class StaffService
         UserRepository $userRepository,
         StaffRepository $staffRepository,
         private UserService $userService,
+        private CompanyRepository $companies,
     ) {
         $this->userRepository = $userRepository;
         $this->staffRepository = $staffRepository;
@@ -51,12 +54,14 @@ class StaffService
     // Driver / Conductor → cannot create any accounts (blocked by route middleware)
 
     /**
-     * @param  int|null  $creatorCompanyUserId  the creating Operator's company_users id: a Driver or Chauffeur made by an
-     *                                          Operator belongs to that Operator (Batch 46).
+     * @param  int|null  $creatorCompanyId  the creating Operator's company: a Driver or Chauffeur made by an Operator
+     *                                      works for that company (Batch 46). The Admin names the company of a new
+     *                                      Operator in $payload['company_id'].
      */
-    public function createStaffAccount(array $payload, string $createdByRole, ?int $creatorCompanyUserId = null): array
+    public function createStaffAccount(array $payload, string $createdByRole, ?int $creatorCompanyId = null): array
     {
         $targetRole = $payload['role'];
+        $companyId = null;
 
         if ($createdByRole === 'operator') {
             if (! in_array($targetRole, self::OPERATOR_CREATABLE_ROLES)) {
@@ -64,8 +69,19 @@ class StaffService
                     'role' => ['Operators can only create driver or conductor accounts.'],
                 ]);
             }
+            if ($creatorCompanyId === null) {
+                throw ValidationException::withMessages([
+                    'role' => ['Your account is not linked to a company yet. Ask the Admin to link it first.'],
+                ]);
+            }
+            $companyId = $creatorCompanyId;
         } elseif ($createdByRole === 'admin') {
-            // Admin can create any staff role — no restriction
+            // Admin can create any staff role. Batch 46: they name the company (found by name, else created); a new
+            // Admin has none.
+            if ($targetRole !== 'admin' && ! empty($payload['company_name'])) {
+                $companyId = (int) ($this->companies->findByName($payload['company_name'])
+                    ?? $this->companies->create($payload['company_name']))->company_id;
+            }
         } else {
             // Should never reach here since route middleware blocks other roles,
             // but kept as a safety net
@@ -76,7 +92,7 @@ class StaffService
 
         if ($this->userRepository->findByField('email', $payload['email'])) {
             throw ValidationException::withMessages([
-                'email' => ['This email is already in use.'],
+                'email' => ['This email cannot be used. Try another one.'],
             ]);
         }
 
@@ -95,10 +111,14 @@ class StaffService
             'address' => $payload['address'] ?? '',
             'birth_date' => $payload['birth_date'] ?? null,
             'gender' => $payload['gender'] ?? null,
-            'operator_company_user_id' => $createdByRole === 'operator' && in_array($targetRole, self::OPERATOR_CREATABLE_ROLES, true)
-                ? $creatorCompanyUserId
-                : null,
+            'company_id' => $targetRole === 'admin' ? null : $companyId,
         ]);
+
+        // Batch 46: a new Driver or Chauffeur starts Available, so the Operator can schedule them at once; they switch
+        // to Not Available themselves on their profile.
+        if (in_array($targetRole, self::OPERATOR_CREATABLE_ROLES, true)) {
+            $companyUser->forceFill(['is_available' => true, 'available_since' => now()])->save();
+        }
 
         return ['user' => $user, 'profile' => $companyUser];
     }
@@ -110,10 +130,10 @@ class StaffService
      * scheduling needs (id, name, username, gender, availability, joined date). Phone, address, birth date and email
      * stay with the Admin ($withContactDetails) and with the person's own profile.
      */
-    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $operatorCompanyUserId = null): object
+    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $companyId = null): object
     {
-        // Batch 46 (least privilege): an Operator lists only their own crew; null (the Admin) lists everyone.
-        $drivers = $this->staffRepository->listByRole('driver', $operatorCompanyUserId);
+        // Batch 46 (least privilege): an Operator lists only their company's crew; null (the Admin) lists everyone.
+        $drivers = $this->staffRepository->listByRole('driver', $companyId);
         if ($tripDate === null) {
             return $this->presentStaff($drivers, $withContactDetails);
         }
@@ -136,16 +156,17 @@ class StaffService
         );
     }
 
-    public function listConductors(bool $withContactDetails = false, ?int $operatorCompanyUserId = null): object
+    public function listConductors(bool $withContactDetails = false, ?int $companyId = null): object
     {
-        return $this->presentStaff($this->staffRepository->listByRole('conductor', $operatorCompanyUserId), $withContactDetails);
+        return $this->presentStaff($this->staffRepository->listByRole('conductor', $companyId), $withContactDetails);
     }
 
     /**
-     * Batch 46 (decided 2026-11-05, least privilege): the one rule for putting a crew member on a trip or shift block.
-     * The person must have the right role AND belong to the Operator who owns the trip or block. Another company's crew
-     * gets the same answer as a person with the wrong role, so nothing about other companies is revealed. An owner that is an Admin (the
-     * Admin portal is rewritten in Batch 48) is not limited.
+     * Batch 46 (decided 2026-11-05/06, least privilege): the one rule for putting a crew member on a trip or shift
+     * block. The person must have the right role AND work for the company of the Operator who owns the trip or block
+     * (any Operator of that company). Another company's crew gets the same answer as a person with the wrong role, so
+     * nothing about other companies is revealed. An owner that is an Admin (the Admin portal is rewritten in Batch 48)
+     * is not limited.
      *
      * @return StaffUser the checked crew member
      *
@@ -160,12 +181,57 @@ class StaffService
         if (! $staff || $staff->user?->role !== $role) {
             $refuse();
         }
-        if ($this->staffRepository->roleOf($ownerCompanyUserId) !== 'admin'
-            && (int) $staff->operator_company_user_id !== $ownerCompanyUserId) {
-            $refuse();
+        if ($this->staffRepository->roleOf($ownerCompanyUserId) !== 'admin') {
+            $ownerCompanyId = $this->staffRepository->companyIdOf($ownerCompanyUserId);
+            if ($ownerCompanyId === null || (int) $staff->company_id !== $ownerCompanyId) {
+                $refuse();
+            }
+        }
+
+        // Batch 46 (decided 2026-11-05): a deactivated person, or one who set Not Available, is not assigned. A shift
+        // already running is never touched by this: the check runs only when someone is put on a trip or block.
+        $name = $staff->name ?: ($staff->user?->username ?? 'This person');
+        if ($staff->user?->deactivated_at !== null) {
+            throw ValidationException::withMessages([$field => ["{$name}'s account is turned off. Choose someone else."]]);
+        }
+        if (! $staff->is_available) {
+            throw ValidationException::withMessages([$field => ["{$name} is Not Available right now. Choose someone else, or ask them to switch to Available."]]);
         }
 
         return $staff;
+    }
+
+    /**
+     * Batch 46 (decided 2026-11-05): a staff member changes their own password with the current one. Other sessions
+     * end; the one in use stays signed in. Also answers the first-sign-in offer.
+     *
+     * @throws ValidationException
+     */
+    public function changePassword(object $user, string $currentPassword, string $newPassword, ?int $keepTokenId): void
+    {
+        if (! Hash::check($currentPassword, $user->password)) {
+            throw ValidationException::withMessages(['current_password' => ['Your current password is not right.']]);
+        }
+        if (Hash::check($newPassword, $user->password)) {
+            throw ValidationException::withMessages(['password' => ['Choose a password that is different from the current one.']]);
+        }
+
+        $user->forceFill(['password' => $newPassword, 'password_prompted_at' => now()])->save();
+        $user->tokens()->when($keepTokenId !== null, fn ($q) => $q->where('id', '!=', $keepTokenId))->delete();
+    }
+
+    /** Batch 46: the crew member skipped the first-sign-in offer; it is not shown again. */
+    public function skipPasswordPrompt(object $user): void
+    {
+        if ($user->password_prompted_at === null) {
+            $user->forceFill(['password_prompted_at' => now()])->save();
+        }
+    }
+
+    /** Batch 46: show the one-time offer to change the password the Operator typed (Drivers and Chauffeurs only). */
+    public static function offersPasswordChange(object $user): bool
+    {
+        return in_array($user->role, ['driver', 'conductor'], true) && $user->password_prompted_at === null;
     }
 
     private function presentStaff(Collection $staff, bool $withContactDetails): Collection

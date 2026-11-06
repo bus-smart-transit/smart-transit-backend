@@ -63,6 +63,9 @@ class User extends Authenticatable
         'role',
         'two_factor_enabled',
         'fcm_token',
+        // Batch 46: an Operator turned this crew member off (null = active); the first-sign-in password offer was answered.
+        'deactivated_at',
+        'password_prompted_at',
     ];
 
     protected $hidden = [
@@ -80,6 +83,8 @@ class User extends Authenticatable
             // 2026-11-05: passenger account deletion (AccountDeletionService), stored in UTC.
             'deletion_requested_at' => UtcDateTime::class,
             'anonymized_at' => UtcDateTime::class,
+            'deactivated_at' => 'datetime',
+            'password_prompted_at' => 'datetime',
         ];
     }
 

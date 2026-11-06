@@ -22,6 +22,18 @@ class DriverShiftLogRepository
             ->get();
     }
 
+    /** Batch 46: the Driver shifts on an Operator's buses that started between two Manila dates (both included). */
+    public function forOperatorBetween(int $operatorCompanyUserId, string $from, string $to, ?int $staffCompanyUserId = null): Collection
+    {
+        return DriverShiftLog::with(['driver.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'trip.shiftBlock'])
+            ->whereDate('shift_date', '>=', $from)
+            ->whereDate('shift_date', '<=', $to)
+            ->when($staffCompanyUserId !== null, fn ($q) => $q->where('driver_company_user_id', $staffCompanyUserId))
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->orderBy('started_at')
+            ->get();
+    }
+
     public function findOpenByDriver(int $driverCompanyUserId): ?DriverShiftLog
     {
         return DriverShiftLog::with(['trip.fleetRoute.route', 'fleet'])

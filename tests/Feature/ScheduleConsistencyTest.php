@@ -40,7 +40,7 @@ function scBlock($test, string $date, array $times = ['06:00', '09:00', '12:00',
     $driver = scStaff('driver');
     $conductor = scStaff('conductor');
     // Batch 46: each call builds its own company, so its crew belongs to its own Operator.
-    StaffUser::whereIn('company_user_id', [scCid($driver), scCid($conductor)])->update(['operator_company_user_id' => scCid($operator)]);
+    StaffUser::whereIn('company_user_id', [scCid($driver), scCid($conductor)])->update(['company_id' => StaffUser::whereKey(scCid($operator))->value('company_id')]);
     $route = Route::create(['route_name' => 'Sched Route', 'origin' => 'Alpha', 'destination' => 'Omega']);
     $fleet = Fleet::create(['company_user_id' => scCid($operator), 'plate_number' => 'SC-'.fake()->unique()->numerify('####'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active']);
     $fleetRoute = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '06:00', 'end_time' => '22:00', 'status' => 'active']);

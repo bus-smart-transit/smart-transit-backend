@@ -474,6 +474,9 @@ test('operator can start boarding', function () {
         'company_user_id' => $operator->companyProfile->company_user_id,
         'trip_date' => now()->toDateString(),
         'status' => 'scheduled',
+        // Batch 46: boarding needs both crew members (TripCrew).
+        'driver_id' => makeStaffUser('driver')->companyProfile->company_user_id,
+        'conductor_id' => makeStaffUser('conductor')->companyProfile->company_user_id,
         'current_seated_capacity' => 0,
         'current_standing_capacity' => 0,
         'total_occupancy' => 0,

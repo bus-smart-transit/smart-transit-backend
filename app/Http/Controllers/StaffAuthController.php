@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\CreateStaffAccountRequest;
 use App\Mail\PassengerOtpMail;
+use App\Services\AuditLogger;
 use App\Services\FcmService;
 use App\Services\StaffService;
 use App\Services\StepUpService;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class StaffAuthController extends Controller
 {
@@ -64,8 +66,40 @@ class StaffAuthController extends Controller
     public function profile(Request $request)
     {
         $profile = $this->staffService->getStaffProfile($request->user());
+        // Batch 46: whether to offer the one-time "change the password your Operator gave you" step.
+        $profile?->setAttribute('offer_password_change', StaffService::offersPasswordChange($request->user()));
 
         return $this->success($profile, 'Profile retrieved successfully');
+    }
+
+    /** Batch 46: POST staff/password. Any staff role changes their own password with the current one. */
+    public function changePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'max:255', 'regex:/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/', 'confirmed'],
+        ], [
+            'password.regex' => 'Use at least one uppercase letter, one lowercase letter and one number.',
+            'password.confirmed' => 'The two new passwords do not match.',
+        ]);
+
+        $this->staffService->changePassword(
+            $request->user(),
+            $validated['current_password'],
+            $validated['password'],
+            ($token = $request->user()->currentAccessToken()) instanceof PersonalAccessToken ? (int) $token->id : null,
+        );
+        AuditLogger::log('staff.password_change', 'User', (int) $request->user()->user_id);
+
+        return $this->success(null, 'Password changed. Other devices were signed out.');
+    }
+
+    /** Batch 46: POST staff/password/skip. The crew member keeps the password their Operator gave them, for now. */
+    public function skipPasswordPrompt(Request $request)
+    {
+        $this->staffService->skipPasswordPrompt($request->user());
+
+        return $this->success(null, 'Okay. You can change your password any time on your profile.');
     }
 
     public function logout(Request $request)
@@ -120,6 +154,8 @@ class StaffAuthController extends Controller
             'is_available' => $validated['available'],
             'available_since' => $validated['available'] ? now() : null,
         ])->save();
+        // Batch 46: availability now decides who can be assigned, so each change is recorded.
+        AuditLogger::log('staff.availability', 'StaffUser', (int) $companyUser->company_user_id, ['available' => (bool) $validated['available']]);
 
         return $this->success([
             'is_available' => (bool) $companyUser->is_available,
@@ -310,7 +346,7 @@ class StaffAuthController extends Controller
         $result = $this->staffService->createStaffAccount(
             $request->validated(),
             $request->user()->role,
-            $request->user()->companyProfile?->company_user_id,
+            $request->user()->companyProfile?->company_id,
         );
 
         return $this->success($result, 'Account created successfully');
@@ -341,8 +377,8 @@ class StaffAuthController extends Controller
     }
 
     /**
-     * Batch 46 (least privilege): an Operator sees only their own crew. The Admin sees everyone (null). An Operator
-     * without a staff profile gets 0, which matches nobody.
+     * Batch 46 (least privilege): an Operator sees only their company's crew. The Admin sees everyone (null). An
+     * Operator without a company gets 0, which matches nobody.
      */
     private function crewScopeOf(Request $request): ?int
     {
@@ -350,6 +386,6 @@ class StaffAuthController extends Controller
             return null;
         }
 
-        return (int) ($request->user()?->companyProfile?->company_user_id ?? 0);
+        return (int) ($request->user()?->companyProfile?->company_id ?? 0);
     }
 }

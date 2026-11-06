@@ -7,6 +7,7 @@ use App\Models\Route;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\User;
+use App\Services\TripService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 
@@ -174,6 +175,8 @@ test('driver current trip prefers the open shift trip when another same-day trip
 test('driver can start shift and then open boarding for the same trip', function () {
     $driver = makeShiftStaffUser('driver');
     $trip = makeAssignedDriverTrip($driver, 'scheduled');
+    // Batch 46: boarding needs both crew members (TripCrew).
+    $trip->update(['conductor_id' => makeShiftStaffUser('conductor')->companyProfile->company_user_id]);
 
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
 
@@ -247,11 +250,10 @@ test('completing a trip auto-closes any still-open shift for it', function () {
 
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
 
-    app(\App\Services\TripService::class)->completeTrip($trip->trip_id);
+    app(TripService::class)->completeTrip($trip->trip_id);
 
     $this->assertDatabaseHas('driver_shift_logs', [
         'trip_id' => $trip->trip_id,
         'end_source' => 'trip_status_change',
     ]);
 });
-

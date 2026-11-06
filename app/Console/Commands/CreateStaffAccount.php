@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Company;
 use App\Models\StaffUser;
 use App\Models\User;
 use Illuminate\Console\Command;
@@ -20,7 +21,8 @@ class CreateStaffAccount extends Command
         {email : an address this person can read (the login code is emailed)}
         {name : full name}
         {phone : mobile number}
-        {address : home or office address}';
+        {address : home or office address}
+        {--company= : the bus company an Operator works for (found by name, else created); not used for an admin}';
 
     protected $description = 'Create one staff account; the password is asked for at a hidden prompt';
 
@@ -35,6 +37,7 @@ class CreateStaffAccount extends Command
             'name' => trim((string) $this->argument('name')),
             'phone' => trim((string) $this->argument('phone')),
             'address' => trim((string) $this->argument('address')),
+            'company' => trim((string) $this->option('company')),
         ];
 
         $check = Validator::make($data, [
@@ -43,7 +46,9 @@ class CreateStaffAccount extends Command
             'name' => ['required', 'string', 'min:2', 'max:255'],
             'phone' => ['required', 'regex:/^\+?[\d\s\-()]{7,15}$/'],
             'address' => ['required', 'string', 'max:255'],
-        ]);
+            // Batch 46: an Operator works for a company (its Drivers, Chauffeurs and buses are that company's).
+            'company' => ['required_if:role,operator', 'nullable', 'string', 'min:2', 'max:120'],
+        ], ['company.required_if' => 'Give the company with --company="Company name" for an operator.']);
         if ($check->fails()) {
             foreach ($check->errors()->all() as $message) {
                 $this->error($message);
@@ -71,7 +76,11 @@ class CreateStaffAccount extends Command
                 'password' => $password,
                 'role' => $data['role'],
             ]);
-            StaffUser::create(['user_id' => $user->user_id, 'name' => $data['name'], 'phone_num' => $data['phone'], 'address' => $data['address']]);
+            $companyId = $data['role'] === 'operator'
+                ? (Company::whereRaw('LOWER(company_name) = ?', [mb_strtolower($data['company'])])->first()
+                    ?? Company::create(['company_name' => $data['company']]))->company_id
+                : null;
+            StaffUser::create(['user_id' => $user->user_id, 'name' => $data['name'], 'phone_num' => $data['phone'], 'address' => $data['address'], 'company_id' => $companyId]);
 
             return $user;
         });

@@ -135,8 +135,9 @@ class DavaoTagumOperationsSeeder extends Seeder
     /** Tries each driver/conductor pair until the block rules accept one. */
     private function createBlockFor(FleetRoute $fleetRoute, int $operatorId, string $date, array $legTimes): bool
     {
-        $drivers = $this->staffWithRole('driver', $operatorId);
-        $conductors = $this->staffWithRole('conductor', $operatorId);
+        $companyId = StaffUser::whereKey($operatorId)->value('company_id'); // Batch 46: the bus owner's company
+        $drivers = $this->staffWithRole('driver', $companyId);
+        $conductors = $this->staffWithRole('conductor', $companyId);
         $service = app(ShiftBlockService::class);
 
         foreach ($drivers as $driver) {
@@ -163,11 +164,11 @@ class DavaoTagumOperationsSeeder extends Seeder
     }
 
     /** @return Collection<int, StaffUser> */
-    private function staffWithRole(string $role, int $operatorId)
+    private function staffWithRole(string $role, ?int $companyId)
     {
-        // Batch 46: only the crew of the Operator who owns the bus.
+        // Batch 46: only the crew of the company that owns the bus.
         return StaffUser::whereHas('user', fn ($q) => $q->where('role', $role))
-            ->where('operator_company_user_id', $operatorId)
+            ->where('company_id', $companyId ?? 0)
             ->orderBy('company_user_id')
             ->get();
     }

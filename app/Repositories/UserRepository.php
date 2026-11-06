@@ -40,6 +40,18 @@ class UserRepository
             ->first();
     }
 
+    /** Batch 46: is this username (any letter case, since crews sign in with it) used by another account? */
+    public function usernameTakenByOther(string $username, int $exceptUserId): bool
+    {
+        return User::whereRaw('LOWER(username) = ?', [mb_strtolower(trim($username))])->where('user_id', '!=', $exceptUserId)->exists();
+    }
+
+    /** Batch 46: is this email used by another account? */
+    public function emailTakenByOther(string $email, int $exceptUserId): bool
+    {
+        return User::where('email', mb_strtolower(trim($email)))->where('user_id', '!=', $exceptUserId)->exists();
+    }
+
     public function findPassengerUserByUuid(string $passengerUuid): ?User
     {
         return PassengerUser::with('user')->where('passenger_uuid', $passengerUuid)->first()?->user;

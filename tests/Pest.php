@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Company;
 use App\Models\StaffUser;
 use Tests\TestCase;
 
@@ -50,25 +51,35 @@ function something()
 }
 
 /**
- * Batch 46 (least privilege): a Driver or Chauffeur belongs to one Operator. Older tests build one Operator and its crew
- * in any order, so their staff helpers call this: a new Driver or Chauffeur joins the first Operator, and a new
- * Operator takes on every Driver and Chauffeur that has no Operator yet. Tests about two companies set the link
- * themselves (see CrewCompanyScopeTest).
+ * Batch 46 (least privilege): staff work for a company. Older tests build one Operator and its crew in any order, so
+ * their staff helpers call this: each new Operator gets its own test company, the first Operator's company takes on
+ * every Driver and Chauffeur that has none yet, and a new Driver or Chauffeur joins the first Operator's company. Tests
+ * about two companies set company_id themselves (see CrewCompanyScopeTest).
  */
 function joinTestCompany(StaffUser $staff): StaffUser
 {
     $role = $staff->user()->value('role');
-    $crew = fn () => StaffUser::whereNull('operator_company_user_id')
-        ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor']));
 
-    if ($role === 'operator') {
-        if (! StaffUser::where('company_user_id', '!=', $staff->company_user_id)->whereHas('user', fn ($q) => $q->where('role', 'operator'))->exists()) {
-            $crew()->update(['operator_company_user_id' => $staff->company_user_id]);
+    // Batch 46: a crew member starts Available (as a newly added one does), unless the test set it on purpose.
+    if (in_array($role, ['driver', 'conductor'], true) && ! array_key_exists('is_available', $staff->getAttributes())) {
+        $staff->forceFill(['is_available' => true])->save();
+    }
+
+    $operators = fn () => StaffUser::whereHas('user', fn ($q) => $q->where('role', 'operator'));
+
+    if ($role === 'operator' && $staff->company_id === null) {
+        $first = ! $operators()->where('company_user_id', '!=', $staff->company_user_id)->exists();
+        $company = Company::create(['company_name' => 'Test Bus Co. '.$staff->company_user_id]);
+        $staff->forceFill(['company_id' => $company->company_id])->save();
+        if ($first) {
+            StaffUser::whereNull('company_id')
+                ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor']))
+                ->update(['company_id' => $company->company_id]);
         }
-    } elseif (in_array($role, ['driver', 'conductor'], true) && $staff->operator_company_user_id === null) {
-        $operatorId = StaffUser::whereHas('user', fn ($q) => $q->where('role', 'operator'))->orderBy('company_user_id')->value('company_user_id');
-        if ($operatorId) {
-            $staff->update(['operator_company_user_id' => $operatorId]);
+    } elseif (in_array($role, ['driver', 'conductor'], true) && $staff->company_id === null) {
+        $companyId = $operators()->whereNotNull('company_id')->orderBy('company_user_id')->value('company_id');
+        if ($companyId) {
+            $staff->forceFill(['company_id' => $companyId])->save();
         }
     }
 

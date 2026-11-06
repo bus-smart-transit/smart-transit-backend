@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
+use App\Support\TripCrew;
 use App\Support\TripTiming;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -105,6 +106,11 @@ class TripActionGuard
         $rule = self::TRANSITIONS[$event];
         if ($trip->status === $rule['to']) {
             return [null, true];
+        }
+
+        // Batch 46: a trip waiting for its crew cannot start boarding or depart.
+        if (in_array($event, ['boarding', 'depart'], true) && ! TripCrew::isComplete($trip)) {
+            return [$this->deny(TripCrew::MISSING_MESSAGE, 422), false];
         }
 
         if ($event === 'depart') {

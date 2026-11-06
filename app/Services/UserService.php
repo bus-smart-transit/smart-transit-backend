@@ -201,6 +201,13 @@ class UserService
                 ]);
             }
 
+            // Batch 46: an Operator turned this account off. Told only after the right password, so it reveals nothing.
+            if ($user->deactivated_at !== null) {
+                throw ValidationException::withMessages([
+                    'email' => ['This account is turned off. Ask your Operator to turn it on again.'],
+                ]);
+            }
+
             $requiresMfa = ! $this->staffOtpBypassActive() && (
                 in_array($user->role, self::MFA_MANDATORY_ROLES)
                 || (bool) $user->two_factor_enabled
@@ -273,6 +280,12 @@ class UserService
         if (! $user || ! in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
             throw ValidationException::withMessages([
                 'otp' => ['Account not found.'],
+            ]);
+        }
+        // Batch 46: turned off between the two sign-in steps.
+        if ($user->deactivated_at !== null) {
+            throw ValidationException::withMessages([
+                'otp' => ['This account is turned off. Ask your Operator to turn it on again.'],
             ]);
         }
 

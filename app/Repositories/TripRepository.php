@@ -251,6 +251,22 @@ class TripRepository
     }
 
     /**
+     * Batch 46: the trips (shift-block legs included) a crew member still has to work: not completed or cancelled,
+     * dated today or later, or already running whatever the date. Oldest first, with route and bus for the message.
+     */
+    public function unfinishedForCrew(int $companyUserId, string $today): Collection
+    {
+        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
+            ->where(fn ($q) => $q->where('driver_id', $companyUserId)->orWhere('conductor_id', $companyUserId))
+            ->whereNotIn('status', ['completed', 'cancelled'])
+            ->where(fn ($q) => $q->whereDate('trip_date', '>=', $today)
+                ->orWhereIn('status', ['boarding', 'departed', 'in-progress', 'in_progress', 'delayed']))
+            ->orderBy('trip_date')
+            ->orderBy('departure_time')
+            ->get();
+    }
+
+    /**
      * S2 corrected model (Batch 17 continuation), superseded by Batch 18's
      * shift_blocks system: a staff member (driver OR conductor) may only
      * hold ONE assignment per day — hard exclusivity, not a time-overlap

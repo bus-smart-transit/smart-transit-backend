@@ -28,6 +28,7 @@ use App\Http\Controllers\RouteDurationFactorController;
 use App\Http\Controllers\ShiftBlockController;
 use App\Http\Controllers\SignInController;
 use App\Http\Controllers\StaffAuthController;
+use App\Http\Controllers\StaffDirectoryController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketResolutionController;
@@ -58,6 +59,11 @@ Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
+// Batch 46: any staff member changes their own password (current password required); crews may skip the one-time offer.
+Route::post('staff/password', [StaffAuthController::class, 'changePassword'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:5,15,staff-password-post']);
+Route::post('staff/password/skip', [StaffAuthController::class, 'skipPasswordPrompt'])
+    ->middleware(['auth:sanctum', 'role:driver,conductor', 'throttle:10,1,staff-password-skip-post']);
 
 // Batch 15, Items 2/3: FCM device-token registration — shared across all
 // staff roles (Driver receives trip-assignment pushes, Operator receives
@@ -180,6 +186,11 @@ Route::prefix('operator')
         Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
         Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
+        // Batch 46: the Staff Directory. Only this Operator's own Drivers and Chauffeurs; another company's is a 404.
+        Route::get('staff', [StaffDirectoryController::class, 'index'])->middleware('throttle:60,1,mgmt-staff');
+        Route::patch('staff/{companyUserId}', [StaffDirectoryController::class, 'update'])->whereNumber('companyUserId')->middleware('throttle:20,1,mgmt-staff-patch');
+        Route::patch('staff/{companyUserId}/deactivate', [StaffDirectoryController::class, 'deactivate'])->whereNumber('companyUserId')->middleware('throttle:10,1,mgmt-staff-deactivate');
+        Route::patch('staff/{companyUserId}/reactivate', [StaffDirectoryController::class, 'reactivate'])->whereNumber('companyUserId')->middleware('throttle:10,1,mgmt-staff-reactivate');
         // §4.8: the crew's time in / time out (Start Shift / End Shift) on this Operator's buses, read only.
         Route::get('crew-shifts', [CrewShiftLogController::class, 'index'])->middleware('throttle:60,1,mgmt-crew-shifts');
         // 2026-10-27: onsite discount types (Student, Senior citizen, PWD) and this Operator's on/off choice.

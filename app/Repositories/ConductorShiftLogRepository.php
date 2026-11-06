@@ -14,6 +14,18 @@ class ConductorShiftLogRepository
      *
      * @return Collection<int, ConductorShiftLog>
      */
+    /** Batch 46: the Chauffeur shifts on an Operator's buses that started between two Manila dates (both included). */
+    public function forOperatorBetween(int $operatorCompanyUserId, string $from, string $to, ?int $staffCompanyUserId = null): Collection
+    {
+        return ConductorShiftLog::with(['conductor.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'trip.shiftBlock'])
+            ->whereDate('shift_date', '>=', $from)
+            ->whereDate('shift_date', '<=', $to)
+            ->when($staffCompanyUserId !== null, fn ($q) => $q->where('conductor_company_user_id', $staffCompanyUserId))
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->orderBy('started_at')
+            ->get();
+    }
+
     public function forOperatorOnDate(int $operatorCompanyUserId, string $date): Collection
     {
         return ConductorShiftLog::with(['conductor.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet'])

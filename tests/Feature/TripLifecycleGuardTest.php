@@ -38,10 +38,10 @@ function lgUser(string $role): User
 
 function lgFleetRoute(User $operator): FleetRoute
 {
-    $route = Route::create(['route_name' => 'Lifecycle ' . Str::random(4), 'origin' => 'A', 'destination' => 'B']);
+    $route = Route::create(['route_name' => 'Lifecycle '.Str::random(4), 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create([
         'company_user_id' => $operator->companyProfile->company_user_id,
-        'plate_number' => 'LG-' . fake()->unique()->numerify('###'),
+        'plate_number' => 'LG-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
         'standing_capacity' => 10,
@@ -122,7 +122,12 @@ test('a trip that has not departed cannot be completed', function () {
 
 test('starting boarding twice is a no-op the second time and records boarding_at once', function () {
     $operator = lgUser('operator');
-    $trip = lgTrip(lgFleetRoute($operator), $operator, ['status' => 'scheduled']);
+    // Batch 46: boarding needs both crew members (TripCrew).
+    $trip = lgTrip(lgFleetRoute($operator), $operator, [
+        'status' => 'scheduled',
+        'driver_id' => lgUser('driver')->companyProfile->company_user_id,
+        'conductor_id' => lgUser('conductor')->companyProfile->company_user_id,
+    ]);
 
     $this->actingAs($operator)->patchJson("/api/operator/trips/{$trip->trip_id}/boarding")->assertSuccessful();
     $first = Trip::find($trip->trip_id)->boarding_at;

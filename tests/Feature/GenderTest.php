@@ -43,11 +43,11 @@ it('refuses a gender that is not one of the choices', function () {
 
 it('keeps the gender the Operator set on a new Driver account', function () {
     $operatorUser = User::create(['username' => 'gndop'.Str::random(5), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => 'operator']);
-    StaffUser::create(['user_id' => $operatorUser->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Gnd Operator', 'phone_num' => '09170000067', 'address' => 'x']);
+    joinTestCompany(StaffUser::create(['user_id' => $operatorUser->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Gnd Operator', 'phone_num' => '09170000067', 'address' => 'x'])); // Batch 46: an Operator works for a company
 
     $this->actingAs($operatorUser)->postJson('/api/operator/accounts', [
         'name' => 'Gnd Driver', 'email' => 'gnddriver'.Str::random(5).'@example.com', 'password' => 'password123',
-        'phone_num' => '09170000068', 'address' => 'Tagum', 'role' => 'driver', 'gender' => 'male',
+        'phone_num' => '09170000068', 'address' => 'Tagum', 'role' => 'driver', 'gender' => 'male', 'birth_date' => '1990-01-01',
     ])->assertSuccessful();
 
     expect(StaffUser::where('name', 'Gnd Driver')->value('gender'))->toBe('male');

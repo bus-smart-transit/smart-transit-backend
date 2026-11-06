@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Company;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
@@ -33,6 +34,9 @@ use Illuminate\Support\Str;
 class DavaoRegionDemoSeeder extends Seeder
 {
     private const PASSWORD = 'password123';
+
+    /** Batch 46: the demo bus company (the Operator and all demo crew work for it). */
+    private const COMPANY_NAME = 'SmartTransit Demo Bus Co.';
 
     /** [username, email, role, name, phone]. The passenger account comes from DefaultAccountsSeeder. */
     private const STAFF = [
@@ -135,11 +139,16 @@ class DavaoRegionDemoSeeder extends Seeder
             );
         }
 
-        // Batch 46 (least privilege): every demo Driver and Chauffeur belongs to the demo Operator's company.
-        $operatorId = $made['operator']->company_user_id;
+        // Batch 46 (least privilege): the demo Operator and every demo Driver and Chauffeur work for one demo company.
+        $companyId = Company::firstOrCreate(['company_name' => self::COMPANY_NAME])->company_id;
+        $made['operator']->forceFill(['company_id' => $companyId])->save();
         foreach (self::STAFF as [$username, , $role]) {
             if (in_array($role, ['driver', 'conductor'], true)) {
-                $made[$username]->update(['operator_company_user_id' => $operatorId]);
+                // Available like a newly added crew member, so the demo schedule can be built (Batch 46 availability rule).
+                $made[$username]->forceFill(['company_id' => $companyId, 'is_available' => true, 'available_since' => now()])->save();
+                // Demo passwords are shared on purpose, so the one-time "change the password you were given" offer is
+                // marked answered (a real crew member added by an Operator still gets it).
+                $made[$username]->user->forceFill(['password_prompted_at' => now()])->save();
             }
         }
 
