@@ -34,7 +34,8 @@ class UnfulfilledPaymentService
      * @param  array{status?: string, page?: int, per_page?: int}  $filters
      * @return array{data: array<int, array<string, mixed>>, meta: array<string, mixed>}
      */
-    public function paginate(int $operatorCompanyUserId, array $filters): array
+    /** $operatorCompanyUserId null = every company (the Super Admin, read only; Batch 48 Phase 5). */
+    public function paginate(?int $operatorCompanyUserId, array $filters): array
     {
         $status = in_array($filters['status'] ?? null, [self::NEEDS_REFUND, self::REFUNDED, self::OUTCOME_UNKNOWN, 'all'], true) ? $filters['status'] : self::NEEDS_REFUND;
         $page = max(1, (int) ($filters['page'] ?? 1));
@@ -152,7 +153,7 @@ class UnfulfilledPaymentService
     }
 
     /** Online refund and unknown-outcome payments for this Operator's trips, newest first. */
-    private function ownedPayments(int $operatorCompanyUserId)
+    private function ownedPayments(?int $operatorCompanyUserId)
     {
         $payments = Payment::where(function ($query) {
             $query->whereIn('status', [self::NEEDS_REFUND, self::REFUNDED])
@@ -166,6 +167,10 @@ class UnfulfilledPaymentService
             ->get();
 
         $owners = $this->tripOwners($payments);
+
+        if ($operatorCompanyUserId === null) {
+            return $payments;
+        }
 
         return $payments->filter(fn (Payment $p) => $this->ownsAny($p, $operatorCompanyUserId, $owners))->values();
     }

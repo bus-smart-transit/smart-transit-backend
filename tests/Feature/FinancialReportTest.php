@@ -461,3 +461,16 @@ it('shows the online booking fee apart from the fares, once per purchase (Featur
     expect(end($rows[0]))->toBe('Booking fee (PHP)')
         ->and(collect(array_slice($rows, 1))->map(fn ($r) => end($r))->sort()->values()->all())->toBe(['0.00', '10.00']);
 });
+
+it('gives each day its booking fees kept, net of fees given back (Batch 48 Phase 5)', function () {
+    $w = fnWorld();
+    $sale = fnSale($w, [50.00], '2026-10-04 08:00:00');
+    DB::table('payments')->where('payment_id', $sale['payment_id'])->update(['fee_amount' => 10]);
+    $second = fnSale($w, [50.00], '2026-10-05 08:00:00');
+    DB::table('payments')->where('payment_id', $second['payment_id'])->update(['fee_amount' => 10]);
+    fnRefund($second['ticket_ids'][0], $w['trip']->trip_id, 50.00, '2026-10-05 01:00:00');
+    DB::table('ticket_resolutions')->where('ticket_id', $second['ticket_ids'][0])->update(['fee_amount' => 10]);
+
+    $daily = fnGet($this, $w['operator'], '', ['from' => '2026-10-04', 'to' => '2026-10-05'])->assertSuccessful()->json('data.daily');
+    expect(collect($daily)->mapWithKeys(fn ($d) => [$d['date'] => $d['booking_fees']])->all())->toEqual(['2026-10-04' => 10, '2026-10-05' => 0]);
+});

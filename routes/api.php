@@ -471,6 +471,8 @@ Route::prefix('admin')
         Route::patch('users/{userId}/company-admin', [AdminAccountsController::class, 'setCompanyAdmin'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-company-admin');
         // Batch 48 Phase 4: the Audit log page (filters and pages).
         Route::get('audit-log', [AdminAccountsController::class, 'auditLog'])->middleware('throttle:60,1,admin-audit-log');
+        // Batch 48 Phase 5: payments to refund by hand across every company (read only; the Operator records refunds).
+        Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'adminIndex'])->middleware('throttle:60,1,admin-refund-list');
 
         // Admin creates operator accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');

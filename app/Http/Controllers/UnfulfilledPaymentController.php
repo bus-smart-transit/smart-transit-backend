@@ -29,6 +29,18 @@ class UnfulfilledPaymentController extends Controller
         return $this->success($this->payments->paginate($this->ownerId($request), $data), 'Payments retrieved successfully');
     }
 
+    /** Batch 48 Phase 5: GET /admin/payments/needs-refund, the same list across every company, read only. */
+    public function adminIndex(Request $request)
+    {
+        $data = $request->validate([
+            'status' => ['nullable', 'in:needs_refund,refunded,outcome_unknown,all'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+
+        return $this->success($this->payments->paginate(null, $data), 'Payments retrieved successfully');
+    }
+
     /** POST /operator/payments/{id}/refunded  { note } (the PayMongo refund id or reference; required) */
     public function recordRefund(Request $request, int $id)
     {

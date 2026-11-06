@@ -579,11 +579,12 @@ class FinancialReportService
     private function daily(Collection $sales, Collection $refunds): array
     {
         $days = [];
-        $blank = fn () => ['gross_c' => 0, 'refunds_c' => 0, 'tickets' => 0, 'cash_c' => 0, 'online_c' => 0];
+        $blank = fn () => ['gross_c' => 0, 'refunds_c' => 0, 'tickets' => 0, 'cash_c' => 0, 'online_c' => 0, 'fees_c' => 0];
         foreach ($sales as $r) {
             $d = $r['paid_at']->toDateString();
             $days[$d] ??= $blank();
             $days[$d]['gross_c'] += $r['cents'];
+            $days[$d]['fees_c'] += $r['fee_cents'];
             $days[$d]['tickets']++;
             $days[$d][$r['method'] === 'cash' ? 'cash_c' : 'online_c'] += $r['cents'];
         }
@@ -591,6 +592,7 @@ class FinancialReportService
             $d = $r['at']->toDateString();
             $days[$d] ??= $blank();
             $days[$d]['refunds_c'] += $r['cents'];
+            $days[$d]['fees_c'] -= $r['fee_cents'];
         }
         ksort($days);
 
@@ -602,6 +604,8 @@ class FinancialReportService
             'tickets' => $v['tickets'],
             'cash' => $this->money($v['cash_c']),
             'online' => $this->money($v['online_c']),
+            // Batch 48 Phase 5: that day's booking fees kept, net of fees given back (the platform's, not the fare).
+            'booking_fees' => $this->money($v['fees_c']),
         ])->values()->all();
     }
 

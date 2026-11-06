@@ -256,3 +256,17 @@ it('is for Operators only', function () {
 
     expect($payment->fresh()->status)->toBe('needs_refund');
 });
+
+it('lists payments to refund by hand from every company for the Super Admin, read only (Batch 48 Phase 5)', function () {
+    ['trip' => $trip] = nrOperator();
+    ['trip' => $otherTrip] = nrOperator('Other route');
+    $first = nrPayment($trip);
+    $second = nrPayment($otherTrip);
+    nrPayment($trip, 'paid', ['is_valid' => true]);
+
+    $admin = nrStaff('admin');
+    $ids = collect($this->actingAs($admin)->getJson('/api/admin/payments/needs-refund')->assertOk()->json('data.data'))->pluck('payment_id')->sort()->values()->all();
+
+    expect($ids)->toBe(collect([$first->payment_id, $second->payment_id])->sort()->values()->all());
+    $this->actingAs($admin)->postJson("/api/admin/payments/{$first->payment_id}/refunded", ['note' => 'ref-123'])->assertNotFound();
+});
