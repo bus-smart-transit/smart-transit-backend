@@ -460,6 +460,8 @@ Route::prefix('admin')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
         // Batch 48 Phase 2: the Super Admin Dashboard counts.
         Route::get('overview', [AdminOverviewController::class, 'show']);
+        // Batch 48 Phase 6: System health (read only).
+        Route::get('health', [AdminOverviewController::class, 'health'])->middleware('throttle:30,1,admin-health');
         // Batch 48 Phase 3: companies (add, rename, add a Company Admin) and every account (turn off / on).
         Route::get('companies', [AdminAccountsController::class, 'companies']);
         Route::post('companies', [AdminAccountsController::class, 'storeCompany'])->middleware('throttle:20,1,admin-companies-post');

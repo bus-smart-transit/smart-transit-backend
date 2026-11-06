@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\HealthBeat;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -7,6 +8,9 @@ use Illuminate\Support\Facades\Schedule;
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+// Batch 48 Phase 6: a beat every minute, so the System health page can tell whether the scheduler is running.
+Schedule::call(fn () => HealthBeat::record('scheduler', true))->everyMinute()->name('health-beat');
 
 // Release held seats/standing for online checkouts whose payment never completed and whose hold has expired. Run every 5 minutes.
 Schedule::command('payments:release-expired-holds')->everyFiveMinutes();

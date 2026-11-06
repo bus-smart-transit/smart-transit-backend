@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\UserNotificationRepository;
+use App\Support\HealthBeat;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Exception\MessagingException;
@@ -133,14 +134,17 @@ class FcmService
             ]);
 
             $this->messaging->send($message);
+            HealthBeat::record('push', true);
 
             return true;
         } catch (MessagingException $e) {
             Log::warning("FcmService: send failed for user {$user->user_id} — ".$e->getMessage());
+            HealthBeat::record('push', false, 'refused');
 
             return false;
         } catch (\Throwable $e) {
             Log::warning("FcmService: unexpected error sending to user {$user->user_id} — ".$e->getMessage());
+            HealthBeat::record('push', false, 'error');
 
             return false;
         }

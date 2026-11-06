@@ -4,8 +4,11 @@ use App\Models\Company;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\User;
+use App\Support\HealthBeat;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route as Router;
 use Illuminate\Support\Str;
 
@@ -118,4 +121,39 @@ it('writes one audit line per Super Admin change: the specific entry when there 
 
     expect(DB::table('audit_logs')->where('action', 'company.create')->count())->toBe(1)
         ->and(DB::table('audit_logs')->where('action', 'like', 'admin.%')->count())->toBe(0);
+});
+
+it('reports system health: database, scheduler, queue and the last result of each outside service, with no URL or key', function () {
+    Http::fake([
+        'api.openrouteservice.org/*' => Http::response(['ok' => true]),
+        'api.tomtom.com/*' => Http::response('limit', 429),
+    ]);
+    Http::get('https://api.openrouteservice.org/v2/directions?api_key=SECRET-KEY');
+    Http::get('https://api.tomtom.com/routing?key=SECRET-KEY');
+    HealthBeat::record('scheduler', true);
+
+    $this->actingAs(safUser('admin'), 'sanctum');
+    $data = $this->getJson('/api/admin/health')->assertOk()->json('data');
+    $core = collect($data['core'])->keyBy('key');
+    $services = collect($data['services'])->keyBy('key');
+
+    expect($core['database']['status'])->toBe('ok')
+        ->and($core['scheduler']['status'])->toBe('ok')
+        ->and($core['queue']['status'])->toBe('ok')
+        ->and($services['routing'])->toMatchArray(['status' => 'ok', 'note' => 'Last call worked (HTTP 200).'])
+        ->and($services['traffic'])->toMatchArray(['status' => 'problem', 'note' => 'Last call failed (HTTP 429).'])
+        ->and($services['mail']['status'])->toBe('unknown')
+        ->and(json_encode($data))->not->toContain('SECRET-KEY');
+});
+
+it('flags a scheduler with no beat for minutes and a queue job waiting too long', function () {
+    Cache::forever('health:scheduler', ['at' => now()->subMinutes(10)->toIso8601String(), 'ok' => true, 'detail' => null]);
+    DB::table('jobs')->insert(['queue' => 'default', 'payload' => '{}', 'attempts' => 0, 'available_at' => now()->subMinutes(30)->getTimestamp(), 'created_at' => now()->subMinutes(30)->getTimestamp()]);
+
+    $this->actingAs(safUser('admin'), 'sanctum');
+    $core = collect($this->getJson('/api/admin/health')->json('data.core'))->keyBy('key');
+
+    expect($core['scheduler']['status'])->toBe('problem')
+        ->and($core['queue']['status'])->toBe('problem')
+        ->and($core['queue']['note'])->toContain('1 waiting');
 });

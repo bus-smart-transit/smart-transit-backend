@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\AdminOverviewService;
+use App\Services\SystemHealthService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 
@@ -16,5 +17,11 @@ class AdminOverviewController extends Controller
     public function show(): JsonResponse
     {
         return $this->success($this->overview->summary(), 'Overview retrieved');
+    }
+
+    /** Batch 48 Phase 6: GET /api/admin/health (read only, no secrets). */
+    public function health(SystemHealthService $health): JsonResponse
+    {
+        return $this->success($health->summary(), 'System health retrieved');
     }
 }

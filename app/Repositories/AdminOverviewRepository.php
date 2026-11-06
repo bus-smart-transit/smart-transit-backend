@@ -61,6 +61,32 @@ class AdminOverviewRepository
         return DB::table('failed_jobs')->count();
     }
 
+    /** Batch 48 Phase 6: jobs waiting for the worker. */
+    public function pendingJobs(): int
+    {
+        return DB::table('jobs')->count();
+    }
+
+    /** When the oldest waiting job was queued (unix seconds), or null when none waits. */
+    public function oldestPendingJobAt(): ?int
+    {
+        $oldest = DB::table('jobs')->min('created_at');
+
+        return $oldest !== null ? (int) $oldest : null;
+    }
+
+    /** True when the database answers. */
+    public function databaseAnswers(): bool
+    {
+        try {
+            DB::select('select 1');
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     /** Stops placed from their name before pins (Batch 47 part A): their company admin should re-pin them. */
     public function stopsNotPinned(): int
     {

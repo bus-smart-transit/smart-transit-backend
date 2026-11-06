@@ -4,12 +4,20 @@ namespace App\Providers;
 
 use App\Support\ApiRequestMetrics;
 use App\Support\Database\RlsContext;
+use App\Support\HealthBeat;
 use App\Support\RateLimiting\ToggleableRateLimiter;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Request;
+use Illuminate\Mail\Events\MessageSent;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
 
@@ -45,6 +53,30 @@ class AppServiceProvider extends ServiceProvider
         $this->guardRateLimitingOffIsDevOnly();
         $this->endIdleStaffSessions();
         $this->configureRateLimiters();
+        $this->recordHealthBeats();
+    }
+
+    /**
+     * Batch 48 Phase 6: the last result of the queue, email and outside services, for the System health page
+     * (App\Support\HealthBeat). Only a status code is kept, never the URL (it can hold an API key).
+     */
+    private function recordHealthBeats(): void
+    {
+        Event::listen(ResponseReceived::class, function (ResponseReceived $event) {
+            $part = HealthBeat::partForHost(parse_url((string) $event->request->url(), PHP_URL_HOST) ?: null);
+            if ($part !== null) {
+                HealthBeat::record($part, $event->response->successful(), 'HTTP '.$event->response->status());
+            }
+        });
+        Event::listen(ConnectionFailed::class, function (ConnectionFailed $event) {
+            $part = HealthBeat::partForHost(parse_url((string) $event->request->url(), PHP_URL_HOST) ?: null);
+            if ($part !== null) {
+                HealthBeat::record($part, false, 'could not connect');
+            }
+        });
+        Event::listen(MessageSent::class, fn () => HealthBeat::record('mail', true));
+        Queue::after(fn (JobProcessed $event) => HealthBeat::record('queue', true));
+        Queue::failing(fn (JobFailed $event) => HealthBeat::record('queue', false, 'a job failed'));
     }
 
     /**
