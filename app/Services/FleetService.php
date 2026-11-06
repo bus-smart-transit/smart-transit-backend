@@ -7,6 +7,7 @@ use App\Repositories\CompanyRepository;
 use App\Repositories\FleetRepository;
 use App\Repositories\FleetRouteRepository;
 use App\Repositories\StaffRepository;
+use App\Repositories\TripRepository;
 use App\Support\CompanyScope;
 use App\Support\VehicleClass;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,7 @@ class FleetService
         private FleetRouteRepository $fleetRouteRepository,
         private CompanyRepository $companies,
         private StaffRepository $staff,
+        private TripRepository $trips,
     ) {}
 
     // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type', 'routes' => [['route_id','start_time','end_time'], ...]]
@@ -74,6 +76,15 @@ class FleetService
             $seated = (int) ($payload['seated_capacity'] ?? $fleet->seated_capacity);
             $standing = (int) ($payload['standing_capacity'] ?? $fleet->standing_capacity);
             $payload['capacity'] = $seated + $standing;
+
+            // 2026-11-06: never fewer places than are already sold on a trip of this bus that has not finished.
+            $sold = $this->trips->mostSoldOnUnfinishedTrips($fleetId);
+            if ($seated < $sold['seated']) {
+                throw ValidationException::withMessages(['seated_capacity' => ["{$sold['seated']} seats are already sold on a trip of this bus that has not finished. Choose at least {$sold['seated']}."]]);
+            }
+            if ($standing < $sold['standing']) {
+                throw ValidationException::withMessages(['standing_capacity' => ["{$sold['standing']} standing places are already sold on a trip of this bus that has not finished. Choose at least {$sold['standing']}."]]);
+            }
         }
 
         // The class is stored in its canonical form (an alias such as "deluxe" becomes "aircon"); empty clears it.

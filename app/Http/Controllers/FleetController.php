@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\AssignFleetRouteRequest;
 use App\Http\Requests\StoreFleetRequest;
 use App\Http\Requests\UpdateFleetRequest;
+use App\Services\AuditLogger;
 use App\Services\FleetService;
 use App\Services\StaffService;
 use App\Traits\ApiResponse;
@@ -40,7 +41,20 @@ class FleetController extends Controller
 
     public function update(UpdateFleetRequest $request, int $fleetId)
     {
-        $fleet = $this->fleetService->updateFleet($fleetId, $request->validated());
+        // 2026-11-06: an Operator edits only a bus of their own company; its company label stays the company name.
+        $scope = $this->operatorScope($request);
+        $changes = $request->validated();
+        if ($scope !== null) {
+            if (! $this->fleetService->isOwnedByOperator($fleetId, $scope)) {
+                return $this->error('Fleet not found.', 404);
+            }
+            unset($changes['bus_company_name']);
+        }
+
+        $fleet = $this->fleetService->updateFleet($fleetId, $changes);
+        if ($fleet) {
+            AuditLogger::log('fleet.update', 'Fleet', $fleetId, ['changed' => array_keys($changes)]);
+        }
         if (! $fleet) {
             return $this->error('Fleet not found.', 404);
         }

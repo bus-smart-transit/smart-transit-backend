@@ -251,6 +251,23 @@ class TripRepository
     }
 
     /**
+     * 2026-11-06: the most seats and standing places sold on one trip of this bus that is not completed or cancelled
+     * (a bus's places may not drop below that).
+     *
+     * @return array{seated: int, standing: int}
+     */
+    public function mostSoldOnUnfinishedTrips(int $fleetId): array
+    {
+        $row = Trip::query()
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
+            ->whereNotIn('status', ['completed', 'cancelled'])
+            ->selectRaw('COALESCE(MAX(current_seated_capacity), 0) as seated, COALESCE(MAX(current_standing_capacity), 0) as standing')
+            ->first();
+
+        return ['seated' => (int) ($row->seated ?? 0), 'standing' => (int) ($row->standing ?? 0)];
+    }
+
+    /**
      * Batch 46: the trips (shift-block legs included) a crew member still has to work: not completed or cancelled,
      * dated today or later, or already running whatever the date. Oldest first, with route and bus for the message.
      */

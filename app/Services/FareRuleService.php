@@ -1,15 +1,21 @@
 <?php
+
 namespace App\Services;
+
+use App\Exceptions\FareUnavailableException;
+use App\Models\FareRule;
 use App\Repositories\FareRuleRepository;
-use App\Support\BusLabel;
-use App\Repositories\StopRepository;
-use App\Repositories\RouteStopRepository;
 use App\Repositories\FleetRouteRepository;
 use App\Repositories\RouteRepository;
-use App\Exceptions\FareUnavailableException;
+use App\Repositories\RouteStopRepository;
+use App\Repositories\StopRepository;
+use App\Support\BusLabel;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
 use App\Support\VehicleClass;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class FareRuleService
@@ -23,8 +29,7 @@ class FareRuleService
         private RouteRepository $routeRepository,
         private FareCalculationService $fareCalculationService,
         private FareRuleResolver $fareRuleResolver,
-    ) {
-    }
+    ) {}
 
     /**
      * Stop-based quote for a KNOWN route/fleet — no matrix lookup, computed
@@ -36,7 +41,7 @@ class FareRuleService
         $originRouteStop = $this->routeStopRepository->findByRouteAndStop($payload['route_id'], $payload['origin_stop_id']);
         $destinationRouteStop = $this->routeStopRepository->findByRouteAndStop($payload['route_id'], $payload['destination_stop_id']);
 
-        if (!$originRouteStop || !$destinationRouteStop) {
+        if (! $originRouteStop || ! $destinationRouteStop) {
             throw new \RuntimeException('One or both stops are not on this route.');
         }
 
@@ -61,8 +66,8 @@ class FareRuleService
             $payload['on'] ?? null,
         );
 
-        if (!$rule) {
-            throw new FareUnavailableException();
+        if (! $rule) {
+            throw new FareUnavailableException;
         }
 
         return $this->fareCalculationService->priceWithRule($rule, $distanceKm);
@@ -82,10 +87,10 @@ class FareRuleService
             $payload['route_id'] ?? null,
         );
 
-        if (!$originStop) {
+        if (! $originStop) {
             throw new \RuntimeException('Could not match your pickup location to a known stop on this route.');
         }
-        if (!$destinationStop) {
+        if (! $destinationStop) {
             throw new \RuntimeException('Could not match your drop-off location to a known stop on this route.');
         }
         if ($originStop->stop_id === $destinationStop->stop_id) {
@@ -127,7 +132,7 @@ class FareRuleService
 
         foreach ($fleets as $fleet) {
             $rule = $this->fareRuleResolver->resolve((int) $fleet->fleet_id, (int) $route->route_id, $payload['service_type'] ?? null, $payload['seat_type']);
-            if (!$rule) {
+            if (! $rule) {
                 continue; // no fare for this bus (no override and no rule for its class): "Fare unavailable", never guessed
             }
 
@@ -175,8 +180,8 @@ class FareRuleService
         }
 
         $rule = $this->fareRuleResolver->resolve($fleetId, $routeId, $payload['service_type'] ?? null, $payload['seat_type'], $payload['on'] ?? null);
-        if (!$rule) {
-            throw new FareUnavailableException();
+        if (! $rule) {
+            throw new FareUnavailableException;
         }
 
         return [
@@ -198,14 +203,14 @@ class FareRuleService
     {
         $route = $this->routeRepository->findById($routeId);
 
-        if (!$route) {
+        if (! $route) {
             throw new \RuntimeException('Route not found.');
         }
 
         $rule = $this->fareRuleResolver->resolve($fleetId, $routeId, $serviceType, $seatType);
 
-        if (!$rule) {
-            throw new FareUnavailableException();
+        if (! $rule) {
+            throw new FareUnavailableException;
         }
 
         $stops = $route->routeStops;
@@ -239,8 +244,8 @@ class FareRuleService
         ];
     }
 
-    /** @return \Illuminate\Support\Collection<int, \App\Models\FareRule> */
-    public function listRules(array $filters = []): \Illuminate\Support\Collection
+    /** @return Collection<int, FareRule> */
+    public function listRules(array $filters = []): Collection
     {
         return $this->fareRuleRepository->list($filters)->map(function ($rule) {
             $rule->setAttribute('vehicle_class_label', VehicleClass::label($rule->vehicle_class));
@@ -279,5 +284,97 @@ class FareRuleService
         }
 
         return $this->fareRuleRepository->create(array_merge($payload, ['status' => 'active']));
+    }
+
+    public function findRule(int $fareRuleId): ?FareRule
+    {
+        return $this->fareRuleRepository->findById($fareRuleId);
+    }
+
+    /** Money fields of a rule: changeable only while the rule has not started (tickets already sold keep their fare). */
+    public const VALUE_FIELDS = ['base_fare', 'fare_per_km', 'base_distance_km', 'rounding_mode', 'effective_from'];
+
+    /**
+     * 2026-11-06: edit a fare rule. A rule that has started (in force today or before) may only be ended
+     * (effective_to), stopped (status inactive: "no longer followed") or given a note; its prices stay, because they
+     * priced past tickets. A rule that starts in the future may change everything. updated_at records when.
+     *
+     * @throws ValidationException
+     */
+    public function updateRule(FareRule $rule, array $changes): FareRule
+    {
+        $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString();
+        $from = $rule->effective_from?->toDateString();
+        $started = $from === null || $from <= $today;
+
+        if ($started && array_intersect(array_keys($changes), self::VALUE_FIELDS) !== []) {
+            throw ValidationException::withMessages([
+                'base_fare' => ['This fare is already in use, so its prices stay. Use Copy to set new prices from a future date.'],
+            ]);
+        }
+
+        $newFrom = array_key_exists('effective_from', $changes) ? $changes['effective_from'] : $from;
+        $newTo = array_key_exists('effective_to', $changes) ? $changes['effective_to'] : $rule->effective_to?->toDateString();
+        if ($newTo !== null && $newFrom !== null && $newTo < $newFrom) {
+            throw ValidationException::withMessages(['effective_to' => ['The end date must be on or after the start date.']]);
+        }
+        if ($started && array_key_exists('effective_to', $changes) && $newTo !== null && $newTo < $today) {
+            throw ValidationException::withMessages(['effective_to' => ['The end date cannot be in the past.']]);
+        }
+        if (($changes['status'] ?? $rule->status) === 'active' && $this->fareRuleRepository->overlappingRuleExists(
+            ['fleet_id' => $rule->fleet_id, 'route_id' => $rule->route_id, 'vehicle_class' => $rule->vehicle_class, 'service_type' => $rule->service_type, 'seat_type' => $rule->seat_type],
+            $newFrom,
+            $newTo,
+            (int) $rule->fare_rule_id,
+        )) {
+            throw ValidationException::withMessages(['effective_from' => ['Another active fare rule for this bus and seat type is in force on those dates.']]);
+        }
+
+        $rule->fill($changes)->save();
+
+        return $rule->fresh();
+    }
+
+    /**
+     * 2026-11-06: Copy a rule to start on a later date (never the same start date). The original ends the day before
+     * the copy starts, so the two never overlap; both are saved together or not at all.
+     *
+     * @throws ValidationException
+     */
+    public function copyRule(FareRule $rule, array $values): FareRule
+    {
+        $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString();
+        $newFrom = (string) $values['effective_from'];
+        $from = $rule->effective_from?->toDateString();
+
+        if ($newFrom <= $today) {
+            throw ValidationException::withMessages(['effective_from' => ['Choose a start date from tomorrow on.']]);
+        }
+        if ($from !== null && $newFrom <= $from) {
+            throw ValidationException::withMessages(['effective_from' => ['Choose a start date after the original fare starts.']]);
+        }
+
+        return DB::transaction(function () use ($rule, $values, $newFrom) {
+            $dayBefore = Carbon::parse($newFrom)->subDay()->toDateString();
+            $to = $rule->effective_to?->toDateString();
+            if ($to === null || $to >= $newFrom) {
+                $rule->forceFill(['effective_to' => $dayBefore])->save();
+            }
+
+            return $this->createFareRule(array_filter([
+                'fleet_id' => $rule->fleet_id,
+                'route_id' => $rule->route_id,
+                'vehicle_class' => $rule->vehicle_class,
+                'service_type' => $rule->service_type,
+                'seat_type' => $rule->seat_type,
+                'rounding_mode' => $values['rounding_mode'] ?? $rule->rounding_mode,
+                'base_fare' => $values['base_fare'] ?? $rule->base_fare,
+                'fare_per_km' => $values['fare_per_km'] ?? $rule->fare_per_km,
+                'base_distance_km' => array_key_exists('base_distance_km', $values) ? $values['base_distance_km'] : $rule->base_distance_km,
+                'note' => $values['note'] ?? $rule->note,
+                'effective_from' => $newFrom,
+                'effective_to' => $values['effective_to'] ?? null,
+            ], fn ($value) => $value !== null && $value !== ''));
+        });
     }
 }

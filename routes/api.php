@@ -219,6 +219,11 @@ Route::prefix('operator')
         // Fare rules
         Route::get('fare-rules', [FareRuleController::class, 'listRules']);
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
+        // 2026-11-06: edit (end, stop, or change a rule not yet started) and copy to a later date; same extra check.
+        Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,mgmt-fare-rules-patch']);
+        Route::post('fare-rules/{fareRuleId}/copy', [FareRuleController::class, 'copyRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,mgmt-fare-rules-copy']);
+        // 2026-11-06: an Operator edits a bus of their own company (another company's is a 404).
+        Route::patch('fleets/{fleetId}', [FleetController::class, 'update'])->whereNumber('fleetId')->middleware('throttle:20,1,mgmt-fleets-patch');
 
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);
@@ -475,6 +480,8 @@ Route::prefix('admin')
         // Fare rules + recalculation (step-up required — irreversible pricing change)
         Route::get('fare-rules', [FareRuleController::class, 'listRules']);
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');
+        Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,admin-fare-rules-patch']);
+        Route::post('fare-rules/{fareRuleId}/copy', [FareRuleController::class, 'copyRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,admin-fare-rules-copy']);
         // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
 
         // Trips — full control

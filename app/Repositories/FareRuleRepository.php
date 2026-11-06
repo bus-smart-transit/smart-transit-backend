@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\FareRule;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -10,6 +12,11 @@ class FareRuleRepository
     public function create(array $payload): FareRule
     {
         return FareRule::create($payload);
+    }
+
+    public function findById(int $fareRuleId): ?FareRule
+    {
+        return FareRule::find($fareRuleId);
     }
 
     /**

@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\CopyFareRuleRequest;
 use App\Http\Requests\FareFleetQuoteRequest;
 use App\Http\Requests\FareListRequest;
 use App\Http\Requests\FareQuoteFromCoordinatesRequest;
 use App\Http\Requests\FareQuoteRequest;
 use App\Http\Requests\StoreFareRuleRequest;
+use App\Http\Requests\UpdateFareRuleRequest;
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Services\AuditLogger;
 use App\Services\FareRuleService;
@@ -16,6 +19,7 @@ use App\Support\ServiceType;
 use App\Support\VehicleClass;
 use App\Traits\ApiResponse;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -58,6 +62,54 @@ class FareRuleController extends Controller
         AuditLogger::log('fare_rule.create', 'FareRule', $rule->fare_rule_id ?? null, $request->validated());
 
         return $this->success($rule, 'Fare rule created successfully');
+    }
+
+    /** 2026-11-06: PATCH fare-rules/{id}. End, stop or annotate a rule in use; change a rule that has not started. */
+    public function updateRule(UpdateFareRuleRequest $request, int $fareRuleId)
+    {
+        $rule = $this->ownRuleOr404($request, $fareRuleId);
+        if (! $rule instanceof FareRule) {
+            return $rule;
+        }
+
+        $updated = $this->fareRuleService->updateRule($rule, $request->validated());
+        AuditLogger::log('fare_rule.update', 'FareRule', $fareRuleId, ['changes' => $request->validated()]);
+
+        return $this->success($updated, 'Fare rule updated');
+    }
+
+    /** 2026-11-06: POST fare-rules/{id}/copy. A copy from a later date; the original ends the day before. */
+    public function copyRule(CopyFareRuleRequest $request, int $fareRuleId)
+    {
+        $rule = $this->ownRuleOr404($request, $fareRuleId);
+        if (! $rule instanceof FareRule) {
+            return $rule;
+        }
+
+        $copy = $this->fareRuleService->copyRule($rule, $request->validated());
+        AuditLogger::log('fare_rule.copy', 'FareRule', (int) $copy->fare_rule_id, ['from_rule' => $fareRuleId] + $request->validated());
+
+        return $this->success($copy, 'Fare rule copied');
+    }
+
+    /**
+     * A rule the caller may change: the Admin any rule; an Operator only a rule of a bus of their own company (a
+     * general rule or another company's reads as not found).
+     */
+    private function ownRuleOr404(Request $request, int $fareRuleId): FareRule|JsonResponse
+    {
+        $rule = $this->fareRuleService->findRule($fareRuleId);
+        if (! $rule) {
+            return $this->error('Fare rule not found.', 404);
+        }
+        if ($request->user()?->role === 'operator') {
+            $companyUserId = (int) ($request->user()->companyProfile?->company_user_id ?? 0);
+            if (! $rule->fleet_id || ! $this->fleetService->isOwnedByOperator((int) $rule->fleet_id, $companyUserId)) {
+                return $this->error('Fare rule not found.', 404);
+            }
+        }
+
+        return $rule;
     }
 
     // Admin and Operator: the fare screen's list. An Operator sees general rules (read only) and the rules of their own fleets.
