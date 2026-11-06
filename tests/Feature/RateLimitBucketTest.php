@@ -40,8 +40,9 @@ it('does not let a 15-minute OTP limit lock the region page', function () {
         $this->postJson('/api/staff/verify-otp', []);
     }
 
-    $region = rlbCall($this, '/api/region', 61);
+    // 2026-11-06: public read pages allow 240 a minute per IP (was 60).
+    $region = rlbCall($this, '/api/region', 241);
 
-    expect(array_slice($region, 0, 60))->not->toContain(429)
+    expect(array_slice($region, 0, 240))->not->toContain(429)
         ->and(end($region))->toBe(429);
 });

@@ -39,23 +39,36 @@ function rlaMiddleware(string $method, string $uri): array
         ->gatherMiddleware();
 }
 
-it('stops a public route that had no limit after 60 calls a minute from one IP', function () {
-    $statuses = rlaStatuses($this, 'GET', '/api/fare/options', 61);
+// 2026-11-06: public read pages allow 240 a minute per IP (was 60), so a group on one Wi-Fi is not refused; each route
+// still has its own counter, and another IP is never affected.
+it('stops a public read page after 240 calls a minute from one IP, without touching another route or IP', function () {
+    $statuses = rlaStatuses($this, 'GET', '/api/fare/options', 241);
 
-    expect(array_slice($statuses, 0, 60))->not->toContain(429)
+    expect(array_slice($statuses, 0, 240))->not->toContain(429)
         ->and(end($statuses))->toBe(429)
-        ->and(rlaStatuses($this, 'GET', '/api/fare/options', 1, [], '10.1.0.2')[0])->not->toBe(429);
+        ->and(rlaStatuses($this, 'GET', '/api/fare/options', 1, [], '10.1.0.2')[0])->not->toBe(429)
+        ->and(rlaStatuses($this, 'GET', '/api/region', 1)[0])->not->toBe(429);
 });
 
-it('gives every public route that had no limit 60 a minute, each with its own counter', function (string $method, string $uri, string $throttle) {
-    expect(rlaMiddleware($method, $uri))->toContain($throttle);
+it('gives every public read page the shared-network limit', function (string $method, string $uri) {
+    expect(rlaMiddleware($method, $uri))->toContain('throttle:public-read');
 })->with([
-    ['POST', 'api/fare/quote', 'throttle:60,1,fare-quote'],
-    ['POST', 'api/fare/quote-fleets-by-location', 'throttle:60,1,fare-quote-fleets'],
-    ['GET', 'api/routes/{routeId}/fares', 'throttle:60,1,routes-fares'],
-    ['GET', 'api/routes/{routeId}/stops', 'throttle:60,1,routes-stops'],
-    ['GET', 'api/trips', 'throttle:60,1,trips-available'],
+    ['POST', 'api/fare/quote'],
+    ['POST', 'api/fare/quote-fleets-by-location'],
+    ['GET', 'api/routes/{routeId}/fares'],
+    ['GET', 'api/routes/{routeId}/stops'],
+    ['GET', 'api/trips'],
 ]);
+
+it('lets many people on one network sign up, while one email is still limited', function () {
+    $body = fn (string $email) => ['email' => $email, 'password' => 'password123', 'password_confirmation' => 'password123', 'name' => 'Group Tester', 'phone_num' => '09171234567', 'address' => 'Tagum', 'birthdate' => '2000-01-01'];
+
+    $group = collect(range(1, 8))->map(fn ($i) => $this->withServerVariables(['REMOTE_ADDR' => '10.9.0.1'])->postJson('/api/passengers/register', $body("group{$i}@example.com"))->status());
+    $same = collect(range(1, 4))->map(fn () => $this->withServerVariables(['REMOTE_ADDR' => '10.9.0.1'])->postJson('/api/passengers/register', $body('group1@example.com'))->status());
+
+    expect($group->all())->not->toContain(429)
+        ->and($same->last())->toBe(429);
+});
 
 it('gives the Admin the same 10-a-minute limits on accounts, stops and routes', function (string $method, string $uri, string $throttle) {
     expect(rlaMiddleware($method, $uri))->toContain($throttle);

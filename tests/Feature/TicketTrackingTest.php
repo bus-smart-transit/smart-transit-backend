@@ -286,8 +286,8 @@ it('answers 404 for any unknown or malformed link, the same way, and slows a cli
 it('rate limits the public routes: the track link and the live bus positions', function () {
     $middleware = fn (string $uri) => collect(app('router')->getRoutes()->getRoutes())->first(fn ($route) => $route->uri() === $uri)->gatherMiddleware();
 
-    // 2026-10-27: same limits, each with its own counter (the third value).
-    expect($middleware('api/track/{token}'))->toContain('throttle:60,1,track');
+    // 2026-11-06: the track link uses the shared-network public-read limit (240 a minute per IP, its own counter).
+    expect($middleware('api/track/{token}'))->toContain('throttle:public-read');
     // 2026-11-04 (Batch 45 Todo 2): the map's bus list went from 90 to 300 a minute per IP (shared addresses).
     expect($middleware('api/fleet/locations'))->toContain('throttle:300,1,fleet-locations');
     expect($middleware('api/fleet/nearest'))->toContain('throttle:90,1,fleet-nearest');

@@ -74,6 +74,19 @@ class AppServiceProvider extends ServiceProvider
         $bySubjectAndIp('pw-forgot-staff', 3, 20, fn (Request $request) => $request->input('email', ''));
         $bySubjectAndIp('verify-email-resend', 3, 20, fn (Request $request) => $request->input('account_uuid', ''));
         $bySubjectAndIp('tickets-lookup', 10, 40, fn (Request $request) => $request->input('transaction_reference', ''));
+
+        // 2026-11-06 (before group testing on one Wi-Fi): sign-up, login codes and password resets were counted per IP
+        // only, so the 6th person on a school or event network was refused. Now per email or account + IP, with a
+        // wider per-IP cap that still stops one address from trying many accounts.
+        $bySubjectAndIp('passenger-register', 3, 60, fn (Request $request) => $request->input('email', ''));
+        $bySubjectAndIp('passengers-verify-otp', 10, 100, fn (Request $request) => $request->input('account_uuid', ''));
+        $bySubjectAndIp('staff-verify-otp', 5, 30, fn (Request $request) => $request->input('account_uuid', ''));
+        $bySubjectAndIp('pw-reset', 6, 30, fn (Request $request) => $request->input('email', ''));
+
+        // Public read pages (fares, region, routes, trips, booking lookups, tracking) a group on one network loads at the
+        // same time: 240 a minute per IP, each route counted on its own (was 60).
+        $limiter->for('public-read', fn (Request $request) => Limit::perMinute(240)
+            ->by('public-read|'.($request->route()?->uri() ?? $request->path()).'|'.$request->ip()));
     }
 
     /**

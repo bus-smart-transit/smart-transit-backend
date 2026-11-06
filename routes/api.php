@@ -48,13 +48,13 @@ use Illuminate\Support\Facades\Route;
 Route::post('auth/login', [SignInController::class, 'login']);
 // 2026-10-28: a new email verification code (right after sign-up, the password is not at hand to sign in again).
 Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:verify-email-resend');
-Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,15,passengers-verify-otp-post');
-Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:5,15,passenger-register');
+Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:passengers-verify-otp');
+Route::post('passengers/register', [PassengerController::class, 'store'])->middleware('throttle:passenger-register');
 Route::post('passengers/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:pw-forgot-passenger');
-Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
-Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:5,15,staff-verify-otp-post');
+Route::post('passengers/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:pw-reset');
+Route::post('staff/verify-otp', [StaffAuthController::class, 'verifyOtp'])->middleware('throttle:staff-verify-otp');
 Route::post('staff/forgot-password', [StaffAuthController::class, 'forgotPassword'])->middleware('throttle:pw-forgot-staff');
-Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:6,15,pw-reset');
+Route::post('staff/reset-password', [StaffAuthController::class, 'resetPassword'])->middleware('throttle:pw-reset');
 Route::delete('staff/logout', [StaffAuthController::class, 'logout'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin']);
 Route::patch('staff/2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference'])
@@ -90,9 +90,9 @@ Route::post('step-up/verify', [StaffAuthController::class, 'stepUpVerify'])
 Route::post('step-up/verify-password', [StaffAuthController::class, 'stepUpVerifyPassword'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator,admin', 'throttle:10,1,step-up-verify-password-post']);
 
-Route::get('fare/options', [FareRuleController::class, 'options'])->middleware('throttle:60,1,fare-options');
-Route::post('fare/quote', [FareRuleController::class, 'quote'])->middleware('throttle:60,1,fare-quote');
-Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation'])->middleware('throttle:60,1,fare-quote-fleets');
+Route::get('fare/options', [FareRuleController::class, 'options'])->middleware('throttle:public-read');
+Route::post('fare/quote', [FareRuleController::class, 'quote'])->middleware('throttle:public-read');
+Route::post('fare/quote-fleets-by-location', [FareRuleController::class, 'quoteFleetsByLocation'])->middleware('throttle:public-read');
 // Batch 26: public, so throttled. The passenger map polls every 12 s (5 a minute per open tab). 2026-11-04: 300 a
 // minute per IP (about 60 tabs behind one carrier or office address); the bus list is cached for a few seconds.
 Route::get('fleet/locations', [FleetLocationController::class, 'activeLocations'])->middleware(['auth.optional', 'throttle:300,1,fleet-locations']);
@@ -108,21 +108,21 @@ Route::get('traffic/flow/{z}/{x}/{y}.png', [TrafficController::class, 'flowTile'
 // Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')
-    ->middleware('throttle:60,1,track');
-Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares'])->middleware('throttle:60,1,routes-fares');
-Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:60,1,region');
-Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:60,1,routes-stops');
-Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:60,1,routes-geometry');
-Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:60,1,trips-available');
-Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:60,1,trips-timeline');
+    ->middleware('throttle:public-read');
+Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares'])->middleware('throttle:public-read');
+Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:public-read');
+Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:public-read');
+Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:public-read');
+Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:public-read');
+Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:public-read');
 // Batch 28 Stage 3, item 10: restricted areas and designated drop-off points for a trip (feedback only; the server re-checks).
-Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:60,1,trips-dropoff-options');
-Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:60,1,booking-stops');
-Route::get('booking/window', [BookingController::class, 'window'])->middleware('throttle:60,1,booking-window');
-Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:60,1,booking-link');
-Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:60,1,booking-departures');
-Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:60,1,booking-trips');
-Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:60,1,booking-resolve');
+Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:public-read');
+Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:public-read');
+Route::get('booking/window', [BookingController::class, 'window'])->middleware('throttle:public-read');
+Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:public-read');
+Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:public-read');
+Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:public-read');
+Route::get('booking/resolve', [BookingController::class, 'resolve'])->middleware('throttle:public-read');
 Route::get('booking/address-search', [BookingController::class, 'addressSearch'])->middleware('throttle:20,1,booking-address-search');
 
 // Remove:
