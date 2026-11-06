@@ -10,7 +10,7 @@ test('it can create a passenger user', function () {
         'password' => 'password123',
         'password_confirmation' => 'password123',
         'name' => 'John Doe',
-        'phone_num' => '1234567890',
+        'phone_num' => '09171234567', // Batch 47 part B: a real mobile number (stored as +639171234567)
         'address' => '123 Smart St',
         'birthdate' => '2000-01-01',
     ]);

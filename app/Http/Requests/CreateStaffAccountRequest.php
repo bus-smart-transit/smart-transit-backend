@@ -2,9 +2,8 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\ValidPhone;
 use App\Support\Gender;
-use App\Support\PhoneNumber;
-use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -22,7 +21,7 @@ class CreateStaffAccountRequest extends FormRequest
             $this->merge(['email' => strtolower(trim((string) $this->input('email')))]);
         }
         if ($this->has('phone_num')) {
-            $this->merge(['phone_num' => PhoneNumber::normalize($this->input('phone_num')) ?? trim((string) $this->input('phone_num'))]);
+            $this->merge(['phone_num' => ValidPhone::prepare($this->input('phone_num'))]);
         }
         if ($this->has('username')) {
             $this->merge(['username' => trim((string) $this->input('username'))]);
@@ -41,11 +40,7 @@ class CreateStaffAccountRequest extends FormRequest
             // Batch 46: a taken email or username gets the same plain answer (messages below), not "this account exists".
             'email' => 'required|email|max:255|unique:users,email',
             'password' => 'required|string|min:8',
-            'phone_num' => ['required', 'string', function (string $attribute, mixed $value, Closure $fail) {
-                if (PhoneNumber::normalize((string) $value) === null) {
-                    $fail(PhoneNumber::INVALID_MESSAGE);
-                }
-            }],
+            'phone_num' => ['required', 'string', new ValidPhone],
             'address' => 'required|string|max:255',
             // Batch 46 (decided 2026-11-05): address and birth date are required for Drivers and Chauffeurs.
             'birth_date' => 'required_if:role,driver,conductor|nullable|date|before:today',

@@ -28,7 +28,7 @@ it('saves a new name, phone and gender and shows them back', function () {
         'name' => '  Ana   Reyes ', 'phone_num' => '0917 123 4567', 'gender' => 'female',
     ])->assertSuccessful()
         ->assertJsonPath('data.name', 'Ana Reyes')
-        ->assertJsonPath('data.phone_num', '0917 123 4567')
+        ->assertJsonPath('data.phone_num', '+639171234567') // Batch 47 part B: stored as E.164
         ->assertJsonPath('data.gender', 'female');
 });
 
@@ -68,4 +68,22 @@ it('is closed to staff', function () {
     StaffUser::create(['user_id' => $staffUser->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Driver', 'phone_num' => '09170000075', 'address' => 'x']);
 
     $this->actingAs($staffUser)->patchJson('/api/passengers/profile', ['name' => 'Hacker'])->assertForbidden();
+});
+
+it('refuses a phone that is not a mobile number, and keeps the old one (Batch 47 part B)', function () {
+    $passenger = ppePassenger();
+
+    $this->actingAs($passenger->user)->patchJson('/api/passengers/profile', ['phone_num' => '12345'])
+        ->assertUnprocessable()->assertJsonPath('errors.phone_num.0', 'Enter a valid mobile number, for example 917 123 4567.');
+
+    expect($passenger->fresh()->phone_num)->toBe('09170000074');
+});
+
+it('stores a sign-up phone as E.164 and refuses a wrong one (Batch 47 part B)', function () {
+    $body = fn (string $email, string $phone) => ['email' => $email, 'password' => 'password123', 'password_confirmation' => 'password123', 'name' => 'Ppe New', 'phone_num' => $phone, 'address' => 'Tagum', 'birthdate' => '2000-01-01'];
+
+    $this->postJson('/api/passengers/register', $body('ppe.bad@example.com', '0817 123 4567'))->assertUnprocessable()->assertJsonValidationErrors(['phone_num']);
+    $this->postJson('/api/passengers/register', $body('ppe.good@example.com', '+63 917 555 0101'))->assertCreated();
+
+    expect(User::where('email', 'ppe.good@example.com')->first()->passengerProfile->phone_num)->toBe('+639175550101');
 });

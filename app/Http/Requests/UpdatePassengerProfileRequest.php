@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\ValidPhone;
 use App\Support\Gender;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -20,10 +21,12 @@ class UpdatePassengerProfileRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $clean = [];
-        foreach (['name', 'phone_num'] as $field) {
-            if ($this->has($field)) {
-                $clean[$field] = preg_replace('/\s+/', ' ', trim((string) $this->input($field)));
-            }
+        if ($this->has('name')) {
+            $clean['name'] = preg_replace('/\s+/', ' ', trim((string) $this->input('name')));
+        }
+        // Batch 47 part B: one stored phone form (E.164); App\Rules\ValidPhone refuses a number that is not valid.
+        if ($this->has('phone_num')) {
+            $clean['phone_num'] = ValidPhone::prepare($this->input('phone_num'));
         }
         $this->merge($clean);
     }
@@ -33,8 +36,8 @@ class UpdatePassengerProfileRequest extends FormRequest
     {
         return [
             'name' => ['sometimes', 'required', 'string', 'min:2', 'max:255'],
-            // The same phone rule as sign-up on the screen: 7 to 15 digits, spaces, dashes or brackets, optional +.
-            'phone_num' => ['sometimes', 'required', 'string', 'regex:/^\+?[\d\s\-()]{7,15}$/'],
+            // Batch 47 part B: the same phone rule as sign-up and staff forms (App\Support\PhoneNumber).
+            'phone_num' => ['sometimes', 'required', 'string', new ValidPhone],
             'gender' => ['sometimes', 'nullable', 'string', 'in:'.implode(',', Gender::VALUES)],
         ];
     }
@@ -43,7 +46,6 @@ class UpdatePassengerProfileRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'phone_num.regex' => 'Enter a valid phone number.',
             'name.min' => 'Enter your full name.',
         ];
     }

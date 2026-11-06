@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Company;
 use App\Models\StaffUser;
 use App\Models\User;
+use App\Rules\ValidPhone;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -35,7 +36,7 @@ class CreateStaffAccount extends Command
             'role' => (string) $this->argument('role'),
             'email' => strtolower(trim((string) $this->argument('email'))),
             'name' => trim((string) $this->argument('name')),
-            'phone' => trim((string) $this->argument('phone')),
+            'phone' => ValidPhone::prepare($this->argument('phone')), // Batch 47 part B: stored as E.164
             'address' => trim((string) $this->argument('address')),
             'company' => trim((string) $this->option('company')),
         ];
@@ -44,7 +45,7 @@ class CreateStaffAccount extends Command
             'role' => ['required', 'in:'.implode(',', self::ROLES)],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'name' => ['required', 'string', 'min:2', 'max:255'],
-            'phone' => ['required', 'regex:/^\+?[\d\s\-()]{7,15}$/'],
+            'phone' => ['required', new ValidPhone],
             'address' => ['required', 'string', 'max:255'],
             // Batch 46: an Operator works for a company (its Drivers, Chauffeurs and buses are that company's).
             'company' => ['required_if:role,operator', 'nullable', 'string', 'min:2', 'max:120'],

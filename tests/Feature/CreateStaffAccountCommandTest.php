@@ -62,3 +62,12 @@ it('needs the company of a new operator (Batch 46)', function () {
 
     expect(User::where('email', 'nocompany@example.com')->exists())->toBeFalse();
 });
+
+it('stores the operator phone as E.164 (Batch 47 part B)', function () {
+    $this->artisan('staff:create', ['role' => 'operator', 'email' => 'e164@example.com', 'name' => 'E164 Person', 'phone' => '0917 765 4321', 'address' => 'Tagum City', '--company' => 'Tagum Bus Lines'])
+        ->expectsQuestion('Password (at least 8 characters)', 'long-enough-1')
+        ->expectsQuestion('Type the password again', 'long-enough-1')
+        ->assertSuccessful();
+
+    expect(User::where('email', 'e164@example.com')->first()->companyProfile->phone_num)->toBe('+639177654321');
+});

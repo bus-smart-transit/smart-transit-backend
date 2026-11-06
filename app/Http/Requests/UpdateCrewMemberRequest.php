@@ -2,8 +2,7 @@
 
 namespace App\Http\Requests;
 
-use App\Support\PhoneNumber;
-use Closure;
+use App\Rules\ValidPhone;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -22,7 +21,7 @@ class UpdateCrewMemberRequest extends FormRequest
             $merge['username'] = trim((string) $this->input('username'));
         }
         if ($this->has('phone_num')) {
-            $merge['phone_num'] = PhoneNumber::normalize($this->input('phone_num')) ?? trim((string) $this->input('phone_num'));
+            $merge['phone_num'] = ValidPhone::prepare($this->input('phone_num'));
         }
         $this->merge($merge);
     }
@@ -37,11 +36,7 @@ class UpdateCrewMemberRequest extends FormRequest
         return [
             'username' => 'sometimes|required|string|min:3|max:50|regex:/^[A-Za-z0-9._-]+$/',
             'email' => 'sometimes|required|email|max:255',
-            'phone_num' => ['sometimes', 'required', 'string', function (string $attribute, mixed $value, Closure $fail) {
-                if (PhoneNumber::normalize((string) $value) === null) {
-                    $fail(PhoneNumber::INVALID_MESSAGE);
-                }
-            }],
+            'phone_num' => ['sometimes', 'required', 'string', new ValidPhone],
         ];
     }
 
