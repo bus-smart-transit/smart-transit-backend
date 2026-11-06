@@ -11,6 +11,9 @@ use Illuminate\Validation\ValidationException;
 
 class UserService
 {
+    /** Batch 48 Phase 3: a passenger account the Super Admin turned off. */
+    private const PASSENGER_TURNED_OFF = 'This account is turned off. Contact SmartTransit to turn it on again.';
+
     public function __construct(
         private UserRepository $userRepository,
         private AccountDeletionService $accountDeletion,
@@ -37,6 +40,13 @@ class UserService
         if ($user->role !== 'passenger') {
             throw ValidationException::withMessages([
                 'email' => ['Invalid email or password credentials provided.'],
+            ]);
+        }
+
+        // Batch 48 Phase 3: the Super Admin turned this account off. Told only after the right password.
+        if ($user->deactivated_at !== null) {
+            throw ValidationException::withMessages([
+                'email' => [self::PASSENGER_TURNED_OFF],
             ]);
         }
 
@@ -135,6 +145,11 @@ class UserService
         if (! $user || $user->role !== 'passenger') {
             throw ValidationException::withMessages([
                 'otp' => ['Account not found.'],
+            ]);
+        }
+        if ($user->deactivated_at !== null) {
+            throw ValidationException::withMessages([
+                'otp' => [self::PASSENGER_TURNED_OFF],
             ]);
         }
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminAccountsController;
 use App\Http\Controllers\AdminOverviewController;
 use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
@@ -459,6 +460,15 @@ Route::prefix('admin')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
         // Batch 48 Phase 2: the Super Admin Dashboard counts.
         Route::get('overview', [AdminOverviewController::class, 'show']);
+        // Batch 48 Phase 3: companies (add, rename, add a Company Admin) and every account (turn off / on).
+        Route::get('companies', [AdminAccountsController::class, 'companies']);
+        Route::post('companies', [AdminAccountsController::class, 'storeCompany'])->middleware('throttle:20,1,admin-companies-post');
+        Route::patch('companies/{companyId}', [AdminAccountsController::class, 'renameCompany'])->whereNumber('companyId')->middleware('throttle:20,1,admin-companies-patch');
+        Route::post('companies/{companyId}/company-admins', [AdminAccountsController::class, 'addCompanyAdmin'])->whereNumber('companyId')->middleware('throttle:10,1,admin-company-admins-post');
+        Route::get('users', [AdminAccountsController::class, 'users'])->middleware('throttle:60,1,admin-users');
+        Route::patch('users/{userId}/deactivate', [AdminAccountsController::class, 'deactivate'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-deactivate');
+        Route::patch('users/{userId}/reactivate', [AdminAccountsController::class, 'reactivate'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-reactivate');
+        Route::patch('users/{userId}/company-admin', [AdminAccountsController::class, 'setCompanyAdmin'])->whereNumber('userId')->middleware('throttle:20,1,admin-users-company-admin');
 
         // Admin creates operator accounts
         Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
