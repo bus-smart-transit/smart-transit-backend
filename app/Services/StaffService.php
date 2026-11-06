@@ -23,6 +23,9 @@ class StaffService
 
     private const OPERATOR_CREATABLE_ROLES = ['driver', 'conductor'];
 
+    /** 2026-11-06: a Company Admin (the route allows only them) also adds Operators to their own company. */
+    private const COMPANY_ADMIN_CREATABLE_ROLES = ['driver', 'conductor', 'operator'];
+
     public function __construct(
         UserRepository $userRepository,
         StaffRepository $staffRepository,
@@ -64,9 +67,9 @@ class StaffService
         $companyId = null;
 
         if ($createdByRole === 'operator') {
-            if (! in_array($targetRole, self::OPERATOR_CREATABLE_ROLES)) {
+            if (! in_array($targetRole, self::COMPANY_ADMIN_CREATABLE_ROLES, true)) {
                 throw ValidationException::withMessages([
-                    'role' => ['Operators can only create driver or conductor accounts.'],
+                    'role' => ['You can add Drivers, Chauffeurs and Operators only.'],
                 ]);
             }
             if ($creatorCompanyId === null) {

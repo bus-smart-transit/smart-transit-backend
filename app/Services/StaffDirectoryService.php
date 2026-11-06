@@ -11,11 +11,12 @@ use App\Support\PhoneNumber;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Batch 46 (decided 2026-11-05/06, least privilege): the Operator's Staff Directory. Every call takes the signed-in
- * Operator's company id and touches only that company's Drivers and Chauffeurs (shared by all its Operators); another
+ * Operator's company id and touches only that company's Drivers, Chauffeurs and (2026-11-06) Operators; another
  * company's person reads as not found (404). Edit changes username, phone and email only. Deactivate is soft: sign-in refused, sessions
  * ended, left out of assignment lists, history kept; refused while the person still has unfinished trips.
  */
@@ -31,12 +32,12 @@ class StaffDirectoryService
     ) {}
 
     /** One page of the Operator's own crew plus the whole-roster counts (the cards never count one page). */
-    public function page(int $companyId, ?string $search, ?string $role, int $page): array
+    public function page(int $companyId, ?string $search, ?string $role, int $page, ?int $actorUserId = null): array
     {
         $paginator = $this->staff->pageOwnCrew($companyId, $search !== null ? trim($search) : null, $role, max(1, $page), self::PER_PAGE);
 
         return [
-            'staff' => collect($paginator->items())->map(fn (StaffUser $member) => $this->present($member))->values()->all(),
+            'staff' => collect($paginator->items())->map(fn (StaffUser $member) => $this->present($member, $actorUserId))->values()->all(),
             'pagination' => [
                 'page' => $paginator->currentPage(),
                 'per_page' => $paginator->perPage(),
@@ -56,9 +57,10 @@ class StaffDirectoryService
      * @param  array{username?: ?string, phone_num?: ?string, email?: ?string}  $changes  already validated
      * @return array{member: array, changed: list<string>}
      */
-    public function update(int $companyId, int $companyUserId, array $changes): array
+    public function update(int $companyId, int $companyUserId, array $changes, ?int $actorUserId = null): array
     {
         $member = $this->ownOrFail($companyId, $companyUserId);
+        $this->assertManageable($member, $actorUserId);
         $user = $member->user;
         $changed = [];
 
@@ -93,22 +95,24 @@ class StaffDirectoryService
             });
         }
 
-        return ['member' => $this->present($this->ownOrFail($companyId, $companyUserId)), 'changed' => $changed];
+        return ['member' => $this->present($this->ownOrFail($companyId, $companyUserId), $actorUserId), 'changed' => $changed];
     }
 
     /**
      * Refused (with the list of trips) while the person still has a trip or block leg to work: the Operator replaces
      * them first (decided 2026-11-05). Then sign-in is refused and every session ends.
      */
-    public function deactivate(int $companyId, int $companyUserId): array
+    public function deactivate(int $companyId, int $companyUserId, ?int $actorUserId = null): array
     {
         $member = $this->ownOrFail($companyId, $companyUserId);
+        $this->assertManageable($member, $actorUserId);
         if ($member->user->deactivated_at !== null) {
-            return $this->present($member);
+            return $this->present($member, $actorUserId);
         }
 
         $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString();
-        $pending = $this->trips->unfinishedForCrew($companyUserId, $today);
+        // Only crew work trips; an Operator's trips belong to the whole company, so nothing is left without them.
+        $pending = $member->user->role === 'operator' ? collect() : $this->trips->unfinishedForCrew($companyUserId, $today);
         if ($pending->isNotEmpty()) {
             $lines = $pending->take(10)->map(fn ($trip) => trim(sprintf(
                 '%s %s, %s, bus %s',
@@ -129,15 +133,16 @@ class StaffDirectoryService
             $member->user->tokens()->delete();
         });
 
-        return $this->present($this->ownOrFail($companyId, $companyUserId));
+        return $this->present($this->ownOrFail($companyId, $companyUserId), $actorUserId);
     }
 
-    public function reactivate(int $companyId, int $companyUserId): array
+    public function reactivate(int $companyId, int $companyUserId, ?int $actorUserId = null): array
     {
         $member = $this->ownOrFail($companyId, $companyUserId);
+        $this->assertManageable($member, $actorUserId);
         $member->user->forceFill(['deactivated_at' => null])->save();
 
-        return $this->present($this->ownOrFail($companyId, $companyUserId));
+        return $this->present($this->ownOrFail($companyId, $companyUserId), $actorUserId);
     }
 
     /** For the audit log: what changed, with the phone masked. */
@@ -147,6 +152,24 @@ class StaffDirectoryService
             'changed' => $changed,
             'phone' => in_array('phone_num', $changed, true) ? PhoneNumber::mask($member['phone_num'] ?? null) : null,
         ];
+    }
+
+    /**
+     * 2026-11-06 (user's permission table): a Company Admin manages the company's Drivers, Chauffeurs and Operators,
+     * but not their own account here (that is My Account) and not another Company Admin (only the Super Admin
+     * changes those, so a company is never locked out of its own management).
+     */
+    private function assertManageable(StaffUser $member, ?int $actorUserId): void
+    {
+        if ($member->user?->role !== 'operator') {
+            return;
+        }
+        if ($actorUserId !== null && (int) $member->user_id === $actorUserId) {
+            throw new AccessDeniedHttpException('You cannot change your own account here. Use My Account instead.');
+        }
+        if ((bool) $member->is_company_admin) {
+            throw new AccessDeniedHttpException('Only the Super Admin can change a Company Admin account.');
+        }
     }
 
     private function ownOrFail(int $companyId, int $companyUserId): StaffUser
@@ -159,9 +182,11 @@ class StaffDirectoryService
         return $member;
     }
 
-    private function present(StaffUser $member): array
+    private function present(StaffUser $member, ?int $actorUserId = null): array
     {
         $role = (string) $member->user?->role;
+        $isYou = $actorUserId !== null && (int) $member->user_id === $actorUserId;
+        $isCompanyAdmin = $role === 'operator' && (bool) $member->is_company_admin;
 
         return [
             'company_user_id' => (int) $member->company_user_id,
@@ -171,7 +196,15 @@ class StaffDirectoryService
             'phone_num' => $member->phone_num,
             'gender' => $member->gender,
             'role' => $role,
-            'role_label' => $role === 'conductor' ? 'Chauffeur' : 'Driver',
+            'role_label' => match ($role) {
+                'conductor' => 'Chauffeur',
+                'operator' => $isCompanyAdmin ? 'Company Admin' : 'Operator',
+                default => 'Driver',
+            },
+            'is_company_admin' => $isCompanyAdmin,
+            'is_you' => $isYou,
+            // Whether a Company Admin may edit or turn off this account (never their own or another Company Admin).
+            'manageable' => ! $isYou && ! $isCompanyAdmin,
             'is_available' => (bool) $member->is_available,
             'available_since' => $member->available_since,
             'deactivated' => $member->user?->deactivated_at !== null,

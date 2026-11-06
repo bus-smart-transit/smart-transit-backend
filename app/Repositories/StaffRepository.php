@@ -39,8 +39,9 @@ class StaffRepository
     }
 
     /**
-     * Batch 46 Staff Directory: one page of a company's Drivers and Chauffeurs (active and deactivated), newest
-     * first. $search matches username, email, name and the role words ("driver", "chauffeur").
+     * Batch 46 Staff Directory: one page of a company's Drivers, Chauffeurs and (2026-11-06) Operators, active and
+     * deactivated, newest first. $search matches username, email, name and the role words ("driver", "chauffeur",
+     * "operator").
      */
     public function pageOwnCrew(int $companyId, ?string $search, ?string $role, int $page, int $perPage): LengthAwarePaginator
     {
@@ -49,7 +50,7 @@ class StaffRepository
             ->when($search !== null && $search !== '', function ($q) use ($search) {
                 $like = '%'.mb_strtolower($search).'%';
                 $roleWords = array_keys(array_filter(
-                    ['driver' => 'driver', 'conductor' => 'chauffeur'],
+                    ['driver' => 'driver', 'conductor' => 'chauffeur', 'operator' => 'operator'],
                     fn (string $word) => str_contains($word, mb_strtolower($search)),
                 ));
                 $q->where(function ($inner) use ($like, $roleWords) {
@@ -74,10 +75,10 @@ class StaffRepository
             ->groupBy('users.role')
             ->pluck('total', 'role');
 
-        return ['driver' => (int) ($counts['driver'] ?? 0), 'conductor' => (int) ($counts['conductor'] ?? 0)];
+        return ['driver' => (int) ($counts['driver'] ?? 0), 'conductor' => (int) ($counts['conductor'] ?? 0), 'operator' => (int) ($counts['operator'] ?? 0)];
     }
 
-    /** One of the company's Drivers or Chauffeurs, or null (another company's person reads as not found). */
+    /** One of the company's Drivers, Chauffeurs or Operators, or null (another company's person reads as not found). */
     public function findOwnCrew(int $companyId, int $companyUserId): ?StaffUser
     {
         return $this->ownCrewQuery($companyId)->where('company_user_id', $companyUserId)->first();
@@ -87,7 +88,7 @@ class StaffRepository
     {
         return StaffUser::with('user')
             ->where('company_users.company_id', $companyId)
-            ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor']));
+            ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor', 'operator']));
     }
 
     /** Batch 46: the company a company_users row works for (null for the Admin or an unknown id). */

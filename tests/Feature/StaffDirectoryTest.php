@@ -93,10 +93,11 @@ it('pages, searches and counts only the Operator\'s own crew', function () {
     sdtStaff('driver', 'Their Driver', $other);
 
     $this->actingAs($op, 'sanctum');
-    $first = $this->getJson('/api/operator/staff')->assertSuccessful()->json('data');
+    // 2026-11-06: the company's Operators are listed too; the role filter keeps a crew-only page.
+    $first = $this->getJson('/api/operator/staff?role=driver')->assertSuccessful()->json('data');
     expect($first['staff'])->toHaveCount(10)
-        ->and($first['pagination'])->toMatchArray(['page' => 1, 'per_page' => 10, 'total' => 13, 'last_page' => 2])
-        ->and($first['totals'])->toBe(['driver' => 12, 'conductor' => 1])
+        ->and($first['pagination'])->toMatchArray(['page' => 1, 'per_page' => 10, 'total' => 12, 'last_page' => 2])
+        ->and($first['totals'])->toBe(['driver' => 12, 'conductor' => 1, 'operator' => 1])
         ->and(json_encode($first))->not->toContain('Their Driver');
 
     $byName = $this->getJson('/api/operator/staff?search=maria')->json('data');
@@ -104,7 +105,7 @@ it('pages, searches and counts only the Operator\'s own crew', function () {
     $withFilter = $this->getJson('/api/operator/staff?search=maria&role=driver')->json('data');
 
     expect(collect($byName['staff'])->pluck('username')->all())->toBe(['maria.c'])
-        ->and($byName['totals'])->toBe(['driver' => 12, 'conductor' => 1])
+        ->and($byName['totals'])->toBe(['driver' => 12, 'conductor' => 1, 'operator' => 1])
         ->and($byRoleWord['staff'][0]['role_label'])->toBe('Chauffeur')
         ->and($withFilter['staff'])->toBe([]);
 });
@@ -137,7 +138,8 @@ it('answers 404 for another Operator\'s staff on every directory action', functi
     $myself = sdtId($op);
 
     $this->actingAs($op, 'sanctum');
-    foreach ([sdtId($theirs), $myself] as $id) {
+    $this->patchJson("/api/operator/staff/{$myself}/deactivate")->assertForbidden();
+    foreach ([sdtId($theirs)] as $id) {
         $this->patchJson("/api/operator/staff/{$id}", ['username' => 'stolen'])->assertNotFound();
         $this->patchJson("/api/operator/staff/{$id}/deactivate")->assertNotFound();
         $this->patchJson("/api/operator/staff/{$id}/reactivate")->assertNotFound();

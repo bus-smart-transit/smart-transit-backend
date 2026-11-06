@@ -348,6 +348,8 @@ class StaffAuthController extends Controller
             $request->user()->role,
             $request->user()->companyProfile?->company_id,
         );
+        // 2026-11-06: who added which staff account, and as what role (no email or phone in the log).
+        AuditLogger::log('staff.create', 'StaffUser', (int) $result['profile']->company_user_id, ['role' => $result['user']->role]);
 
         return $this->success($result, 'Account created successfully');
     }
