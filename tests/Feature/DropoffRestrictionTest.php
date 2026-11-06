@@ -38,14 +38,14 @@ function drStaff(string $role): User
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'user_id' => $user->user_id,
         'company_user_id' => null,
         'company_user_uuid' => (string) Str::uuid(),
         'name' => fake()->name(),
         'phone_num' => fake()->phoneNumber(),
         'address' => fake()->address(),
-    ]);
+    ]));
 
     return $user->fresh();
 }
@@ -485,6 +485,7 @@ it('creates a restricted area from two stop ids, and refuses stops that are not 
 
 it('lets staff set the route mode, keeping the older flag in step', function () {
     [$route, , , , $operator] = drFixture('off');
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $patch = fn (array $body) => $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/custom-dropoff", $body);
 
     $patch(['custom_dropoff_mode' => 'designated_points'])->assertSuccessful()->assertJsonPath('data.custom_dropoff_mode', 'designated_points')->assertJsonPath('data.allow_custom_dropoff', true);

@@ -94,6 +94,16 @@ class RouteStopRepository
         return RouteStop::where('stop_id', $stopId)->distinct()->pluck('route_id')->map(fn ($id) => (int) $id)->all();
     }
 
+    /** 2026-11-06: the owning company of each route that uses this stop (null for a route with no company). */
+    public function routeCompaniesForStop(int $stopId): Collection
+    {
+        return DB::table('route_stop')
+            ->join('routes', 'routes.route_id', '=', 'route_stop.route_id')
+            ->where('route_stop.stop_id', $stopId)
+            ->distinct()
+            ->pluck('routes.company_id');
+    }
+
     /** @param  array{served_by_express?: bool, express_offset_min?: int|null}  $payload */
     public function updateExpress(int $routeId, int $routeStopId, array $payload): bool
     {

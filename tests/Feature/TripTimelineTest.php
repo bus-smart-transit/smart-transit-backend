@@ -12,9 +12,12 @@ use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\RouteGeometryRepository;
+use App\Services\DriverNavigationService;
+use App\Services\OccupancyService;
 use App\Services\TicketService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -30,14 +33,14 @@ function tlStaff(string $role): User
         'password' => bcrypt('password123'),
         'role' => $role,
     ]);
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'user_id' => $user->user_id,
         'company_user_id' => null,
         'company_user_uuid' => (string) Str::uuid(),
         'name' => fake()->name(),
         'phone_num' => fake()->phoneNumber(),
         'address' => fake()->address(),
-    ]);
+    ]));
 
     return $user->fresh();
 }
@@ -279,6 +282,7 @@ it('lets operators and admins switch custom drop-off per route, and nobody else'
     $operator = tlStaff('operator');
     $passenger = User::create(['username' => 'pax', 'email' => 'pax@example.com', 'password' => bcrypt('x'), 'role' => 'passenger']);
 
+    testCompanyClaimsRoutesAndStops($operator); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($passenger)->patchJson("/api/operator/routes/{$route->route_id}/custom-dropoff", ['allow_custom_dropoff' => true])->assertForbidden();
     $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/custom-dropoff", ['allow_custom_dropoff' => true])->assertSuccessful();
     expect($route->fresh()->allow_custom_dropoff)->toBeTrue();
@@ -309,7 +313,7 @@ it('tells the passenger UI when to hide the drop-off control and when to show it
     expect($atEnd['custom_dropoff_availability']['reason'])->toContain('last stop');
 
     // Flag on, but the route has no generated path.
-    \Illuminate\Support\Facades\DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
+    DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
     $noPath = $timeline(['boarding_stop_id' => $stops['Stop B']->stop_id]);
     expect($noPath['custom_dropoff_availability']['available'])->toBeFalse();
     expect($noPath['custom_dropoff_availability']['reason'])->toContain('no generated path');
@@ -348,14 +352,14 @@ it('shows a custom drop-off to the driver as a requested stop and on the conduct
         'destination_label' => 'Barangay Hall',
     ]);
 
-    $payload = app(App\Services\DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id);
+    $payload = app(DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id);
 
     expect($payload['requested_stops'])->toHaveCount(1);
     expect($payload['requested_stops'][0]['label'])->toBe('Barangay Hall');
     expect($payload['requested_stops'][0]['passenger_count'])->toBe(1);
     expect($payload['requested_stops'][0]['after_stop_sequence'])->toBe(3); // after Stop C, before Stop D
 
-    $manifest = app(App\Services\OccupancyService::class)->getCurrentPassengers($trip->trip_id);
+    $manifest = app(OccupancyService::class)->getCurrentPassengers($trip->trip_id);
     expect($manifest['passengers'][0]['requested_stop'])->toBeTrue();
     expect($manifest['passengers'][0]['destination_stop'])->toBe('Requested stop: Barangay Hall');
 });
@@ -390,7 +394,7 @@ function tlDriverView($trip): array
     $driver = tlStaff('driver');
     $trip->forceFill(['driver_id' => $driver->companyProfile->company_user_id])->save();
 
-    return app(App\Services\DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id);
+    return app(DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id);
 }
 
 it('places a requested stop after the right stop on odd (outbound) and even (reverse) legs', function (string $direction, string $boarding, float $lat, int $expectedAfter) {
@@ -441,14 +445,14 @@ it('keeps a requested stop whose position cannot be computed, marked as unknown,
     tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop B']->stop_id, 'destination_lat' => 7.22, 'destination_lng' => 125.0, 'destination_label' => 'No path']);
     tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop D']->stop_id]);
     // The route's generated path is gone (for example it was reset).
-    Illuminate\Support\Facades\DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
+    DB::table('routes')->where('route_id', $route->route_id)->update(['route_geometry' => null]);
 
     $requested = tlDriverView($trip)['requested_stops'];
     expect($requested)->toHaveCount(1);
     expect($requested[0]['after_stop_sequence'])->toBeNull();
     expect($requested[0]['position_known'])->toBeFalse();
 
-    $manifest = app(App\Services\OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
+    $manifest = app(OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
     expect(array_column($manifest, 'destination_stop'))->toBe(['Stop D', 'Requested stop: No path']);
 });
 
@@ -460,7 +464,7 @@ it('lists the conductor manifest in drop-off order with requested stops between 
     tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_lat' => 7.12, 'destination_lng' => 125.0, 'destination_label' => 'Pin']);
     tlRequestedTicket($trip, ['origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id]);
 
-    $manifest = app(App\Services\OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
+    $manifest = app(OccupancyService::class)->getCurrentPassengers($trip->trip_id)['passengers'];
 
     expect(array_column($manifest, 'destination_stop'))->toBe($expectedOrder);
 })->with([

@@ -11,6 +11,7 @@ use App\Models\Route;
 use App\Services\RouteGeometryGenerator;
 use App\Services\RouteService;
 use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class RouteController extends Controller
@@ -26,12 +27,27 @@ class RouteController extends Controller
 
     public function show(Request $request, int $routeId)
     {
-        return $this->success($this->routeService->getRouteWithStops($routeId, $request->user()), 'Route retrieved successfully');
+        // 2026-11-06: another company's route reads as not found.
+        $route = $this->routeService->getRouteWithStops($routeId, $request->user());
+
+        return $route ? $this->success($route, 'Route retrieved successfully') : $this->error('Route not found.', 404);
     }
 
     public function store(StoreRouteRequest $request)
     {
-        return $this->success($this->routeService->createRoute($request->validated()), 'Route created successfully');
+        // 2026-11-06: a route belongs to the creating company admin's company (the platform Admin's has none).
+        $payload = $request->validated();
+        if ($request->user()?->role !== 'admin') {
+            $payload['company_id'] = $request->user()?->companyProfile?->company_id;
+        }
+
+        return $this->success($this->routeService->createRoute($payload), 'Route created successfully');
+    }
+
+    /** 2026-11-06: every change to a route's stops, line or drop-off rule needs the route to be the company's own. */
+    private function ownRouteOr404(Request $request, int $routeId): ?JsonResponse
+    {
+        return $this->routeService->userOwnsRoute($routeId, $request->user()) ? null : $this->error('Route not found.', 404);
     }
 
     /**
@@ -74,6 +90,10 @@ class RouteController extends Controller
     // Operator/admin: stop_type is editable per route stop.
     public function updateStopType(UpdateRouteStopTypeRequest $request, int $routeId, int $routeStopId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
         $updated = $this->routeService->updateStopType($routeId, $routeStopId, $request->validated('stop_type'));
 
         return $updated
@@ -84,6 +104,10 @@ class RouteController extends Controller
     // Operator/admin: which stops an express trip serves (and optional express timing).
     public function updateStopExpress(UpdateRouteStopExpressRequest $request, int $routeId, int $routeStopId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
         $updated = $this->routeService->updateStopExpress($routeId, $routeStopId, $request->validated());
 
         return $updated
@@ -94,6 +118,10 @@ class RouteController extends Controller
     // Operator/admin: D5 per-route switch for custom drop-off (default off).
     public function updateCustomDropoff(UpdateRouteCustomDropoffRequest $request, int $routeId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
         $mode = $request->validated('custom_dropoff_mode');
         $updated = $mode !== null
             ? $this->routeService->setCustomDropoffMode($routeId, (string) $mode)
@@ -113,14 +141,26 @@ class RouteController extends Controller
     // route_stop_table management — folded into RouteController, no separate controller
     public function addStop(AddRouteStopRequest $request, int $routeId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+        // 2026-11-06: only the company's own stops go on its routes (so a stop is never shared between companies).
+        if (! $this->routeService->userOwnsStop((int) $request->validated('stop_id'), $request->user())) {
+            return $this->error('Stop not found.', 404);
+        }
+
         return $this->success(
             $this->routeService->addStopToRoute($routeId, $request->validated()),
             'Stop added to route successfully'
         );
     }
 
-    public function removeStop(int $routeId, int $routeStopId)
+    public function removeStop(Request $request, int $routeId, int $routeStopId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
         $this->routeService->removeStopFromRoute($routeId, $routeStopId);
 
         return $this->success(null, 'Stop removed from route successfully');

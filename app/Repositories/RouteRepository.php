@@ -31,13 +31,14 @@ class RouteRepository
         return Route::with('routeStops.stop')->find($routeId);
     }
 
-    public function all(): Collection
+    /** Every route, or (2026-11-06) only one company's when $companyId is given. */
+    public function all(?int $companyId = null): Collection
     {
         return Route::with([
             'routeStops' => function ($q) {
                 $q->orderBy('stop_order')->with('stop');
             },
-        ])->get();
+        ])->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))->get();
     }
 
     public function update(int $routeId, array $payload): bool

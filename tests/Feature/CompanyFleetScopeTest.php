@@ -24,7 +24,7 @@ beforeEach(function () {
 function cfsOperator(Company $company, string $name): User
 {
     $user = User::create(['username' => 'cfs'.Str::random(6), 'email' => 'cfs.'.Str::random(6).'@example.com', 'password' => 'Right-password-1', 'role' => 'operator']);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => $name, 'phone_num' => '+639171234567', 'address' => 'Tagum', 'company_id' => $company->company_id]);
+    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => $name, 'phone_num' => '+639171234567', 'address' => 'Tagum', 'company_id' => $company->company_id, 'is_company_admin' => true]);
 
     return $user->fresh();
 }

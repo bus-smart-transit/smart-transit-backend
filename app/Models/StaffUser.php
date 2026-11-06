@@ -58,12 +58,15 @@ class StaffUser extends Model
         'gender',
         // Batch 46: the company an Operator, Driver or Chauffeur works for (null for the Admin).
         'company_id',
+        // 2026-11-06: manages the company's buses, fares, staff, routes and stops (other Operators dispatch).
+        'is_company_admin',
     ];
 
     protected function casts(): array
     {
         return [
             'is_available' => 'boolean',
+            'is_company_admin' => 'boolean',
             'available_since' => 'datetime',
         ];
     }

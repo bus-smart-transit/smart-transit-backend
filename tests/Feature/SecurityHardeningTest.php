@@ -21,13 +21,13 @@ function makeStaff(string $role): User
         'role' => $role,
     ]);
 
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'company_user_uuid' => (string) Str::uuid(),
         'user_id' => $user->user_id,
         'name' => Str::title($role).' User',
         'phone_num' => '09170000000',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return $user->fresh();
 }

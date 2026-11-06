@@ -2,20 +2,25 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\RouteStop> $routeStops
+ * @property-read Collection<int, RouteStop> $routeStops
+ *
  * @mixin IdeHelperRoute
+ *
  * @property int $route_id
  * @property string $origin
  * @property string $destination
  * @property string $route_name
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\FleetRoute> $fleetRoutes
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read Collection<int, FleetRoute> $fleetRoutes
  * @property-read int|null $fleet_routes_count
  * @property-read int|null $route_stops_count
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route query()
@@ -25,6 +30,7 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereRouteId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereRouteName($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Route whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class Route extends Model
@@ -33,7 +39,9 @@ class Route extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'routes';
+
     protected $primaryKey = 'route_id';
+
     /**
      * The attributes that are mass assignable from structural payloads.
      */
@@ -43,6 +51,7 @@ class Route extends Model
         'route_name',
         'allow_custom_dropoff',
         'custom_dropoff_mode',
+        'company_id', // 2026-11-06: the company that owns the route (null: the Admin's)
     ];
 
     protected $casts = [
@@ -50,8 +59,11 @@ class Route extends Model
     ];
 
     public const MODE_OFF = 'off';
+
     public const MODE_DESIGNATED = 'designated_points';
+
     public const MODE_FREE_PIN = 'free_pin';
+
     public const MODES = [self::MODE_OFF, self::MODE_DESIGNATED, self::MODE_FREE_PIN];
 
     /**
@@ -95,6 +107,7 @@ class Route extends Model
     // Canonical geometry is served by GET /routes/{id}/geometry as GeoJSON;
     // the raw column (hex EWKB on Postgres) must never leak into payloads.
     protected $hidden = ['route_geometry'];
+
     public function routeStops()
     {
         return $this->hasMany(RouteStop::class, 'route_id', 'route_id')->orderBy('stop_order');

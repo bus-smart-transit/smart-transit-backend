@@ -33,6 +33,7 @@ function ccsStaff(string $role, string $name, ?User $operator = null): User
         'phone_num' => '0917'.random_int(1000000, 9999999),
         'address' => 'Tagum City',
         'company_id' => $role === 'operator' ? Company::create(['company_name' => 'Co '.Str::random(8)])->company_id : $operator?->companyProfile?->company_id,
+        'is_company_admin' => $role === 'operator',
         'is_available' => in_array($role, ['driver', 'conductor'], true),
     ]);
 

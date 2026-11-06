@@ -1,9 +1,11 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\Stop;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class StopRepository
 {
@@ -17,9 +19,10 @@ class StopRepository
         return Stop::find($stopId);
     }
 
-    public function all(): Collection
+    /** Every stop, or (2026-11-06) only one company's when $companyId is given. */
+    public function all(?int $companyId = null): Collection
     {
-        return Stop::orderBy('stop_name')->get();
+        return Stop::orderBy('stop_name')->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))->get();
     }
 
     public function update(int $stopId, array $payload): bool
@@ -54,7 +57,7 @@ class StopRepository
             'lat' => $lat,
             'lng' => $lng,
             'routeId' => $routeId,
-            'maxDistanceKm' => $maxDistanceKm
+            'maxDistanceKm' => $maxDistanceKm,
         ]);
 
         $distanceExpr = '(6371 * acos(

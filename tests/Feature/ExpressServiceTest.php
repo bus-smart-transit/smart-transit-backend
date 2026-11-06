@@ -282,6 +282,7 @@ it('creates every leg of a shift block with the chosen service type', function (
 it('lets an operator mark a stop as served by express, with validation', function () {
     [$route, , , $operator, $routeStops] = exRoute();
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/stops/{$routeStops['B']->id}/express", ['served_by_express' => true, 'express_offset_min' => 20])->assertSuccessful();
     expect($routeStops['B']->fresh()->only(['served_by_express', 'express_offset_min']))->toBe(['served_by_express' => true, 'express_offset_min' => 20]);
 

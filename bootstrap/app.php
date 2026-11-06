@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\ApiRequestMetricsMiddleware;
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\EnsureCompanyAdmin;
 use App\Http\Middleware\OptionalSanctumAuth;
 use App\Http\Middleware\RequirePairedSession;
 use App\Http\Middleware\RequireStepUp;
@@ -35,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth.optional' => OptionalSanctumAuth::class,
             'paired' => RequirePairedSession::class,
             'step-up' => RequireStepUp::class,
+            'company.admin' => EnsureCompanyAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -12,19 +12,19 @@ uses(RefreshDatabase::class);
 function makeOperatorForFleetRouteTest(): User
 {
     $user = User::create([
-        'username' => 'operator_' . Str::random(6),
-        'email' => 'operator_' . Str::random(6) . '@example.com',
+        'username' => 'operator_'.Str::random(6),
+        'email' => 'operator_'.Str::random(6).'@example.com',
         'password' => bcrypt('password'),
         'role' => 'operator',
     ]);
 
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'user_id' => $user->user_id,
         'company_user_uuid' => (string) Str::uuid(),
         'name' => 'Operator Test',
         'phone_num' => '09123456789',
         'address' => 'Davao City',
-    ]);
+    ]));
 
     return $user->fresh();
 }
@@ -48,6 +48,7 @@ it('assigns a route to a fleet with required operating window', function () {
         'route_name' => 'Davao - Tagum',
     ]);
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)
         ->postJson("/api/operator/fleets/{$fleet->fleet_id}/routes", [
             'route_id' => $route->route_id,

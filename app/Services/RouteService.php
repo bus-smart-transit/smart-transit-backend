@@ -8,6 +8,7 @@ use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
+use App\Support\CompanyScope;
 use App\Support\Geo\GeoLine;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -31,7 +32,8 @@ class RouteService
 
     public function listRoutes(?User $user = null): object
     {
-        $routes = $this->routeRepository->all();
+        // 2026-11-06: staff see their own company's routes; the platform Admin sees every route.
+        $routes = $this->routeRepository->all(CompanyScope::companyFilterFor($user));
 
         return $routes->each(fn (Route $route) => $this->attachGeometryState($route, $user));
     }
@@ -39,8 +41,28 @@ class RouteService
     public function getRouteWithStops(int $routeId, ?User $user = null): ?object
     {
         $route = $this->routeRepository->findWithStops($routeId);
+        // 2026-11-06: another company's route reads as not found.
+        if ($route && $user && ! CompanyScope::ownsRow($route->company_id, $user)) {
+            return null;
+        }
 
         return $route ? $this->attachGeometryState($route, $user) : null;
+    }
+
+    /** 2026-11-06: may this user put this stop on a route, or change it? Own company's only. */
+    public function userOwnsStop(int $stopId, ?User $user): bool
+    {
+        $stop = $this->stopRepository->findById($stopId);
+
+        return $stop !== null && CompanyScope::ownsRow($stop->company_id, $user);
+    }
+
+    /** 2026-11-06: may this user change the route (its stops, line, drop-off rule)? Own company's only. */
+    public function userOwnsRoute(int $routeId, ?User $user): bool
+    {
+        $route = $this->routeRepository->findById($routeId);
+
+        return $route !== null && CompanyScope::ownsRow($route->company_id, $user);
     }
 
     /**
@@ -109,7 +131,9 @@ class RouteService
     // Routes are shared network data, so every operator and admin may redraw any route (cooldown, throttle and audit log still apply).
     public function canRegenerateGeometry(int $routeId, ?User $user): bool
     {
-        return in_array($user?->role, ['admin', 'operator'], true);
+        // 2026-11-06: the platform Admin, or a company admin of the route's company.
+        return ($user?->role === 'admin' || ($user?->role === 'operator' && (bool) $user->companyProfile?->is_company_admin))
+            && $this->userOwnsRoute($routeId, $user);
     }
 
     public function queueManualGeometryRegeneration(int $routeId): void

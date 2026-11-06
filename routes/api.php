@@ -183,14 +183,14 @@ Route::prefix('operator')
         Route::patch('2fa-preference', [StaffAuthController::class, 'updateTwoFactorPreference']);
 
         // Account management — operator can only create driver/conductor accounts
-        Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware('throttle:10,1,mgmt-accounts-post');
+        Route::post('accounts', [StaffAuthController::class, 'createAccount'])->middleware(['company.admin', 'throttle:10,1,mgmt-accounts-post']);
         Route::get('drivers', [StaffAuthController::class, 'listDrivers']);
         Route::get('conductors', [StaffAuthController::class, 'listConductors']);
         // Batch 46: the Staff Directory. Only this Operator's own Drivers and Chauffeurs; another company's is a 404.
         Route::get('staff', [StaffDirectoryController::class, 'index'])->middleware('throttle:60,1,mgmt-staff');
-        Route::patch('staff/{companyUserId}', [StaffDirectoryController::class, 'update'])->whereNumber('companyUserId')->middleware('throttle:20,1,mgmt-staff-patch');
-        Route::patch('staff/{companyUserId}/deactivate', [StaffDirectoryController::class, 'deactivate'])->whereNumber('companyUserId')->middleware('throttle:10,1,mgmt-staff-deactivate');
-        Route::patch('staff/{companyUserId}/reactivate', [StaffDirectoryController::class, 'reactivate'])->whereNumber('companyUserId')->middleware('throttle:10,1,mgmt-staff-reactivate');
+        Route::patch('staff/{companyUserId}', [StaffDirectoryController::class, 'update'])->whereNumber('companyUserId')->middleware(['company.admin', 'throttle:20,1,mgmt-staff-patch']);
+        Route::patch('staff/{companyUserId}/deactivate', [StaffDirectoryController::class, 'deactivate'])->whereNumber('companyUserId')->middleware(['company.admin', 'throttle:10,1,mgmt-staff-deactivate']);
+        Route::patch('staff/{companyUserId}/reactivate', [StaffDirectoryController::class, 'reactivate'])->whereNumber('companyUserId')->middleware(['company.admin', 'throttle:10,1,mgmt-staff-reactivate']);
         // §4.8: the crew's time in / time out (Start Shift / End Shift) on this Operator's buses, read only.
         Route::get('crew-shifts', [CrewShiftLogController::class, 'index'])->middleware('throttle:60,1,mgmt-crew-shifts');
         // 2026-10-27: onsite discount types (Student, Senior citizen, PWD) and this Operator's on/off choice.
@@ -200,30 +200,30 @@ Route::prefix('operator')
         // Fleet management
         Route::get('fleets', [FleetController::class, 'index']);
         Route::get('routes', [RouteController::class, 'index']);
-        Route::post('routes', [RouteController::class, 'store'])->middleware('throttle:10,1,mgmt-routes-post');
+        Route::post('routes', [RouteController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-routes-post']);
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
         Route::get('stops', [StopController::class, 'index']);
-        Route::post('stops', [StopController::class, 'store'])->middleware('throttle:10,1,mgmt-stops-post');
-        Route::put('stops/{stopId}', [StopController::class, 'update'])->middleware('throttle:10,1,mgmt-stops-put');
-        Route::delete('stops/{stopId}', [StopController::class, 'destroy']);
-        Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop']);
-        Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop']);
-        Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType']);
-        Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress']);
-        Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware('throttle:3,1,mgmt-routes-geometry-regenerate-post');
-        Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff']);
+        Route::post('stops', [StopController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-stops-post']);
+        Route::put('stops/{stopId}', [StopController::class, 'update'])->middleware(['company.admin', 'throttle:10,1,mgmt-stops-put']);
+        Route::delete('stops/{stopId}', [StopController::class, 'destroy'])->middleware('company.admin');
+        Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop'])->middleware('company.admin');
+        Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop'])->middleware('company.admin');
+        Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType'])->middleware('company.admin');
+        Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress'])->middleware('company.admin');
+        Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware(['company.admin', 'throttle:3,1,mgmt-routes-geometry-regenerate-post']);
+        Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff'])->middleware('company.admin');
         Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
-        Route::post('fleets', [FleetController::class, 'store']);
-        Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute']);
+        Route::post('fleets', [FleetController::class, 'store'])->middleware('company.admin');
+        Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute'])->middleware('company.admin');
 
         // Fare rules
         Route::get('fare-rules', [FareRuleController::class, 'listRules']);
-        Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware('step-up');        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
+        Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware(['company.admin', 'step-up']);        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
         // 2026-11-06: edit (end, stop, or change a rule not yet started) and copy to a later date; same extra check.
-        Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,mgmt-fare-rules-patch']);
-        Route::post('fare-rules/{fareRuleId}/copy', [FareRuleController::class, 'copyRule'])->whereNumber('fareRuleId')->middleware(['step-up', 'throttle:20,1,mgmt-fare-rules-copy']);
+        Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['company.admin', 'step-up', 'throttle:20,1,mgmt-fare-rules-patch']);
+        Route::post('fare-rules/{fareRuleId}/copy', [FareRuleController::class, 'copyRule'])->whereNumber('fareRuleId')->middleware(['company.admin', 'step-up', 'throttle:20,1,mgmt-fare-rules-copy']);
         // 2026-11-06: an Operator edits a bus of their own company (another company's is a 404).
-        Route::patch('fleets/{fleetId}', [FleetController::class, 'update'])->whereNumber('fleetId')->middleware('throttle:20,1,mgmt-fleets-patch');
+        Route::patch('fleets/{fleetId}', [FleetController::class, 'update'])->whereNumber('fleetId')->middleware(['company.admin', 'throttle:20,1,mgmt-fleets-patch']);
 
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);

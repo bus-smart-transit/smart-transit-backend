@@ -36,6 +36,7 @@ function sdtStaff(string $role, string $name, ?User $operator = null, array $ove
         'phone_num' => '+639171234567',
         'address' => 'Tagum City',
         'company_id' => $role === 'operator' ? Company::create(['company_name' => 'Co '.Str::random(8)])->company_id : $operator?->companyProfile?->company_id,
+        'is_company_admin' => $role === 'operator',
         'is_available' => $over['is_available'] ?? true,
     ]);
 

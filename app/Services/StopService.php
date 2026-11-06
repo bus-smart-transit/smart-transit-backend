@@ -29,12 +29,26 @@ class StopService
             'latitude' => $coordinates['latitude'],
             'longitude' => $coordinates['longitude'],
             'municipality' => $this->regionService->canonicalMunicipality($payload['municipality'] ?? null),
-        ], fn ($value, $key) => $key !== 'stop_code' || $value !== null, ARRAY_FILTER_USE_BOTH));
+            'company_id' => $payload['company_id'] ?? null, // 2026-11-06: owner (null: the platform Admin's)
+        ], fn ($value, $key) => ! in_array($key, ['stop_code', 'company_id'], true) || $value !== null, ARRAY_FILTER_USE_BOTH));
     }
 
-    public function listStops(): object
+    /** Every stop, or (2026-11-06) one company's. */
+    public function listStops(?int $companyId = null): object
     {
-        return $this->stopRepository->all();
+        return $this->stopRepository->all($companyId);
+    }
+
+    public function findStop(int $stopId): ?object
+    {
+        return $this->stopRepository->findById($stopId);
+    }
+
+    /** 2026-11-06: is the stop on a route of another company (so it may not be moved or deleted by this one)? */
+    public function usedByAnotherCompany(int $stopId, int $companyId): bool
+    {
+        return $this->routeStopRepository->routeCompaniesForStop($stopId)
+            ->contains(fn ($routeCompanyId) => (int) $routeCompanyId !== $companyId);
     }
 
     // $payload = ['stop_name','latitude','longitude'] (all optional via sometimes)

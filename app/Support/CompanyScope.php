@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\StaffUser;
+use App\Models\User;
 use Illuminate\Contracts\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -60,6 +61,30 @@ class CompanyScope
         }
 
         return in_array($b, self::operatorIdsFor($a), true);
+    }
+
+    /**
+     * 2026-11-06: may this signed-in user act on a row owned by $rowCompanyId (routes, stops)? The platform Admin may;
+     * staff only on their own company's rows (a row with no company is the Admin's).
+     */
+    public static function ownsRow(mixed $rowCompanyId, ?User $user): bool
+    {
+        if ($user?->role === 'admin') {
+            return true;
+        }
+        $companyId = $user?->companyProfile?->company_id;
+
+        return $companyId !== null && $rowCompanyId !== null && (int) $rowCompanyId === (int) $companyId;
+    }
+
+    /** The company of the signed-in staff member; null for the platform Admin (all companies); 0 when they have none. */
+    public static function companyFilterFor(?User $user): ?int
+    {
+        if ($user?->role === 'admin') {
+            return null;
+        }
+
+        return (int) ($user?->companyProfile?->company_id ?? 0);
     }
 
     /** Limits rows that record their Operator in $column to the Operator's company. */

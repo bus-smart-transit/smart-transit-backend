@@ -22,7 +22,7 @@ function freOperator(string $companyName): User
 {
     $company = Company::firstOrCreate(['company_name' => $companyName]);
     $user = User::create(['username' => 'fre'.Str::random(6), 'email' => 'fre.'.Str::random(6).'@example.com', 'password' => 'Right-password-1', 'role' => 'operator']);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Fre Op', 'phone_num' => '+639171234567', 'address' => 'Tagum', 'company_id' => $company->company_id]);
+    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Fre Op', 'phone_num' => '+639171234567', 'address' => 'Tagum', 'company_id' => $company->company_id, 'is_company_admin' => true]);
 
     return $user->fresh();
 }

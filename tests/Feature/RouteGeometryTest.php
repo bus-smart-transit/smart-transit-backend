@@ -190,8 +190,9 @@ it('flags stale and queues regeneration when a stop is added to a route', functi
     $extra = Stop::create(['stop_name' => 'Mid', 'latitude' => 7.1, 'longitude' => 125.0]);
 
     $user = User::create(['username' => 'op_'.Str::random(5), 'email' => Str::random(6).'@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']));
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($user->fresh())
         ->postJson("/api/operator/routes/{$route->route_id}/stops", ['stop_id' => $extra->stop_id, 'stop_order' => 3, 'distance_from_origin_km' => 23])
         ->assertSuccessful();
@@ -202,7 +203,7 @@ it('flags stale and queues regeneration when a stop is added to a route', functi
 
 it('rejects invalid stop coordinates on create', function (float $lat, float $lng) {
     $user = User::create(['username' => 'op_'.Str::random(5), 'email' => Str::random(6).'@example.com', 'password' => bcrypt('password'), 'role' => 'operator']);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Op', 'phone_num' => '09123456789', 'address' => 'X']));
 
     $this->actingAs($user->fresh())
         ->postJson('/api/operator/stops', ['stop_name' => 'Bad', 'latitude' => $lat, 'longitude' => $lng])
@@ -226,6 +227,7 @@ it('rejects a stop update when the routing provider cannot snap it near a road',
     $operator = makeRouteRedrawStaff('operator');
     $stop = Stop::create(['stop_name' => 'Existing stop', 'latitude' => 7.07, 'longitude' => 125.6]);
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)
         ->putJson("/api/operator/stops/{$stop->stop_id}", ['latitude' => 7.071, 'longitude' => 125.601])
         ->assertStatus(422)
@@ -311,13 +313,13 @@ function makeRouteRedrawStaff(string $role): User
         'password' => bcrypt('password'),
         'role' => $role,
     ]);
-    StaffUser::create([
+    joinTestCompany(StaffUser::create([
         'user_id' => $user->user_id,
         'company_user_uuid' => (string) Str::uuid(),
         'name' => 'Route Redraw '.ucfirst($role),
         'phone_num' => '09123456789',
         'address' => 'Test Address',
-    ]);
+    ]));
 
     return $user->fresh();
 }
@@ -349,6 +351,7 @@ it('allows an Operator to queue and audit a redraw for a route assigned to their
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
     assignRouteRedrawFleet($route, $operator);
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)
         ->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
         ->assertSuccessful()
@@ -378,6 +381,7 @@ it('lets an Operator redraw any route, including a new route with no fleet and a
     assignRouteRedrawFleet($othersRoute, $otherOperator);
 
     foreach ([$unassigned, $othersRoute] as $route) {
+        testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
         $this->actingAs($operator)->getJson("/api/operator/routes/{$route->route_id}")
             ->assertSuccessful()
             ->assertJsonPath('data.can_regenerate_geometry', true);
@@ -428,6 +432,7 @@ it('shows a redraw as queued, then how long it took and that it finished', funct
     $operator = makeRouteRedrawStaff('operator');
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")
         ->assertSuccessful()
         ->assertJsonPath('data.redraw.pending', true)
@@ -460,6 +465,7 @@ it('says why a redraw did not finish, and keeps the page from waiting', function
     $operator = makeRouteRedrawStaff('operator');
     $route = makeRouteWithStops([['A', 7.0, 125.0, 0], ['B', 7.2, 125.0, 22]]);
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $this->actingAs($operator)->postJson("/api/operator/routes/{$route->route_id}/geometry/regenerate")->assertSuccessful();
     (new GenerateRouteGeometry($route->route_id))->handle(app(RouteGeometryGenerator::class));
 

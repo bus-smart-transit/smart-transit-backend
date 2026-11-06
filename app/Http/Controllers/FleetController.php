@@ -7,6 +7,7 @@ use App\Http\Requests\StoreFleetRequest;
 use App\Http\Requests\UpdateFleetRequest;
 use App\Services\AuditLogger;
 use App\Services\FleetService;
+use App\Services\RouteService;
 use App\Services\StaffService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -68,6 +69,10 @@ class FleetController extends Controller
         $scope = $this->operatorScope($request);
         if ($scope !== null && ! $this->fleetService->isOwnedByOperator($fleetId, $scope)) {
             return $this->error('Fleet not found.', 404);
+        }
+        // 2026-11-06: and only one of the company's own routes.
+        if ($scope !== null && ! app(RouteService::class)->userOwnsRoute((int) $request->validated('route_id'), $request->user())) {
+            return $this->error('Route not found.', 404);
         }
 
         $fleetRoute = $this->fleetService->assignRouteToFleet($fleetId, $request->validated());

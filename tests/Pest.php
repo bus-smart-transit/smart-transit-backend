@@ -1,7 +1,10 @@
 <?php
 
 use App\Models\Company;
+use App\Models\Route;
 use App\Models\StaffUser;
+use App\Models\Stop;
+use App\Models\User;
 use Tests\TestCase;
 
 /*
@@ -70,7 +73,8 @@ function joinTestCompany(StaffUser $staff): StaffUser
     if ($role === 'operator' && $staff->company_id === null) {
         $first = ! $operators()->where('company_user_id', '!=', $staff->company_user_id)->exists();
         $company = Company::create(['company_name' => 'Test Bus Co. '.$staff->company_user_id]);
-        $staff->forceFill(['company_id' => $company->company_id])->save();
+        // 2026-11-06: older tests expect an Operator to manage buses, fares, staff, routes and stops: a company admin.
+        $staff->forceFill(['company_id' => $company->company_id, 'is_company_admin' => true])->save();
         if ($first) {
             StaffUser::whereNull('company_id')
                 ->whereHas('user', fn ($q) => $q->whereIn('role', ['driver', 'conductor']))
@@ -84,4 +88,19 @@ function joinTestCompany(StaffUser $staff): StaffUser
     }
 
     return $staff;
+}
+
+/**
+ * 2026-11-06: routes and stops belong to a company, and only that company's Operators change them. Older tests build
+ * routes and stops directly (no company) and then act as an Operator; they call this first: every route and stop that
+ * has no company joins the company of $for (the acting Operator), or the first test company.
+ */
+function testCompanyClaimsRoutesAndStops(?User $for = null): void
+{
+    $companyId = $for?->companyProfile?->company_id ?? Company::query()->orderBy('company_id')->value('company_id');
+    if ($companyId === null) {
+        return;
+    }
+    Route::whereNull('company_id')->update(['company_id' => $companyId]);
+    Stop::whereNull('company_id')->update(['company_id' => $companyId]);
 }

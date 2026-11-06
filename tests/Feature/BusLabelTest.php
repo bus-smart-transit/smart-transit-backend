@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Company;
 use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
@@ -25,7 +26,7 @@ uses(RefreshDatabase::class);
 function blStaff(string $role): User
 {
     $user = User::create(['username' => $role.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
-    StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role), 'phone_num' => '0917', 'address' => 'x']);
+    joinTestCompany(StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role), 'phone_num' => '0917', 'address' => 'x']));
 
     return $user->fresh();
 }
@@ -133,12 +134,15 @@ it('lets an operator register and edit the label fields, and rejects unsafe text
     $operator = blStaff('operator');
     $admin = blStaff('admin');
 
+    testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $created = $this->actingAs($operator)->postJson('/api/operator/fleets', [
         'plate_number' => 'NEW-001', 'bus_company_name' => "Mindanao O'Brien Lines", 'body_no' => 'B-7',
         'seated_capacity' => 30, 'standing_capacity' => 10, 'fleet_type' => 'public',
     ])->assertSuccessful();
     $fleetId = $created->json('data.fleet_id');
-    expect(Fleet::find($fleetId)->only(['bus_company_name', 'body_no']))->toBe(['bus_company_name' => "Mindanao O'Brien Lines", 'body_no' => 'B-7']);
+    // Batch 46 step 2 (2026-11-06): an Operator's new bus takes the company name as its label; the typed name is not used.
+    $companyName = Company::find($operator->companyProfile->company_id)->company_name;
+    expect(Fleet::find($fleetId)->only(['bus_company_name', 'body_no']))->toBe(['bus_company_name' => $companyName, 'body_no' => 'B-7']);
 
     $this->actingAs($operator)->postJson('/api/operator/fleets', [
         'plate_number' => 'NEW-002', 'bus_company_name' => '<script>alert(1)</script>', 'seated_capacity' => 30, 'standing_capacity' => 10, 'fleet_type' => 'public',

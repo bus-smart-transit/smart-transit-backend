@@ -116,6 +116,7 @@ class DavaoRegionDemoSeeder extends Seeder
             $operator = $staff['operator'];
             foreach (self::ROUTES as $name => [$origin, $destination, $stops, $bus]) {
                 $route = Route::firstOrCreate(['route_name' => $name], ['origin' => $origin, 'destination' => $destination]);
+                $route->forceFill(['company_id' => $operator->company_id])->save(); // 2026-11-06: owned by the demo company
                 $this->stops($route, $stops);
                 $this->bus($route, $operator, $bus);
             }
@@ -144,7 +145,8 @@ class DavaoRegionDemoSeeder extends Seeder
 
         // Batch 46 (least privilege): the demo Operator and every demo Driver and Chauffeur work for one demo company.
         $companyId = Company::firstOrCreate(['company_name' => self::COMPANY_NAME])->company_id;
-        $made['operator']->forceFill(['company_id' => $companyId])->save();
+        // 2026-11-06: the demo Operator is the demo company's admin (manages buses, fares, staff, routes and stops).
+        $made['operator']->forceFill(['company_id' => $companyId, 'is_company_admin' => true])->save();
         foreach (self::STAFF as [$username, , $role]) {
             if (in_array($role, ['driver', 'conductor'], true)) {
                 // Available like a newly added crew member, so the demo schedule can be built (Batch 46 availability rule).
@@ -174,7 +176,7 @@ class DavaoRegionDemoSeeder extends Seeder
         RouteStop::where('route_id', $route->route_id)->delete();
         foreach ($stops as $i => [$name, $lat, $lng, $type, $municipality]) {
             $stop = Stop::firstOrCreate(['stop_name' => $name], ['latitude' => $lat, 'longitude' => $lng]);
-            $stop->update(['municipality' => $municipality]);
+            $stop->update(['municipality' => $municipality, 'company_id' => $route->company_id]); // 2026-11-06: the route's company
             RouteStop::create([
                 'route_id' => $route->route_id,
                 'stop_id' => $stop->stop_id,
