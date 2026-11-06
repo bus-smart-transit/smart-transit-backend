@@ -446,11 +446,12 @@ Route::prefix('conductor')
         Route::get('pairing-status', [FleetPairingController::class, 'conductorPairingStatus']);
     });
 
-// ADMIN (developers)
-// Full access to everything — no restrictions
+// SUPER ADMIN (the `admin` role: the developers, over every company)
+// Batch 48 Phase 1: one named rate limit for the whole group (routes may add stricter ones), and every successful
+// change is recorded in the audit log (admin.audit). Super Admin accounts are made only with `staff:create admin`.
 
 Route::prefix('admin')
-    ->middleware(['auth:sanctum', 'role:admin'])
+    ->middleware(['auth:sanctum', 'role:admin', 'throttle:120,1,admin', 'admin.audit'])
     ->group(function () {
         Route::delete('logout', [StaffAuthController::class, 'logout']);
         Route::get('profile', [StaffAuthController::class, 'profile']);

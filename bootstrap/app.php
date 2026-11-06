@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\ApiRequestMetricsMiddleware;
+use App\Http\Middleware\AuditAdminWrites;
 use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\EnsureCompanyAdmin;
 use App\Http\Middleware\OptionalSanctumAuth;
@@ -37,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'paired' => RequirePairedSession::class,
             'step-up' => RequireStepUp::class,
             'company.admin' => EnsureCompanyAdmin::class,
+            'admin.audit' => AuditAdminWrites::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
