@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RescheduleLegRequest;
 use App\Services\AuditLogger;
 use App\Services\ShiftBlockService;
+use App\Support\CompanyScope;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -328,7 +329,8 @@ class ShiftBlockController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        if ((int) $block->company_user_id !== (int) $companyUserId) {
+        // Batch 46 step 2: any Operator of the block's company.
+        if (! CompanyScope::sameCompany((int) $companyUserId, (int) $block->company_user_id)) {
             return $this->error('You do not have permission to modify this shift block.', 403);
         }
 

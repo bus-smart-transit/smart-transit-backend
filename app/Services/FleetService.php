@@ -1,16 +1,25 @@
 <?php
+
 namespace App\Services;
+
+use App\Models\FleetRoute;
+use App\Repositories\CompanyRepository;
 use App\Repositories\FleetRepository;
 use App\Repositories\FleetRouteRepository;
+use App\Repositories\StaffRepository;
+use App\Support\CompanyScope;
+use App\Support\VehicleClass;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class FleetService
 {
     public function __construct(
         private FleetRepository $fleetRepository,
         private FleetRouteRepository $fleetRouteRepository,
-    ) {
-    }
+        private CompanyRepository $companies,
+        private StaffRepository $staff,
+    ) {}
 
     // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type', 'routes' => [['route_id','start_time','end_time'], ...]]
     public function registerFleet(array $payload, int $staffId): object
@@ -19,10 +28,18 @@ class FleetService
         $capacity = (intval($payload['seated_capacity'] ?? 0) + intval($payload['standing_capacity'] ?? 0));
         $routes = $payload['routes'] ?? [];
         unset($payload['routes']);
-        $payload['vehicle_class'] = \App\Support\VehicleClass::normalize($payload['vehicle_class'] ?? null);
+        $payload['vehicle_class'] = VehicleClass::normalize($payload['vehicle_class'] ?? null);
 
         // B3: the fleet row and its fleets_routes rows are written atomically so
         // a fleet can never be saved while its selected routes are silently lost.
+        // Batch 46 step 2: the bus belongs to the registering Operator's company, and its passenger label starts with the
+        // company name (so the label and the owner cannot disagree). An Operator without a company keeps what was typed.
+        $company = $this->companies->find((int) CompanyScope::companyIdOf($staffId));
+        if ($company) {
+            $payload['company_id'] = $company->company_id;
+            $payload['bus_company_name'] = $company->company_name;
+        }
+
         return DB::transaction(function () use ($payload, $staffId, $capacity, $routes) {
             $fleet = $this->fleetRepository->create(array_merge(
                 $payload,
@@ -61,7 +78,7 @@ class FleetService
 
         // The class is stored in its canonical form (an alias such as "deluxe" becomes "aircon"); empty clears it.
         if (array_key_exists('vehicle_class', $payload)) {
-            $payload['vehicle_class'] = \App\Support\VehicleClass::normalize($payload['vehicle_class']);
+            $payload['vehicle_class'] = VehicleClass::normalize($payload['vehicle_class']);
         }
 
         // An empty string clears an optional label field.
@@ -76,9 +93,28 @@ class FleetService
         return $fleet->fresh();
     }
 
-    public function listFleets(): object
+    /** Batch 46 step 2: an Operator lists their company's buses; null (the Admin) lists every active bus. */
+    public function listFleets(?int $operatorCompanyUserId = null): object
     {
-        return $this->fleetRepository->all();
+        return $operatorCompanyUserId === null
+            ? $this->fleetRepository->all()
+            : $this->fleetRepository->forCompanyOf($operatorCompanyUserId);
+    }
+
+    /**
+     * Batch 46 step 2: a trip or shift block may only run on a bus of the owner's company. The same answer for an
+     * unknown and another company's bus, so nothing about other companies is revealed. An Admin owner is not limited.
+     *
+     * @throws ValidationException
+     */
+    public function assertFleetRouteOfCompany(int $ownerCompanyUserId, mixed $fleetRouteId): void
+    {
+        if ($this->staff->roleOf($ownerCompanyUserId) === 'admin') {
+            return;
+        }
+        if (! $fleetRouteId || ! $this->fleetRepository->fleetRouteIsOwnedByOperator((int) $fleetRouteId, $ownerCompanyUserId)) {
+            throw ValidationException::withMessages(['fleet_route_id' => ['Choose one of your own buses.']]);
+        }
     }
 
     /**
@@ -95,10 +131,7 @@ class FleetService
         return $this->fleetRouteRepository->listActiveByOperator($companyUserId);
     }
 
-    /**
-     * All active fleet routes — used by the trip-scheduling form so operators
-     * can schedule trips on fleets they did not personally create.
-     */
+    /** All active fleet routes of every company: the Admin only (Batch 46). */
     public function listAllFleetRoutes(): object
     {
         return $this->fleetRouteRepository->listAll();
@@ -109,12 +142,12 @@ class FleetService
     {
         // The same route cannot be assigned to a bus twice: two rows would double its trips and its list entries.
         // To change the hours, the Operator removes or edits the existing assignment.
-        $alreadyAssigned = \App\Models\FleetRoute::where('fleet_id', $fleetId)
+        $alreadyAssigned = FleetRoute::where('fleet_id', $fleetId)
             ->where('route_id', $payload['route_id'] ?? null)
             ->where('status', 'active')
             ->exists();
         if ($alreadyAssigned) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'route_id' => ['This bus already has this route assigned.'],
             ]);
         }

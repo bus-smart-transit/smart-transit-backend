@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\BusLabel;
+use App\Support\CompanyScope;
 use App\Support\FinancialClock;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Arr;
@@ -355,7 +356,8 @@ class FinancialReportService
             ->where('payments.is_valid', true);
 
         if ($owner !== null) {
-            $q->where('fleets.company_user_id', $owner);
+            // Batch 46 step 2: every bus of the Operator's company.
+            CompanyScope::whereFleetOfCompany($q, $owner);
         }
 
         return $q;
@@ -609,12 +611,12 @@ class FinancialReportService
         $routes = DB::table('fleets_routes')
             ->join('routes', 'routes.route_id', '=', 'fleets_routes.route_id')
             ->join('fleets', 'fleets.fleet_id', '=', 'fleets_routes.fleet_id')
-            ->when($owner !== null, fn ($q) => $q->where('fleets.company_user_id', $owner))
+            ->when($owner !== null, fn ($q) => CompanyScope::whereFleetOfCompany($q, $owner))
             ->select('routes.route_id', 'routes.route_name')->distinct()->orderBy('routes.route_name')->get()
             ->map(fn ($r) => ['route_id' => (int) $r->route_id, 'route_name' => $r->route_name])->all();
 
         $fleets = DB::table('fleets')
-            ->when($owner !== null, fn ($q) => $q->where('company_user_id', $owner))
+            ->when($owner !== null, fn ($q) => CompanyScope::whereFleetOfCompany($q, $owner))
             ->orderBy('plate_number')->get(['fleet_id', 'plate_number', 'bus_company_name', 'body_no'])
             ->map(fn ($f) => ['fleet_id' => (int) $f->fleet_id, 'plate_number' => $f->plate_number, 'bus_label' => BusLabel::compose($f->bus_company_name, $f->body_no)])->all();
 

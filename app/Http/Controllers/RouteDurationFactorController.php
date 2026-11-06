@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\RouteDurationFactor;
 use App\Repositories\FleetRouteRepository;
 use App\Services\AuditLogger;
+use App\Services\FleetService;
 use App\Services\LegPlanningService;
 use App\Services\OperatorRouteAccess;
 use App\Services\RouteDurationFactorService;
@@ -124,7 +125,8 @@ class RouteDurationFactorController extends Controller
             return $this->error('Bus route not found.', 404);
         }
         $user = $request->user();
-        if ($user->role === 'operator' && (int) $fleetRoute->fleet?->company_user_id !== (int) $user->companyProfile?->company_user_id) {
+        // Batch 46 step 2: a bus of the Operator's company.
+        if ($user->role === 'operator' && ! app(FleetService::class)->isOwnedByOperator((int) $fleetRoute->fleet_id, (int) $user->companyProfile?->company_user_id)) {
             return $this->error('You do not have permission to plan for that bus.', 403);
         }
 

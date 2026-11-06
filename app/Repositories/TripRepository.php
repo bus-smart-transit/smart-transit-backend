@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Trip;
+use App\Support\CompanyScope;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -49,8 +50,8 @@ class TripRepository
     {
         $today = $this->serviceToday();
 
-        $query = Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])
-            ->where('company_user_id', $operatorCompanyUserId)
+        // Batch 46 step 2: every trip of the Operator's company (CompanyScope).
+        $query = CompanyScope::whereMadeByCompany(Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests']), 'company_user_id', $operatorCompanyUserId)
             ->orderBy('trip_date', 'asc')
             ->orderBy('departure_time', 'asc');
 
@@ -229,9 +230,8 @@ class TripRepository
      */
     public function isOwnedByOperator(int $tripId, int $companyUserId): bool
     {
-        return Trip::where('trip_id', $tripId)
-            ->where('company_user_id', $companyUserId)
-            ->exists();
+        // Batch 46 step 2: any Operator of the trip's company (CompanyScope).
+        return CompanyScope::whereMadeByCompany(Trip::where('trip_id', $tripId), 'company_user_id', $companyUserId)->exists();
     }
 
     public function assignDriver(int $tripId, int $driverCompanyUserId): bool
@@ -618,7 +618,7 @@ class TripRepository
             ->where('status', 'scheduled');
 
         if ($operatorCompanyUserId !== null) {
-            $query->where('company_user_id', $operatorCompanyUserId);
+            CompanyScope::whereMadeByCompany($query, 'company_user_id', $operatorCompanyUserId);
         }
 
         $timezone = config('app.timezone', 'Asia/Manila');

@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperFleet
+ *
  * @property int $fleet_id
  * @property int $company_user_id
  * @property string $plate_number
@@ -13,14 +16,15 @@ use Illuminate\Database\Eloquent\Model;
  * @property int $seated_capacity
  * @property int $standing_capacity
  * @property string $status
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  * @property string|null $fleet_type
- * @property-read \App\Models\StaffUser $companyUser
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\FareRule> $fareRules
+ * @property-read StaffUser $companyUser
+ * @property-read Collection<int, FareRule> $fareRules
  * @property-read int|null $fare_rules_count
- * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\FleetRoute> $fleetRoutes
+ * @property-read Collection<int, FleetRoute> $fleetRoutes
  * @property-read int|null $fleet_routes_count
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet query()
@@ -34,11 +38,13 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereStandingCapacity($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|Fleet whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class Fleet extends Model
 {
     protected $table = 'fleets';
+
     protected $primaryKey = 'fleet_id';
 
     protected $fillable = [
@@ -52,11 +58,18 @@ class Fleet extends Model
         'status',
         'fleet_type', // 'public' | 'private'
         'vehicle_class', // config('fares.vehicle_classes') key; null until the operator sets it (Batch 28 item 5)
+        'company_id', // Batch 46 step 2: the company that owns the bus (company_user_id = who registered it)
     ];
 
     public function companyUser()
     {
         return $this->belongsTo(StaffUser::class, 'company_user_id');
+    }
+
+    /** Batch 46 step 2: the company that owns this bus. */
+    public function company()
+    {
+        return $this->belongsTo(Company::class, 'company_id', 'company_id');
     }
 
     public function fleetRoutes()

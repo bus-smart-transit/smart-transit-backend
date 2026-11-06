@@ -50,6 +50,9 @@ class DavaoRegionDemoSeeder extends Seeder
         ['driver4', 'driver4@smarttransit.com', 'driver', 'Demo Driver Four', '09000000008'],
         ['conductor3', 'conductor3@smarttransit.com', 'conductor', 'Demo Chauffeur Three', '09000000009'],
         ['conductor4', 'conductor4@smarttransit.com', 'conductor', 'Demo Chauffeur Four', '09000000010'],
+        // Batch 46: reserved for the browser check system-flow.e2e.js, so no other test uses this crew on the same day.
+        ['driver5', 'driver5@smarttransit.com', 'driver', 'Demo Driver Five', '09000000011'],
+        ['conductor5', 'conductor5@smarttransit.com', 'conductor', 'Demo Chauffeur Five', '09000000012'],
     ];
 
     /** Mock passengers for trying bookings: [username, email, name, phone, address]. */
@@ -187,7 +190,9 @@ class DavaoRegionDemoSeeder extends Seeder
         [$plate, $body, $class, $capacity, $seated, $standing] = $bus;
         $fleet = Fleet::firstOrCreate(['plate_number' => $plate], [
             'company_user_id' => $operator->company_user_id,
-            'bus_company_name' => 'SAMPLE Transit Co.',
+            // Batch 46 step 2: the bus belongs to the demo company and its passenger label starts with that name.
+            'company_id' => $operator->company_id,
+            'bus_company_name' => self::COMPANY_NAME,
             'body_no' => $body,
             'capacity' => $capacity,
             'seated_capacity' => $seated,

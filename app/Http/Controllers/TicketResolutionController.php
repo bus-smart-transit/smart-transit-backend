@@ -8,7 +8,9 @@ use App\Services\AuditLogger;
 use App\Services\TicketResolutionService;
 use App\Services\TicketService;
 use App\Services\TripCancellationService;
+use App\Support\CompanyScope;
 use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
@@ -69,7 +71,7 @@ class TicketResolutionController extends Controller
 
         $tickets = Ticket::with(['trip.fleetRoute.route', 'passenger.user', 'payment'])
             ->whereIn('status', [TripCancellationService::AWAITING_CHOICE, TicketResolutionService::PENDING, TicketResolutionService::REVIEW])
-            ->when($companyUserId !== null, fn ($q) => $q->whereHas('trip', fn ($t) => $t->where('company_user_id', $companyUserId)))
+            ->when($companyUserId !== null, fn ($q) => $q->whereHas('trip', fn ($t) => CompanyScope::whereMadeByCompany($t, 'trips.company_user_id', $companyUserId)))
             ->orderByDesc('ticket_id')
             ->limit(200)
             ->get();
@@ -99,7 +101,7 @@ class TicketResolutionController extends Controller
     public function staffShow(Request $request, string $ticketUuid)
     {
         $ticket = $this->staffTicket($request, $ticketUuid);
-        if ($ticket instanceof \Illuminate\Http\JsonResponse) {
+        if ($ticket instanceof JsonResponse) {
             return $ticket;
         }
 
@@ -109,7 +111,7 @@ class TicketResolutionController extends Controller
     public function staffChoose(Request $request, string $ticketUuid)
     {
         $ticket = $this->staffTicket($request, $ticketUuid);
-        if ($ticket instanceof \Illuminate\Http\JsonResponse) {
+        if ($ticket instanceof JsonResponse) {
             return $ticket;
         }
 
@@ -130,7 +132,7 @@ class TicketResolutionController extends Controller
     public function recordCash(Request $request, int $resolutionId)
     {
         $resolution = $this->staffResolution($request, $resolutionId);
-        if ($resolution instanceof \Illuminate\Http\JsonResponse) {
+        if ($resolution instanceof JsonResponse) {
             return $resolution;
         }
 
@@ -144,7 +146,7 @@ class TicketResolutionController extends Controller
     public function review(Request $request, int $resolutionId)
     {
         $resolution = $this->staffResolution($request, $resolutionId);
-        if ($resolution instanceof \Illuminate\Http\JsonResponse) {
+        if ($resolution instanceof JsonResponse) {
             return $resolution;
         }
 
@@ -179,7 +181,7 @@ class TicketResolutionController extends Controller
         return $companyUserId ? (int) $companyUserId : false;
     }
 
-    private function staffTicket(Request $request, string $ticketUuid): Ticket|\Illuminate\Http\JsonResponse
+    private function staffTicket(Request $request, string $ticketUuid): Ticket|JsonResponse
     {
         $scope = $this->operatorScope($request);
         if ($scope === false) {
@@ -187,21 +189,21 @@ class TicketResolutionController extends Controller
         }
 
         $ticket = $this->ticketService->getTicketByUuidOrFail($ticketUuid);
-        if ($scope !== null && (int) $ticket->trip?->company_user_id !== $scope) {
+        if ($scope !== null && ! CompanyScope::sameCompany($scope, (int) $ticket->trip?->company_user_id)) {
             return $this->error('Ticket not found.', 404);
         }
 
         return $ticket;
     }
 
-    private function staffResolution(Request $request, int $resolutionId): TicketResolution|\Illuminate\Http\JsonResponse
+    private function staffResolution(Request $request, int $resolutionId): TicketResolution|JsonResponse
     {
         $resolution = TicketResolution::with('ticket.trip')->find($resolutionId);
         $scope = $this->operatorScope($request);
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
         }
-        if (! $resolution || ($scope !== null && (int) $resolution->ticket?->trip?->company_user_id !== $scope)) {
+        if (! $resolution || ($scope !== null && ! CompanyScope::sameCompany($scope, (int) $resolution->ticket?->trip?->company_user_id))) {
             return $this->error('Refund not found.', 404);
         }
 

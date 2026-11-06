@@ -11,6 +11,7 @@ use App\Models\Fleet;
 use App\Services\AuditLogger;
 use App\Services\FareRuleService;
 use App\Services\FleetService;
+use App\Support\CompanyScope;
 use App\Support\ServiceType;
 use App\Support\VehicleClass;
 use App\Traits\ApiResponse;
@@ -81,7 +82,8 @@ class FareRuleController extends Controller
             if (! $companyUserId) {
                 return $this->error('Staff profile not found.', 404);
             }
-            $filters['fleet_ids'] = Fleet::where('company_user_id', $companyUserId)->pluck('fleet_id')->all();
+            // Batch 46 step 2: the fares of every bus of the Operator's company.
+            $filters['fleet_ids'] = CompanyScope::whereFleetOfCompany(Fleet::query(), (int) $companyUserId)->pluck('fleet_id')->all();
         }
 
         return $this->success($this->fareRuleService->listRules($filters), 'Fare rules retrieved successfully');

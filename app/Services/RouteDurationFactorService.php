@@ -6,6 +6,7 @@ use App\Models\RouteDurationFactor;
 use App\Models\Trip;
 use App\Repositories\RouteDurationFactorRepository;
 use App\Repositories\RouteStopRepository;
+use App\Support\CompanyScope;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
@@ -244,7 +245,7 @@ class RouteDurationFactorService
             ->where('status', 'completed')
             ->whereNotNull('departed_at')
             ->whereNotNull('completed_at')
-            ->when($companyUserId, fn ($q) => $q->where('company_user_id', $companyUserId))
+            ->when($companyUserId, fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $companyUserId))
             ->when($routeId, fn ($q) => $q->whereHas('fleetRoute', fn ($f) => $f->where('route_id', $routeId)))
             ->get();
 

@@ -36,6 +36,7 @@ class TripService
         private RouteDurationFactorService $durationFactors,
         private FleetScheduleGuard $fleetGuard,
         private StaffService $staff,
+        private FleetService $fleets,
     ) {}
 
     /**
@@ -79,6 +80,9 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
+        // Batch 46 step 2: only on a bus of the scheduling Operator's company.
+        $this->fleets->assertFleetRouteOfCompany((int) $payload['company_user_id'], $payload['fleet_route_id'] ?? null);
+
         // The bus must be running this route at that time, and not already on another trip then.
         if (! empty($payload['fleet_route_id']) && ! empty($payload['departure_time']) && ! empty($payload['trip_date'])) {
             $this->fleetGuard->assertCanSchedule(

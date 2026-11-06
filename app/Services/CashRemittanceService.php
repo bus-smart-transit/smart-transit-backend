@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CashRemittance;
 use App\Models\ConductorShiftLog;
 use App\Support\BusLabel;
+use App\Support\CompanyScope;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -57,7 +58,7 @@ class CashRemittanceService
         $page = max(1, (int) ($filters['page'] ?? 1));
         $perPage = max(1, min(50, (int) ($filters['per_page'] ?? 20)));
 
-        $query = $this->baseQuery()->where('r.operator_company_user_id', $operatorCompanyUserId);
+        $query = $this->baseQuery()->whereIn('r.operator_company_user_id', CompanyScope::operatorIdsFor($operatorCompanyUserId));
         if (in_array($status, [CashRemittance::PENDING, CashRemittance::CONFIRMED, CashRemittance::FLAGGED, CashRemittance::RESOLVED], true)) {
             $query->where('r.status', $status);
         }
@@ -81,7 +82,7 @@ class CashRemittanceService
     {
         DB::transaction(function () use ($remittanceId, $operatorCompanyUserId, $operator, $countedAmount, $note) {
             // Another Operator's batch is the same answer as a missing one.
-            $batch = CashRemittance::whereKey($remittanceId)->where('operator_company_user_id', $operatorCompanyUserId)->lockForUpdate()->first();
+            $batch = CashRemittance::whereKey($remittanceId)->whereIn('operator_company_user_id', CompanyScope::operatorIdsFor($operatorCompanyUserId))->lockForUpdate()->first();
             if (! $batch) {
                 throw new ModelNotFoundException;
             }
@@ -151,7 +152,7 @@ class CashRemittanceService
         }
 
         DB::transaction(function () use ($remittanceId, $operatorCompanyUserId, $operator, $note) {
-            $batch = CashRemittance::whereKey($remittanceId)->where('operator_company_user_id', $operatorCompanyUserId)->lockForUpdate()->first();
+            $batch = CashRemittance::whereKey($remittanceId)->whereIn('operator_company_user_id', CompanyScope::operatorIdsFor($operatorCompanyUserId))->lockForUpdate()->first();
             if (! $batch) {
                 throw new ModelNotFoundException;
             }

@@ -1,6 +1,9 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\Fleet;
+use App\Support\CompanyScope;
 use Illuminate\Support\Collection;
 
 class FleetRepository
@@ -26,14 +29,28 @@ class FleetRepository
     }
 
     /**
-     * IDOR guard: does this fleet belong to the given operator?
-     * Moved here from inline Model::where()->exists() checks duplicated
-     * across several controllers (FareRuleController, ReportingController).
+     * IDOR guard: does this fleet belong to the given Operator's company? (Batch 46 step 2: by company, so every
+     * Operator of the company may act on it; CompanyScope.)
      */
     public function isOwnedByOperator(int $fleetId, int $companyUserId): bool
     {
-        return Fleet::where('fleet_id', $fleetId)
-            ->where('company_user_id', $companyUserId)
-            ->exists();
+        return CompanyScope::whereFleetOfCompany(Fleet::where('fleet_id', $fleetId), $companyUserId)->exists();
+    }
+
+    /** Batch 46 step 2: the active buses of an Operator's company, with their routes. */
+    public function forCompanyOf(int $companyUserId): Collection
+    {
+        return CompanyScope::whereFleetOfCompany(Fleet::with('fleetRoutes.route'), $companyUserId)
+            ->where('status', 'active')
+            ->get();
+    }
+
+    /** Batch 46 step 2: does this fleet route run on a bus of the Operator's company? */
+    public function fleetRouteIsOwnedByOperator(int $fleetRouteId, int $companyUserId): bool
+    {
+        return CompanyScope::whereFleetOfCompany(
+            Fleet::whereHas('fleetRoutes', fn ($q) => $q->where('fleet_route_id', $fleetRouteId)),
+            $companyUserId,
+        )->exists();
     }
 }

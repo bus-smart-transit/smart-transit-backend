@@ -45,6 +45,7 @@ class ShiftBlockService
         private FleetScheduleGuard $fleetGuard,
         private LegPlanningService $legPlanning,
         private StaffService $staff,
+        private FleetService $fleets,
     ) {}
 
     /**
@@ -202,6 +203,8 @@ class ShiftBlockService
     private function assertCrewPair(array $payload): array
     {
         $owner = (int) $payload['company_user_id'];
+        // Batch 46 step 2: the bus must be the owner's company's too (checked first, before reading anyone's schedule).
+        $this->fleets->assertFleetRouteOfCompany($owner, $payload['fleet_route_id'] ?? null);
 
         return [
             $this->staff->assertCrewOf($owner, $payload['driver_id'] ?? null, 'driver', 'driver_id'),

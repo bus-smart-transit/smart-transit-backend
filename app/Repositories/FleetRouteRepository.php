@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\FleetRoute;
+use App\Support\CompanyScope;
 use Illuminate\Support\Collection;
 
 class FleetRouteRepository
@@ -22,10 +23,10 @@ class FleetRouteRepository
         return FleetRoute::with(['route', 'fleet'])->find($fleetRouteId);
     }
 
-    /** @return array<int, int> the routes this Operator's buses are assigned to */
+    /** @return array<int, int> the routes the buses of this Operator's company are assigned to (Batch 46: by company) */
     public function routeIdsForCompany(int $companyUserId): array
     {
-        return FleetRoute::whereHas('fleet', fn ($q) => $q->where('company_user_id', $companyUserId))->pluck('route_id')->unique()->values()->all();
+        return FleetRoute::whereHas('fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $companyUserId))->pluck('route_id')->unique()->values()->all();
     }
 
     public function listByRoute(int $routeId): Collection
@@ -56,17 +57,14 @@ class FleetRouteRepository
     {
         return FleetRoute::with(['fleet', 'route'])
             ->where('status', 'active')
-            ->whereHas('fleet', function ($q) use ($companyUserId) {
-                $q->where('company_user_id', $companyUserId)
-                    ->where('status', 'active');
-            })
+            ->whereHas('fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $companyUserId)->where('fleets.status', 'active'))
             ->orderBy('fleet_route_id', 'asc')
             ->get();
     }
 
     /**
-     * Return all active fleet routes regardless of which operator created the fleet.
-     * Used for trip scheduling so any operator can schedule trips on any fleet route.
+     * Return all active fleet routes regardless of company. Batch 46: only for the Admin; an Operator gets
+     * listActiveByOperator (their company's buses).
      */
     public function listAll(): Collection
     {

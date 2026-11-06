@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\TripAssignmentRequest;
+use App\Support\CompanyScope;
 use Illuminate\Support\Collection;
 
 class TripAssignmentRequestRepository
@@ -31,7 +32,7 @@ class TripAssignmentRequestRepository
     {
         return TripAssignmentRequest::with(['trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'staff.user'])
             ->where('status', TripAssignmentRequest::FOR_APPROVAL)
-            ->whereHas('trip', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->whereHas('trip', fn ($q) => CompanyScope::whereMadeByCompany($q, 'trips.company_user_id', $operatorCompanyUserId))
             ->orderBy('created_at')
             ->get();
     }
@@ -39,7 +40,7 @@ class TripAssignmentRequestRepository
     public function countPendingForOperator(int $operatorCompanyUserId): int
     {
         return TripAssignmentRequest::where('status', TripAssignmentRequest::FOR_APPROVAL)
-            ->whereHas('trip', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->whereHas('trip', fn ($q) => CompanyScope::whereMadeByCompany($q, 'trips.company_user_id', $operatorCompanyUserId))
             ->count();
     }
 

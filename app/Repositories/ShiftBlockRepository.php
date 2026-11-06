@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\ShiftBlock;
+use App\Support\CompanyScope;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -110,7 +111,7 @@ class ShiftBlockRepository
     public function findPendingReview(int $operatorCompanyUserId): Collection
     {
         return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user'])
-            ->where('company_user_id', $operatorCompanyUserId)
+            ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->where('audit_status', 'pending_review')
             ->orderByDesc('scheduled_date')
             ->get();
@@ -119,7 +120,7 @@ class ShiftBlockRepository
     public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null, ?int $limit = null): Collection
     {
         $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
-            ->where('company_user_id', $operatorCompanyUserId)
+            ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->orderByDesc('scheduled_date');
 
         if ($statusFilter && $statusFilter !== 'all') {
@@ -135,7 +136,7 @@ class ShiftBlockRepository
     public function paginateForOperator(int $operatorCompanyUserId, int $page, int $perPage): LengthAwarePaginator
     {
         return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
-            ->where('company_user_id', $operatorCompanyUserId)
+            ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->orderByDesc('scheduled_date')
             ->orderByDesc('shift_block_id')
             ->paginate($perPage, ['*'], 'page', $page);

@@ -8,6 +8,9 @@ use App\Repositories\StaffRepository;
 use App\Repositories\TripAssignmentRequestRepository;
 use App\Repositories\TripNotificationRepository;
 use App\Repositories\TripRepository;
+use App\Support\CompanyScope;
+use App\Support\ScheduleStatus;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -26,6 +29,7 @@ use Illuminate\Validation\ValidationException;
 class TripAssignmentRequestService
 {
     public const REASON_CODES = ['sick', 'vehicle_issue', 'schedule_conflict', 'other'];
+
     public const REASON_TEXT_MAX = 300;
 
     public function __construct(
@@ -36,8 +40,7 @@ class TripAssignmentRequestService
         private TripNotificationRepository $notificationRepository,
         private FcmService $fcmService,
         private ShiftBlockAssignmentService $blockAssignments,
-    ) {
-    }
+    ) {}
 
     /** Free text is plain text only: tags stripped, whitespace squished, length capped. */
     public static function sanitizeReasonText(?string $text): ?string
@@ -75,8 +78,8 @@ class TripAssignmentRequestService
         }
 
         // Batch 29, issue 3: a date that has passed (Manila) can no longer be answered.
-        if (\App\Support\ScheduleStatus::isPastDate($trip->trip_date?->toDateString())) {
-            throw ValidationException::withMessages(['status' => [\App\Support\ScheduleStatus::PAST_DATE_MESSAGE]]);
+        if (ScheduleStatus::isPastDate($trip->trip_date?->toDateString())) {
+            throw ValidationException::withMessages(['status' => [ScheduleStatus::PAST_DATE_MESSAGE]]);
         }
 
         $assignedId = $role === 'driver' ? $trip->driver_id : $trip->conductor_id;
@@ -146,7 +149,7 @@ class TripAssignmentRequestService
     }
 
     /**
-     * @param 'approve'|'reject' $decision
+     * @param  'approve'|'reject'  $decision
      */
     public function decide(int $requestId, string $decision, int $operatorCompanyUserId): object
     {
@@ -156,8 +159,8 @@ class TripAssignmentRequestService
         }
 
         $trip = $request->trip;
-        if (! $trip || (int) $trip->company_user_id !== $operatorCompanyUserId) {
-            throw new \Illuminate\Auth\Access\AuthorizationException('You do not have permission to decide this request.');
+        if (! $trip || ! CompanyScope::sameCompany($operatorCompanyUserId, (int) $trip->company_user_id)) {
+            throw new AuthorizationException('You do not have permission to decide this request.');
         }
 
         if ($request->status !== TripAssignmentRequest::FOR_APPROVAL) {

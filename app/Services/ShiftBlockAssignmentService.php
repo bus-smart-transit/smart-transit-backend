@@ -11,8 +11,10 @@ use App\Repositories\FleetDailyPinRepository;
 use App\Repositories\TripAssignmentRequestRepository;
 use App\Repositories\TripNotificationRepository;
 use App\Repositories\TripRepository;
+use App\Support\CompanyScope;
 use App\Support\ScheduleStatus;
 use App\Support\ServiceType;
+use App\Support\TripRunInfo;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -171,7 +173,7 @@ class ShiftBlockAssignmentService
     {
         $limit ??= (int) config('shift_blocks.operator_card_limit');
         $blocks = ShiftBlock::with(['fleet', 'legs.fleetRoute.route', 'legs.fleetRoute.fleet'])
-            ->where('company_user_id', $operatorCompanyUserId)
+            ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->where('status', '!=', 'cancelled')
             ->orderByDesc('scheduled_date')
             ->limit($limit)
@@ -234,8 +236,8 @@ class ShiftBlockAssignmentService
             'block_type' => $block?->block_type,
             'service_type' => ServiceType::normalize($first?->service_type),
             // Batch 28 Stage 3, item 8: a block of several legs is a "Round-trip run"; the service says which stops an express serves.
-            'run_pattern' => \App\Support\TripRunInfo::runPattern($first?->trip_type, $block?->shift_block_id ? (int) $block->shift_block_id : null, $block ? $ordered->count() : null),
-            'service' => $first ? \App\Support\TripRunInfo::forTrip($first)['service'] : null,
+            'run_pattern' => TripRunInfo::runPattern($first?->trip_type, $block?->shift_block_id ? (int) $block->shift_block_id : null, $block ? $ordered->count() : null),
+            'service' => $first ? TripRunInfo::forTrip($first)['service'] : null,
             'plate_number' => ($block?->fleet ?? $first?->fleetRoute?->fleet)?->plate_number,
             'role' => $role,
             'assignment_status' => $record?->status,

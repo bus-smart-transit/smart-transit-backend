@@ -167,6 +167,8 @@ it('refuses another company\'s crew on a shift block and on a range preview, bef
 
     $payload = [
         'company_user_id' => ccsId($mine),
+        // Batch 46 step 2: on one of the Operator's own buses, so the check reaches the crew.
+        'fleet_route_id' => ccsTrip($mine)->fleet_route_id,
         'driver_id' => ccsId($myDriver),
         'conductor_id' => ccsId($theirChauffeur),
         'from_date' => now()->addDays(3)->toDateString(),

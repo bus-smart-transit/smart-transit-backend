@@ -45,7 +45,7 @@ function makeStaffUser(string $role): User
  * Create a FleetRoute with its parent Fleet and Route records.
  * The Fleet requires an owning company_user, so we create a minimal operator for it.
  */
-function makeFleetRoute(): FleetRoute
+function makeFleetRoute(?User $owner = null): FleetRoute
 {
     // Route requires origin + destination; refresh() ensures custom PK is populated
     $route = Route::create([
@@ -55,11 +55,13 @@ function makeFleetRoute(): FleetRoute
     ]);
     $route->refresh();
 
-    // Fleet requires a company_user_id FK
-    $operatorForFleet = makeStaffUser('operator');
+    // Fleet requires a company_user_id FK. Batch 46 step 2: a test that schedules on it passes the scheduling Operator,
+    // since a trip may only run on a bus of the Operator's own company.
+    $operatorForFleet = $owner ?? makeStaffUser('operator');
 
     $fleet = Fleet::create([
         'company_user_id' => $operatorForFleet->companyProfile->company_user_id,
+        'company_id' => $operatorForFleet->companyProfile->company_id,
         'plate_number' => 'ABC-'.fake()->unique()->numerify('###'),
         'capacity' => 50,
         'seated_capacity' => 40,
@@ -86,7 +88,7 @@ test('operator can schedule a trip', function () {
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $conductor = makeStaffUser('conductor');
-    $fleetRoute = makeFleetRoute();
+    $fleetRoute = makeFleetRoute($operator); // Batch 46 step 2: the scheduling Operator's own bus
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,
@@ -120,7 +122,7 @@ test('scheduling a trip rejects a non-driver as driver_id and does not create a 
     $operator = makeStaffUser('operator');
     $notADriver = makeStaffUser('conductor');
     $conductor = makeStaffUser('conductor');
-    $fleetRoute = makeFleetRoute();
+    $fleetRoute = makeFleetRoute($operator); // Batch 46 step 2: the scheduling Operator's own bus
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,
@@ -144,7 +146,7 @@ test('scheduling a trip rejects a non-conductor as conductor_id and does not cre
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $notAConductor = makeStaffUser('driver');
-    $fleetRoute = makeFleetRoute();
+    $fleetRoute = makeFleetRoute($operator); // Batch 46 step 2: the scheduling Operator's own bus
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,
@@ -168,7 +170,7 @@ test('scheduling a valid trip for today still auto-generates a PIN', function ()
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $conductor = makeStaffUser('conductor');
-    $fleetRoute = makeFleetRoute();
+    $fleetRoute = makeFleetRoute($operator); // Batch 46 step 2: the scheduling Operator's own bus
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,
@@ -259,7 +261,7 @@ test('operator can schedule a round trip with required departure time', function
     $operator = makeStaffUser('operator');
     $driver = makeStaffUser('driver');
     $conductor = makeStaffUser('conductor');
-    $fleetRoute = makeFleetRoute();
+    $fleetRoute = makeFleetRoute($operator); // Batch 46 step 2: the scheduling Operator's own bus
 
     $response = $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $fleetRoute->fleet_route_id,

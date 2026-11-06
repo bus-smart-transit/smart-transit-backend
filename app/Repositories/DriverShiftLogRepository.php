@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\DriverShiftLog;
+use App\Support\CompanyScope;
 use Illuminate\Support\Collection;
 
 class DriverShiftLogRepository
@@ -17,7 +18,7 @@ class DriverShiftLogRepository
     {
         return DriverShiftLog::with(['driver.user', 'trip.fleetRoute.route', 'trip.fleetRoute.fleet'])
             ->whereDate('shift_date', $date)
-            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $operatorCompanyUserId))
             ->orderBy('started_at')
             ->get();
     }
@@ -29,7 +30,7 @@ class DriverShiftLogRepository
             ->whereDate('shift_date', '>=', $from)
             ->whereDate('shift_date', '<=', $to)
             ->when($staffCompanyUserId !== null, fn ($q) => $q->where('driver_company_user_id', $staffCompanyUserId))
-            ->whereHas('trip.fleetRoute.fleet', fn ($q) => $q->where('company_user_id', $operatorCompanyUserId))
+            ->whereHas('trip.fleetRoute.fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $operatorCompanyUserId))
             ->orderBy('started_at')
             ->get();
     }
