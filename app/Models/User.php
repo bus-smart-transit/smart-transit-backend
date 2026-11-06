@@ -72,6 +72,8 @@ class User extends Authenticatable
         'password',
         'remember_token',
         'fcm_token',
+        // 2026-11-07: the linked Google account's id is never sent out.
+        'google_uid',
     ];
 
     protected function casts(): array

@@ -18,6 +18,7 @@ use App\Http\Controllers\FleetController;
 use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
 use App\Http\Controllers\FleetPairingController;
+use App\Http\Controllers\GoogleSignInController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
@@ -49,6 +50,8 @@ use Illuminate\Support\Facades\Route;
 // Login endpoints use controller-level RateLimiter (failed-only counting).
 // 2026-10-30: one sign-in address for passengers and staff (the body's `portal` picks the flow).
 Route::post('auth/login', [SignInController::class, 'login']);
+// 2026-11-07: passengers sign in with Google (Firebase Authentication ID token).
+Route::post('auth/google', [GoogleSignInController::class, 'store'])->middleware('throttle:10,1,auth-google');
 // 2026-10-28: a new email verification code (right after sign-up, the password is not at hand to sign in again).
 Route::post('passengers/verify-email/resend', [AuthController::class, 'resendVerification'])->middleware('throttle:verify-email-resend');
 Route::post('passengers/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:passengers-verify-otp');

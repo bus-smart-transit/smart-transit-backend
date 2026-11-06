@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\UserNotificationRepository;
+use App\Support\FirebaseCredentials;
 use App\Support\HealthBeat;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Messaging;
@@ -48,24 +49,8 @@ class FcmService
 
     private function buildMessaging(): Messaging
     {
-        $factory = new Factory;
-
-        $credentialsJson = config('services.firebase.credentials_json');
-        if (! empty($credentialsJson)) {
-            $decoded = json_decode($credentialsJson, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \RuntimeException('FIREBASE_CREDENTIALS_JSON is not valid JSON.');
-            }
-
-            return $factory->withServiceAccount($decoded)->createMessaging();
-        }
-
-        $credentialsPath = config('services.firebase.credentials');
-        if (empty($credentialsPath) || ! file_exists($credentialsPath)) {
-            throw new \RuntimeException('Firebase service-account credentials not found. Set FIREBASE_CREDENTIALS_JSON or place the JSON file at the configured path.');
-        }
-
-        return $factory->withServiceAccount($credentialsPath)->createMessaging();
+        // 2026-11-07: shared with Google sign-in (App\Support\FirebaseCredentials).
+        return FirebaseCredentials::factory()->createMessaging();
     }
 
     public function isEnabled(): bool
