@@ -7,6 +7,7 @@ use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
 use App\Support\BookingWindow;
 use App\Support\BusLabel;
+use App\Support\PlaceGroups;
 use App\Support\ServiceType;
 use App\Support\TripRunInfo;
 use App\Support\VehicleClass;
@@ -34,6 +35,9 @@ class TripResolverService
         private FareRuleService $fareRuleService,
         private FareRuleResolver $fareRuleResolver,
         private RouteDurationFactorService $durationFactors,
+        private PlaceGroups $places,
+        private TripProgressService $progress,
+        private TripTimelineService $timeline,
     ) {}
 
     /**
@@ -98,8 +102,9 @@ class TripResolverService
     private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): array
     {
         $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
+        // Batch 49 item 2: a trip on the road is listed too ("Departed", or bookable from a stop still ahead).
         $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
-            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', ...TripProgressService::RUNNING])
             ->whereDate('trip_date', $date->toDateString())
             ->get();
 
@@ -205,7 +210,7 @@ class TripResolverService
 
         $windowEnd = $target->copy()->startOfDay()->addDays((int) config('booking.search_window_days'));
         $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
-            ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', ...TripProgressService::RUNNING])
             ->whereDate('trip_date', '>=', $target->toDateString())
             ->whereDate('trip_date', '<=', $windowEnd->toDateString())
             ->get();
@@ -213,8 +218,9 @@ class TripResolverService
         $best = null;
         foreach ($trips as $trip) {
             $candidate = $this->evaluate($trip, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $target, $timezone);
-            // Book Now / Book Later pick only a bookable trip: one that has a fare rule (an express trip needs an express rule).
-            if ($candidate && ! $this->hasFare($trip, $seatType)) {
+            // Book Now / Book Later pick only a bookable trip: one that has a fare rule (an express trip needs an express rule)
+            // and, once on the road, a boarding stop still ahead of the bus (Batch 49 item 2).
+            if ($candidate && (! $this->hasFare($trip, $seatType) || $candidate['departed'])) {
                 continue;
             }
             if ($candidate && ($best === null || $candidate['boards_at']->lt($best['boards_at']))) {
@@ -249,7 +255,11 @@ class TripResolverService
         $seatType = $query['seat_type'] ?? 'seated';
         $date = $this->assertDateInWindow($query['date'], $now, $timezone);
 
-        $found = $this->eligibleOnDate($date, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $now, $timezone);
+        // Batch 49 item 2: the departure picker offers only departures that can be booked (not "Departed" ones).
+        $found = array_values(array_filter(
+            $this->eligibleOnDate($date, (int) $query['origin_stop_id'], (int) $query['destination_stop_id'], $seatType, $now, $timezone),
+            fn ($candidate) => ! $candidate['departed'],
+        ));
 
         return [
             'date' => $date->toDateString(),
@@ -285,7 +295,9 @@ class TripResolverService
             'service' => $best['service_info'] ?? null,
             // Bookable only where a fare rule prices this trip (an express trip needs an express rule); otherwise it is
             // listed with "Fare unavailable" and cannot be booked.
-            'bookable' => $this->hasFare($best['trip'], $seatType),
+            'bookable' => $this->hasFare($best['trip'], $seatType) && ! ($best['departed'] ?? false),
+            // Batch 49 item 2: Departed / Boarding / On the way (with the next stop), or null before the bus leaves.
+            'progress' => $best['progress'] ?? null,
             'seats_left' => $best['seats_left'],
         ];
     }
@@ -333,6 +345,9 @@ class TripResolverService
         $isStopping = fn ($index) => ServiceType::isServed($service, $stops[$index]);
         $stoppingIndexes = $stops->keys()->filter($isStopping)->values();
 
+        // Batch 49 item 6: a chosen stop is a place; this trip matches through whichever stop of it its route has.
+        $originId = $this->places->onRoute($originId, $stops->pluck('stop_id'));
+        $destinationId = $this->places->onRoute($destinationId, $stops->pluck('stop_id'));
         $originIndex = $originId === null ? $stoppingIndexes->first() : $stops->search(fn ($s) => (int) $s->stop_id === $originId);
         $destinationIndex = $destinationId === null ? $stoppingIndexes->last() : $stops->search(fn ($s) => (int) $s->stop_id === $destinationId);
 
@@ -352,8 +367,15 @@ class TripResolverService
         $destinationOffset = $this->durationFactors->scale(ServiceType::offsetMinutes($service, $stops[$destinationIndex]), $factor);
         $start = Carbon::parse($trip->trip_date->toDateString().' '.$time, $timezone);
         $boardsAt = $start->copy()->addMinutes((int) ($offset ?? 0));
-        if ($boardsAt->lt($target)) {
+        // Batch 49 item 2: a trip on the road is not judged by its timetable. From a stop still ahead of the bus it is
+        // bookable, at the bus's expected time there; from a stop behind it, it is listed as "Departed".
+        $running = TripProgressService::isRunning($trip->status);
+        $ahead = ! $running || $this->progress->stopIsAhead($trip, (int) $stops[$originIndex]->stop_id);
+        if (! $running && $boardsAt->lt($target)) {
             return null;
+        }
+        if ($running && $ahead) {
+            $boardsAt = $this->etaAt($trip, (int) $stops[$originIndex]->stop_id) ?? $boardsAt;
         }
 
         $seatsLeft = $seatType === 'standing'
@@ -376,7 +398,22 @@ class TripResolverService
             'service_info' => TripRunInfo::service($service, $stops),
             'origin' => $this->stopSummary($stops[$originIndex]),
             'destination' => $this->stopSummary($stops[$destinationIndex]),
+            'departed' => $running && ! $ahead,
+            'progress' => $this->progress->labelFor($trip, (int) $stops[$originIndex]->stop_id),
         ];
+    }
+
+    /** The bus's expected time at a stop, from the same timeline the trip page shows (live delay included). */
+    private function etaAt(Trip $trip, int $stopId): ?Carbon
+    {
+        try {
+            $row = collect($this->timeline->build((int) $trip->trip_id, ['boarding_stop_id' => $stopId])['stops'])
+                ->first(fn ($row) => ! ($row['custom'] ?? false) && (int) $row['stop_id'] === $stopId);
+        } catch (ValidationException) {
+            return null;
+        }
+
+        return isset($row['eta']) ? Carbon::parse($row['eta'])->setTimezone(config('app.timezone', 'Asia/Manila')) : null;
     }
 
     /** @return array{stop_id: int, stop_code: string|null, name: string|null} */

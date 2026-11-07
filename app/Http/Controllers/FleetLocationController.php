@@ -58,6 +58,8 @@ class FleetLocationController extends Controller
     {
         $row->bus_label = BusLabel::compose($row->bus_company_name ?? null, $row->body_no ?? null);
         unset($row->bus_company_name, $row->body_no);
+        // Batch 49 item 4: a position from the Super Admin's GPS simulator; every map labels it "Simulated".
+        $row->is_simulated = (bool) ($row->is_simulated ?? false);
 
         $role = strtolower((string) ($request->user()?->role ?? ''));
         if (! in_array($role, ['driver', 'conductor', 'operator', 'admin'], true)) {

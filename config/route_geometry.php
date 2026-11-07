@@ -46,7 +46,15 @@ return [
         'max_accuracy_m' => (float) env('GPS_MAX_ACCURACY_M', 100),
         // Position older than this is shown as stale ("last seen X ago").
         'stale_after_s' => (int) env('GPS_STALE_AFTER_S', 120),
-        // Dev-only simulator (artisan gps:simulate). Must stay false in production.
+        // The GPS simulator's master switch: the artisan gps:simulate command (never in production) and, since Batch 49
+        // item 4, the Super Admin screen. Off unless the user sets it on the VPS for a demo.
         'simulator_enabled' => (bool) env('GPS_SIMULATOR_ENABLED', false),
+        // Batch 49 item 4: the Super Admin "Take control of GPS location" screen (needs simulator_enabled, the master
+        // switch). It moves the bus every tick_seconds at base_kmh times the chosen speed, and stops by itself after
+        // max_minutes. speeds are the choices the screen offers.
+        'simulator_tick_seconds' => (int) env('GPS_SIMULATOR_TICK_SECONDS', 3),
+        'simulator_base_kmh' => (float) env('GPS_SIMULATOR_BASE_KMH', 30),
+        'simulator_max_minutes' => (int) env('GPS_SIMULATOR_MAX_MINUTES', 30),
+        'simulator_speeds' => [1, 5, 10],
     ],
 ];

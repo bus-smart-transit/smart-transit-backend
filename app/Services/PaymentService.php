@@ -804,9 +804,11 @@ class PaymentService
             DB::transaction(function () use ($payment, $reclaimPoints) {
                 foreach ($payment->items_payload ?? [] as $reservedItem) {
                     $trip = $this->tripRepository->findById((int) ($reservedItem['trip_id'] ?? 0));
-                    if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
+                    if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'], true)) {
                         throw ValidationException::withMessages(['trip' => ['This trip is not accepting tickets.']]);
                     }
+                    // Batch 49 item 2: the bus may have passed the boarding stop while the passenger paid (then: refund).
+                    $this->ticketService->assertOnlineBoardingAhead($trip, isset($reservedItem['origin_stop_id']) ? (int) $reservedItem['origin_stop_id'] : null);
 
                     // Throws "This trip is full" when the seat or standing slot is gone.
                     $this->ticketService->reserveFromTemplate($reservedItem);

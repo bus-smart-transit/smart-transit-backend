@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Support\ApiRequestMetrics;
 use App\Support\Database\RlsContext;
 use App\Support\HealthBeat;
+use App\Support\PlaceGroups;
 use App\Support\RateLimiting\ToggleableRateLimiter;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -26,6 +27,8 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->scoped(ApiRequestMetrics::class);
+        // Batch 49 item 6: the stops are grouped into places once per request or job.
+        $this->app->scoped(PlaceGroups::class);
 
         // Laravel's CacheServiceProvider is deferred and (re)binds the limiter
         // when it loads, so a plain singleton() here would be overwritten.

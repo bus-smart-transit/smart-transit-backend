@@ -13,6 +13,7 @@ use App\Models\Stop;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
+use App\Services\TicketTrackingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -146,7 +147,9 @@ it('emails a guest at the address they paid with, with one link for the tickets 
             && $mail->items[0]['link'] === 'https://app.example.test/track/'.tlkToken($first)
             && $mail->items[0]['tickets'] === '2';
     });
-    expect($html)->toContain('2 tickets, one bus')->and(substr_count($html, 'Track this bus'))->toBe(1);
+    // Batch 49 item 5: the short tracking code is the main item; the link is one small "Open map" button.
+    expect($html)->toContain('2 tickets, one bus')->and(substr_count($html, 'Open map'))->toBe(1)
+        ->and($html)->toContain('Your tracking code')->and($html)->toContain((string) $first->fresh()->tracking_code_enc);
 });
 
 it('sends to the redirect address in the demo setup and says which account it was for', function () {
@@ -271,4 +274,68 @@ it('does not replace the link of a ticket that can no longer be tracked', functi
     $this->actingAs($pax->user)->postJson("/api/passengers/tickets/{$ticket->ticket_uuid}/tracking-link")->assertStatus(422);
 
     expect(tlkToken($ticket))->toBe($before);
+});
+
+// ------------------------------------------------------------ Batch 49 item 5: the short tracking code
+
+it('gives each ticket a short code without look-alike characters, shown to its owner', function () {
+    $f = tlkFixture();
+    $pax = tlkPassenger();
+    $payment = tlkBuy($this, $f, $pax);
+    $ticket = Ticket::where('payment_id', $payment->payment_id)->firstOrFail();
+
+    $listed = collect(data_get($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->assertOk()->json(), 'data'));
+    $row = $listed->first(fn ($t) => ($t['ticket_uuid'] ?? null) === $ticket->ticket_uuid) ?? collect($listed->get('data', []))->first(fn ($t) => ($t['ticket_uuid'] ?? null) === $ticket->ticket_uuid);
+    $code = $row['tracking_code'] ?? null;
+    expect($code)->toMatch('/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/')
+        ->and($ticket->fresh()->toArray())->not->toHaveKey('tracking_code_enc')
+        ->and($ticket->fresh()->toArray())->not->toHaveKey('tracking_code_hash');
+});
+
+it('opens the bus of a typed code, in any case and with spaces or dashes', function () {
+    $f = tlkFixture();
+    $payment = tlkBuy($this, $f);
+    $ticket = Ticket::where('payment_id', $payment->payment_id)->firstOrFail();
+    $code = app(TicketTrackingService::class)->codeFor($ticket);
+    $typed = strtolower(substr($code, 0, 4)).' - '.substr($code, 4);
+
+    $this->postJson('/api/track/code', ['code' => $typed])->assertOk()->assertJsonPath('data.tracking_token', tlkToken($ticket));
+});
+
+it('answers a wrong code and an ended or cancelled ticket the same way', function () {
+    $f = tlkFixture();
+    $payment = tlkBuy($this, $f);
+    $ticket = Ticket::where('payment_id', $payment->payment_id)->firstOrFail();
+    $code = app(TicketTrackingService::class)->codeFor($ticket);
+    $notFound = 'We could not find a bus for that code. Check the code and try again.';
+
+    $this->postJson('/api/track/code', ['code' => 'ZZZZ2222'])->assertNotFound()->assertJsonPath('message', $notFound);
+    $this->postJson('/api/track/code', ['code' => 'O0I1L'])->assertNotFound()->assertJsonPath('message', $notFound);
+
+    Ticket::whereKey($ticket->ticket_id)->update(['status' => 'cancelled']);
+    $this->postJson('/api/track/code', ['code' => $code])->assertNotFound()->assertJsonPath('message', $notFound);
+
+    Ticket::whereKey($ticket->ticket_id)->update(['status' => 'valid']);
+    Carbon::setTestNow(Carbon::parse('2026-10-09 12:00:00', 'Asia/Manila')); // days after the trip: tracking has closed
+    $this->postJson('/api/track/code', ['code' => $code])->assertNotFound()->assertJsonPath('message', $notFound);
+});
+
+it('stops the old code working when the owner asks for a new tracking link', function () {
+    $f = tlkFixture();
+    $pax = tlkPassenger();
+    $payment = tlkBuy($this, $f, $pax);
+    $ticket = Ticket::where('payment_id', $payment->payment_id)->firstOrFail();
+    $old = app(TicketTrackingService::class)->codeFor($ticket);
+
+    $this->actingAs($pax->user)->postJson("/api/passengers/tickets/{$ticket->ticket_uuid}/tracking-link")->assertOk();
+    $new = app(TicketTrackingService::class)->codeFor($ticket->fresh());
+
+    expect($new)->not->toBe($old);
+    tlkAs($this)->postJson('/api/track/code', ['code' => $old])->assertNotFound();
+    $this->postJson('/api/track/code', ['code' => $new])->assertOk();
+});
+
+it('limits code lookups with their own named limit', function () {
+    expect(collect(app('router')->getRoutes()->getRoutes())->first(fn ($r) => $r->uri() === 'api/track/code')->gatherMiddleware())
+        ->toContain('throttle:10,1,track-code');
 });

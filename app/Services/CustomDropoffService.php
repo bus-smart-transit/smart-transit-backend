@@ -7,6 +7,7 @@ use App\Models\Route;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Support\Geo\GeoLine;
+use App\Support\PlaceGroups;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -28,6 +29,7 @@ class CustomDropoffService
         private RouteRepository $routeRepository,
         private RegionService $regionService,
         private DropoffRestrictionService $restrictions,
+        private PlaceGroups $places,
     ) {}
 
     /**
@@ -310,6 +312,8 @@ class CustomDropoffService
             return ['reason' => 'This route has no generated path yet, so a drop-off point cannot be placed.'] + $empty;
         }
 
+        // Batch 49 item 6: the boarding place is the stop of it this route has.
+        $boardingStopId = $this->places->onRoute($boardingStopId, $this->routeStopRepository->getOrderedStops($routeId)->pluck('stop_id'));
         $boardingAlong = $boardingAlongM ?? ($boardingStopId !== null ? $this->boardingAlongForStop($routeId, $direction, $boardingStopId) : null);
 
         $areas = [];

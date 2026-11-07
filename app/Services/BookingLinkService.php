@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Stop;
+use App\Support\BookingWindow;
+use App\Support\PlaceGroups;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -15,6 +17,8 @@ use Illuminate\Validation\ValidationException;
  */
 class BookingLinkService
 {
+    public function __construct(private PlaceGroups $places) {}
+
     /**
      * @param  array{from?: mixed, to?: mixed, date?: mixed}  $input
      * @return array{from: array<string, mixed>, to: array<string, mixed>, date: string}
@@ -29,7 +33,7 @@ class BookingLinkService
         $from = $this->stopFor($input['from'] ?? null, 'from', 'where you board');
         $to = $this->stopFor($input['to'] ?? null, 'to', 'where you get off');
 
-        if ($from->stop_id === $to->stop_id) {
+        if ($this->places->placeOf((int) $from->stop_id) === $this->places->placeOf((int) $to->stop_id)) {
             throw ValidationException::withMessages(['to' => ['Where you board and where you get off cannot be the same stop. Choose a different stop.']]);
         }
 
@@ -57,7 +61,7 @@ class BookingLinkService
         $from = ($input['from'] ?? '') === '' ? null : $this->stopFor($input['from'], 'from', 'where you board');
         $to = ($input['to'] ?? '') === '' ? null : $this->stopFor($input['to'], 'to', 'where you get off');
 
-        if ($from && $to && $from->stop_id === $to->stop_id) {
+        if ($from && $to && $this->places->placeOf((int) $from->stop_id) === $this->places->placeOf((int) $to->stop_id)) {
             throw ValidationException::withMessages(['to' => ['Where you board and where you get off cannot be the same stop. Choose a different stop.']]);
         }
 
@@ -108,21 +112,24 @@ class BookingLinkService
             throw ValidationException::withMessages(['date' => ['That date has already passed. Pick today or a later date.']]);
         }
 
-        $last = \App\Support\BookingWindow::lastDate($today);
+        $last = BookingWindow::lastDate($today);
         if ($last !== null && $parsed->gt($last)) {
-            throw ValidationException::withMessages(['date' => [\App\Support\BookingWindow::aheadMessage($today).' Pick an earlier date.']]);
+            throw ValidationException::withMessages(['date' => [BookingWindow::aheadMessage($today).' Pick an earlier date.']]);
         }
 
         return $parsed;
     }
 
     /** @return array<string, mixed> */
+    /** Batch 49 item 6: a link names a stop; the passenger sees its place (an older stop's code still works). */
     private function present(Stop $stop): array
     {
+        $place = $this->places->placeOf((int) $stop->stop_id);
+
         return [
-            'stop_id' => (int) $stop->stop_id,
-            'stop_code' => $stop->stop_code,
-            'name' => $stop->stop_name,
+            'stop_id' => $place,
+            'stop_code' => $this->places->placeCode($place) ?? $stop->stop_code,
+            'name' => $this->places->displayName($place) ?? $stop->stop_name,
             'municipality' => $stop->municipality,
         ];
     }

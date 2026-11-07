@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Ticket;
 use App\Repositories\FleetLocationRepository;
+use App\Support\TicketBoarding;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +25,15 @@ class TicketTrackingService
     private const TRACKABLE = ['valid', 'boarded', 'alighted'];
 
     private const TOKEN_FORMAT = '/^[A-Za-z0-9_-]{43}$/';
+
+    /**
+     * Batch 49 item 5: the short code a passenger types at "Track my bus". 8 characters from 31 (no 0, O, 1, I or L, which
+     * look alike): about 8.5 x 10^11 codes. With the lookup limited to 10 tries a minute per address (and the miss limit
+     * below), guessing a live code is not practical. It identifies one ticket and shows only what its link shows.
+     */
+    public const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+    public const CODE_LENGTH = 8;
 
     public function __construct(
         private TripTimelineService $timelineService,
@@ -93,9 +103,87 @@ class TicketTrackingService
         Ticket::where('ticket_id', $ticket->ticket_id)->update([
             'tracking_token_hash' => $credentials['tracking_token_hash'],
             'tracking_token_enc' => Crypt::encryptString($credentials['token']),
+            // Batch 49 item 5: the old code stops working with the old link; a new one is made when next shown.
+            'tracking_code_hash' => null,
+            'tracking_code_enc' => null,
         ]);
 
         return $credentials['token'];
+    }
+
+    /** Upper case, spaces and dashes removed: "abcd-2345" and "ABCD 2345" are the same code. */
+    public static function normalizeCode(string $code): string
+    {
+        return strtoupper((string) preg_replace('/[\s-]+/', '', $code));
+    }
+
+    public static function codeHashOf(string $code): string
+    {
+        return hash('sha256', 'code|'.self::normalizeCode($code));
+    }
+
+    /**
+     * The ticket's short tracking code, for its owner (the ticket card, the confirmation and the email). Made the first
+     * time it is needed, only while the ticket can still be tracked, like the link token. Null otherwise.
+     */
+    public function codeFor(Ticket $ticket): ?string
+    {
+        if ($ticket->tracking_code_enc) {
+            return $ticket->tracking_code_enc;
+        }
+        if ($this->tokenFor($ticket) === null) {
+            return null; // not trackable (status, or too old): no code either
+        }
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $code = self::newCode();
+            if (Ticket::where('tracking_code_hash', self::codeHashOf($code))->exists()) {
+                continue;
+            }
+            // Only the first writer wins; whoever lost the race reads the winner's code below.
+            Ticket::where('ticket_id', $ticket->ticket_id)->whereNull('tracking_code_hash')->update([
+                'tracking_code_hash' => self::codeHashOf($code),
+                'tracking_code_enc' => Crypt::encryptString($code),
+            ]);
+            break;
+        }
+        $stored = Ticket::where('ticket_id', $ticket->ticket_id)->first(['tracking_code_hash', 'tracking_code_enc']);
+        if (! $stored || ! $stored->tracking_code_hash) {
+            return null;
+        }
+        $ticket->setRawAttributes(array_merge($ticket->getAttributes(), $stored->getAttributes()), true);
+
+        return $ticket->tracking_code_enc;
+    }
+
+    /**
+     * The ticket a typed code follows, only while it can be tracked: a known ticket that is cancelled, refunded or whose
+     * trip has ended answers exactly like a wrong code (null), so a reply never tells whether a code exists.
+     */
+    public function findTrackableByCode(string $code): ?Ticket
+    {
+        $code = self::normalizeCode($code);
+        if (strlen($code) !== self::CODE_LENGTH || strspn($code, self::CODE_ALPHABET) !== self::CODE_LENGTH) {
+            return null;
+        }
+        $ticket = Ticket::with(['trip.fleetRoute.route', 'trip.fleetRoute.fleet', 'originStop', 'destinationStop'])
+            ->where('tracking_code_hash', self::codeHashOf($code))
+            ->first();
+        if (! $ticket || ! in_array($ticket->status, self::TRACKABLE, true)) {
+            return null;
+        }
+
+        return in_array($this->viewFor($ticket)['state'] ?? null, ['ended', 'cancelled', 'unavailable'], true) ? null : $ticket;
+    }
+
+    private static function newCode(): string
+    {
+        $code = '';
+        for ($i = 0; $i < self::CODE_LENGTH; $i++) {
+            $code .= self::CODE_ALPHABET[random_int(0, strlen(self::CODE_ALPHABET) - 1)];
+        }
+
+        return $code;
     }
 
     public function findByToken(string $token): ?Ticket
@@ -150,7 +238,7 @@ class TicketTrackingService
             'route_name' => $fleetRoute->route?->route_name,
         ];
         $view['route'] = ['route_id' => (int) $fleetRoute->route_id, 'direction' => $direction];
-        $view['boarding'] = $this->stopSummary($ticket->originStop, $ticket->origin_lat, $ticket->origin_lng, \App\Support\TicketBoarding::isSnapped($ticket) ? \App\Support\TicketBoarding::BETWEEN_STOPS : null);
+        $view['boarding'] = $this->stopSummary($ticket->originStop, $ticket->origin_lat, $ticket->origin_lng, TicketBoarding::isSnapped($ticket) ? TicketBoarding::BETWEEN_STOPS : null);
         $view['alighting'] = $this->stopSummary($ticket->destinationStop, $ticket->destination_lat, $ticket->destination_lng, $ticket->destination_label);
         if ($ticket->alightingPoint) {
             $view['alighting']['point_kind'] = $ticket->alightingPoint->kind;
@@ -173,7 +261,8 @@ class TicketTrackingService
             return ['state' => 'arrived', 'message' => 'The bus has completed this trip.'] + $view;
         }
 
-        $position = $this->locations->getCurrentForTrip((int) $fleetRoute->fleet_id, (int) $trip->trip_id);
+        // Batch 49 item 4: a simulated position is shown, labelled "Simulated".
+        $position = $this->locations->getCurrentForTrip((int) $fleetRoute->fleet_id, (int) $trip->trip_id, includeSimulated: true);
         if ($position === null) {
             $waiting = in_array($trip->status, ['scheduled', 'delayed'], true);
 
@@ -191,6 +280,7 @@ class TicketTrackingService
             'longitude' => $onRoute ? $snap['snapped_longitude'] : $position['longitude'],
             'heading' => $position['heading'],
             'on_route' => $onRoute,
+            'simulated' => (bool) ($position['simulated'] ?? false),
             'age_seconds' => $position['age_seconds'],
             'recorded_at' => $now->copy()->subSeconds($position['age_seconds'])->toIso8601String(),
         ];

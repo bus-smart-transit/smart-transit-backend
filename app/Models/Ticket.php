@@ -88,6 +88,8 @@ class Ticket extends Model
         'alighting_distance_m',
         'tracking_token_hash',
         'tracking_token_enc',
+        'tracking_code_hash',
+        'tracking_code_enc',
         'discount_type_key',
         'discount_label',
         'discount_rate',
@@ -98,12 +100,14 @@ class Ticket extends Model
 
     // The tracking token is a bearer secret: never serialised with a ticket. Owners get it only
     // through the explicit `tracking_token` attribute the ticket service sets for them.
-    protected $hidden = ['tracking_token_hash', 'tracking_token_enc'];
+    // Batch 49 item 5: the short tracking code is a secret too; owners get it as the explicit `tracking_code` attribute.
+    protected $hidden = ['tracking_token_hash', 'tracking_token_enc', 'tracking_code_hash', 'tracking_code_enc'];
 
     protected function casts(): array
     {
         return [
             'tracking_token_enc' => 'encrypted',
+            'tracking_code_enc' => 'encrypted',
             'boarded_at' => 'datetime',
             'alighted_at' => 'datetime',
             'origin_lat' => 'float',

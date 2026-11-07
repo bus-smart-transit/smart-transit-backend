@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\FleetRoute;
 use App\Repositories\RouteStopRepository;
+use App\Support\PlaceGroups;
 
 /**
  * C3 / D2: the origins and destinations a passenger can pick are computed from
@@ -16,6 +17,7 @@ class BookingStopsService
     public function __construct(
         private RouteStopRepository $routeStopRepository,
         private RegionService $regionService,
+        private PlaceGroups $places,
     ) {}
 
     /**
@@ -27,10 +29,12 @@ class BookingStopsService
         $stopping = config('timeline.stopping_types');
 
         $byStop = [];
+        $originPlace = $originStopId !== null ? $this->places->membersOf($originStopId) : [];
         $routesWithOrigin = [];
         foreach ($routeIds as $routeId) {
             $routeStops = $this->routeStopRepository->getOrderedStops($routeId);
-            if ($originStopId !== null && ! $routeStops->contains('stop_id', $originStopId)) {
+            // Batch 49 item 6: the origin is a place; a route serves it when it has any stop of that place.
+            if ($originStopId !== null && $routeStops->whereIn('stop_id', $originPlace)->isEmpty()) {
                 continue;
             }
             $routesWithOrigin[] = $routeId;
@@ -43,23 +47,30 @@ class BookingStopsService
                 if ($stop->latitude === null || ! $this->regionService->contains((float) $stop->latitude, (float) $stop->longitude)) {
                     continue;
                 }
-                if ($originStopId !== null && (int) $stop->stop_id === $originStopId) {
+                if ($originStopId !== null && in_array((int) $stop->stop_id, $originPlace, true)) {
                     continue;
                 }
-                $byStop[$stop->stop_id] ??= ['stop' => $stop, 'route_ids' => []];
-                $byStop[$stop->stop_id]['route_ids'][] = $routeId;
+                // One entry per place, named by its oldest stop, with the routes of all its stops.
+                $place = $this->places->placeOf((int) $stop->stop_id);
+                $byStop[$place] ??= ['stop' => $stop, 'route_ids' => []];
+                if ((int) $stop->stop_id === $place) {
+                    $byStop[$place]['stop'] = $stop;
+                }
+                $byStop[$place]['municipality'] ??= $stop->municipality;
+                $byStop[$place]['route_ids'][] = $routeId;
             }
         }
 
         $groups = [];
-        foreach ($byStop as $entry) {
-            $key = $entry['stop']->municipality ?? '';
-            $groups[$key]['municipality'] = $entry['stop']->municipality;
-            $groups[$key]['provinces'] = $entry['stop']->municipality ? $this->provincesOf($entry['stop']->municipality) : [];
+        foreach ($byStop as $place => $entry) {
+            $municipality = $entry['municipality'] ?? $entry['stop']->municipality;
+            $key = $municipality ?? '';
+            $groups[$key]['municipality'] = $municipality;
+            $groups[$key]['provinces'] = $municipality ? $this->provincesOf($municipality) : [];
             $groups[$key]['stops'][] = [
-                'stop_id' => (int) $entry['stop']->stop_id,
-                'stop_code' => $entry['stop']->stop_code,
-                'name' => $entry['stop']->stop_name,
+                'stop_id' => (int) $place,
+                'stop_code' => $this->places->placeCode($place) ?? $entry['stop']->stop_code,
+                'name' => $this->places->displayName($place) ?? $entry['stop']->stop_name,
                 'route_ids' => array_values(array_unique($entry['route_ids'])),
             ];
         }

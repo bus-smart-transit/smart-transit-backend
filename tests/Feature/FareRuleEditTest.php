@@ -126,3 +126,16 @@ it('lets an Operator edit their own bus but not drop its places below what is so
         ->and($fresh->bus_company_name)->not->toBe('Renamed')
         ->and($theirs->fresh()->body_no)->toBeNull();
 });
+
+// Batch 49 item 3: "Use in form" fills the Add form from a row; saving it unchanged is an exact duplicate, which the
+// server refuses with a plain message (the same overlap rule as any other new rule).
+it('refuses a fare rule saved as an exact copy of one already in force, with a plain message', function () {
+    $op = freOperator('Copy Co');
+    $fleet = freFleet($op, 'CPY-001');
+    $rule = freRule($fleet);
+
+    freAs($this, $op)->postJson('/api/operator/fare-rules', [
+        'fleet_id' => $fleet->fleet_id, 'seat_type' => $rule->seat_type, 'service_type' => $rule->service_type,
+        'base_fare' => (float) $rule->base_fare, 'fare_per_km' => (float) $rule->fare_per_km,
+    ])->assertStatus(422)->assertJsonFragment(['Another active fare rule with the same fleet, route, class, service type and seat type is in force on those dates. Set its end date first.']);
+});

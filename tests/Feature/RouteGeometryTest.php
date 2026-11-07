@@ -10,6 +10,7 @@ use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\FleetLocationRepository;
+use App\Repositories\GpsSimulationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
@@ -298,7 +299,7 @@ it('ignores GPS fixes whose accuracy is worse than the configured threshold', fu
     $locations = Mockery::mock(FleetLocationRepository::class);
     $locations->shouldReceive('upsertLocation')->twice();
 
-    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class), app(TripTimelineService::class), app(TicketRepository::class));
+    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class), app(TripTimelineService::class), app(TicketRepository::class), app(GpsSimulationRepository::class));
 
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 850]))->toBeFalse();
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 12]))->toBeTrue();

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminAccountsController;
+use App\Http\Controllers\AdminGpsSimulationController;
 use App\Http\Controllers\AdminOverviewController;
 use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
@@ -112,6 +113,8 @@ Route::get('traffic/flow/{z}/{x}/{y}.png', [TrafficController::class, 'flowTile'
     ->whereNumber(['z', 'x', 'y'])
     ->middleware(['auth:sanctum', 'role:driver', 'throttle:600,1,traffic-tiles']);
 // Batch 26: follow the bus of one ticket. The 43-character token is the only credential.
+// Batch 49 item 5: the short tracking code typed at "Track my bus"; its own limit (10 a minute per address).
+Route::post('track/code', [TrackingController::class, 'byCode'])->middleware('throttle:10,1,track-code');
 Route::get('track/{token}', [TrackingController::class, 'show'])
     ->where('token', '[A-Za-z0-9_-]{43}')
     ->middleware('throttle:public-read');
@@ -478,6 +481,10 @@ Route::prefix('admin')
         Route::get('audit-log', [AdminAccountsController::class, 'auditLog'])->middleware('throttle:60,1,admin-audit-log');
         // Batch 48 Phase 5: payments to refund by hand across every company (read only; the Operator records refunds).
         Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'adminIndex'])->middleware('throttle:60,1,admin-refund-list');
+        // Batch 49 item 4: the GPS simulator ("Take control of GPS location") for departed trips; needs GPS_SIMULATOR_ENABLED.
+        Route::get('gps-simulations', [AdminGpsSimulationController::class, 'index'])->middleware('throttle:60,1,admin-gps-sim-read');
+        Route::post('gps-simulations', [AdminGpsSimulationController::class, 'store'])->middleware('throttle:10,1,admin-gps-sim-start');
+        Route::patch('gps-simulations/{simulationId}', [AdminGpsSimulationController::class, 'update'])->whereNumber('simulationId')->middleware('throttle:30,1,admin-gps-sim-control');
 
         // Batch 48 Phase 7 (user approved): the Super Admin oversees and does not run a company. The old copies of the
         // Operator's stop, route, bus, fare, trip, refund, drop-off and duration-factor actions, the old account and

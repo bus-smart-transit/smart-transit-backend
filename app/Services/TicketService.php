@@ -7,11 +7,13 @@ use App\Models\FareRule;
 use App\Models\RouteStop;
 use App\Models\Stop;
 use App\Models\Ticket;
+use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Support\BusLabel;
 use App\Support\LegDistance;
+use App\Support\PlaceGroups;
 use App\Support\ServiceType;
 use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
@@ -37,6 +39,8 @@ class TicketService
         private TicketTrackingService $trackingService,
         private PendingBoardingService $pendingBoardings,
         private OnsiteDiscountService $onsiteDiscounts,
+        private PlaceGroups $places,
+        private TripProgressService $progress,
     ) {}
 
     /**
@@ -94,6 +98,22 @@ class TicketService
         return $priced;
     }
 
+    /**
+     * Batch 49 item 2: an online ticket on a trip that has left is sold only from a stop the bus has not reached yet
+     * (TripProgressService). Checked when the passenger checks out and again when the payment is confirmed.
+     *
+     * @throws ValidationException
+     */
+    public function assertOnlineBoardingAhead(Trip $trip, ?int $originStopId): void
+    {
+        if (! TripProgressService::isRunning($trip->status)) {
+            return;
+        }
+        if ($originStopId === null || ! $this->progress->stopIsAhead($trip, $originStopId)) {
+            throw ValidationException::withMessages(['trip' => ['The bus has already left that stop. Choose a stop ahead of it, or another trip.']]);
+        }
+    }
+
     /** Batch 49 item 1: false only for checkouts made after seats stopped being held at checkout (older ones held them). */
     public static function itemHoldsSeat(array $item): bool
     {
@@ -108,14 +128,27 @@ class TicketService
     {
         $trip = $this->tripRepository->findById($item['trip_id']);
         $onsite = ($item['channel'] ?? null) === 'onsite';
-        $sellable = $onsite
-            ? ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress']
-            : ['scheduled', 'delayed', 'boarding'];
+        // Batch 49 item 2: online, a trip on the road is sold only from a stop still ahead of the bus (checked below).
+        $sellable = ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'];
 
         if (! $trip || ! in_array($trip->status, $sellable, true)) {
             throw ValidationException::withMessages([
                 'trip' => ['This trip is not accepting tickets.'],
             ]);
+        }
+
+        // Batch 49 item 6: a passenger picks a place; the ticket is for the stop of that place this bus's route has.
+        if (isset($item['origin_stop_id']) || isset($item['destination_stop_id'])) {
+            $routeStopIds = $this->routeStopRepository->getOrderedStops((int) $trip->fleetRoute->route_id)->pluck('stop_id');
+            foreach (['origin_stop_id', 'destination_stop_id'] as $field) {
+                if (isset($item[$field])) {
+                    $item[$field] = $this->places->onRoute((int) $item[$field], $routeStopIds);
+                }
+            }
+        }
+
+        if (! $onsite) {
+            $this->assertOnlineBoardingAhead($trip, isset($item['origin_stop_id']) ? (int) $item['origin_stop_id'] : null);
         }
 
         $seatType = strtolower((string) ($item['seat_type'] ?? ''));
@@ -1016,6 +1049,8 @@ class TicketService
         // Owners only (this runs for a passenger's own tickets and for a guest who proved the
         // payment reference): the link that follows this ticket's bus. Virtual, never stored here.
         $ticket->setAttribute('tracking_token', $this->trackingService->tokenFor($ticket));
+        // Batch 49 item 5: the short code the owner types at "Track my bus" (null when it can no longer be tracked).
+        $ticket->setAttribute('tracking_code', $this->trackingService->codeFor($ticket));
 
         // Passenger-facing: the bus is identified by its company label, never by the plate.
         $fleet = $ticket->trip?->fleetRoute?->fleet;

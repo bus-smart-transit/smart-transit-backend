@@ -501,7 +501,8 @@ class TicketController extends Controller
         $token = $tracking->renew($ticket);
         AuditLogger::log('ticket.tracking_link_renewed', 'Ticket', (int) $ticket->ticket_id);
 
-        return $this->success(['tracking_token' => $token], 'Tracking link replaced. The old link no longer works.');
+        // Batch 49 item 5: the old tracking code stopped working with the old link; the new one comes back with it.
+        return $this->success(['tracking_token' => $token, 'tracking_code' => $tracking->codeFor($ticket->fresh())], 'Tracking link and code replaced. The old ones no longer work.');
     }
 
     /**

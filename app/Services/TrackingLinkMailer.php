@@ -51,6 +51,9 @@ class TrackingLinkMailer
                     'to' => (string) ($ticket->destinationStop?->stop_name ?? $ticket->destination_label ?? 'Drop-off point'),
                     'tickets' => (string) $group->count(),
                     'link' => $base.'/track/'.$token,
+                    // Batch 49 item 5: the code is the main item; the link stays as a small "open map" button.
+                    'code' => $this->tracking->codeFor($ticket),
+                    'lookup' => $base.'/track',
                 ];
             })->filter()->values()->all();
 

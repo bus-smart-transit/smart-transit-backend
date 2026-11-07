@@ -21,6 +21,12 @@ return [
     // Batch 49 item 1: the most tickets one online purchase may hold (checked on the server; the form shows it too).
     // Seats are taken only when the payment is confirmed, so this limits one purchase, not a hold.
     'max_seats_per_purchase' => (int) env('BOOKING_MAX_SEATS_PER_PURCHASE', 20),
+    // Batch 49 item 6: stops with the same name (ignoring case, spaces and accents) within this many metres are one
+    // place for passengers (PlaceGroups). Production pairs are 0 to 9 m apart; two real places 300 m apart stay apart.
+    'place_group_radius_m' => (float) env('BOOKING_PLACE_GROUP_RADIUS_M', 100),
+    // Batch 49 item 2: a departed trip stays bookable from a stop the bus has not reached (TripProgressService). The bus
+    // has left a stop once its live position is this many metres past it (or the Driver tapped it). GPS noise margin.
+    'later_stop_passed_margin_m' => (float) env('BOOKING_LATER_STOP_PASSED_MARGIN_M', 30),
 
     // Batch 27 Part 2, Task 6: when the Chauffeur sells a ticket to someone boarding between stops, the server
     // uses the bus's own latest accepted position. A fix older than this, or less accurate than this, is not

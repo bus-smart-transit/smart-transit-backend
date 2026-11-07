@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Repositories\FleetLocationRepository;
+use App\Repositories\GpsSimulationRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use Illuminate\Support\Facades\Cache;
@@ -16,6 +17,7 @@ class FleetLocationService
         private RouteSnapService $routeSnapService,
         private TripTimelineService $timelineService,
         private TicketRepository $ticketRepository,
+        private GpsSimulationRepository $simulations,
     ) {}
 
     /**
@@ -37,6 +39,12 @@ class FleetLocationService
         $accuracy = isset($payload['accuracy']) ? (float) $payload['accuracy'] : null;
         if ($accuracy !== null && $accuracy > (float) config('route_geometry.gps.max_accuracy_m')) {
             return false;
+        }
+
+        // Batch 49 item 4: while the Super Admin's simulator has control of this trip, the phone's positions are set aside
+        // (accepted, not stored), so the two never fight over the bus's place on the map.
+        if ($this->simulations->activeForTrip((int) $trip->trip_id)) {
+            return true;
         }
 
         $this->fleetLocationRepository->upsertLocation(array_merge($payload, [

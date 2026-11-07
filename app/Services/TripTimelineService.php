@@ -9,6 +9,7 @@ use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
 use App\Support\BusLabel;
+use App\Support\PlaceGroups;
 use App\Support\ServiceType;
 use App\Support\TripRunInfo;
 use App\Support\VehicleClass;
@@ -37,6 +38,7 @@ class TripTimelineService
         private CustomDropoffService $customDropoffService,
         private FareRuleService $fareRuleService,
         private RouteDurationFactorService $durationFactors,
+        private PlaceGroups $places,
     ) {}
 
     /**
@@ -64,8 +66,12 @@ class TripTimelineService
             throw ValidationException::withMessages(['trip' => ['This trip\'s route has no stops yet.']]);
         }
 
-        $boardingId = isset($selection['boarding_stop_id']) ? (int) $selection['boarding_stop_id'] : null;
-        $alightingId = isset($selection['alighting_stop_id']) ? (int) $selection['alighting_stop_id'] : null;
+        // Batch 49 item 6: the passenger picks places; the timeline uses the stops of those places this route has, and
+        // reports back the ids the passenger chose (the booking page matches its selection by them).
+        $requestedBoardingId = isset($selection['boarding_stop_id']) ? (int) $selection['boarding_stop_id'] : null;
+        $requestedAlightingId = isset($selection['alighting_stop_id']) ? (int) $selection['alighting_stop_id'] : null;
+        $boardingId = $this->places->onRoute($requestedBoardingId, $routeStops->pluck('stop_id'));
+        $alightingId = $this->places->onRoute($requestedAlightingId, $routeStops->pluck('stop_id'));
         $hasPin = isset($selection['dropoff_lat'], $selection['dropoff_lng']);
         // Batch 28 Stage 3, item 10: a designated drop-off point is chosen by id (never by coordinates).
         $pointId = isset($selection['alighting_point_id']) ? (int) $selection['alighting_point_id'] : null;
@@ -219,8 +225,10 @@ class TripTimelineService
                 'distance_km' => $journey['distance_km'] ?? null,
             ],
             'journey' => [
-                'boarding_stop_id' => $boardingId,
-                'alighting_stop_id' => $alightingId,
+                'boarding_stop_id' => $requestedBoardingId,
+                'alighting_stop_id' => $requestedAlightingId,
+                'route_boarding_stop_id' => $boardingId,
+                'route_alighting_stop_id' => $alightingId,
                 'custom_dropoff' => $custom !== null,
             ],
             'allow_custom_dropoff' => ! $express && (bool) ($route?->allow_custom_dropoff),

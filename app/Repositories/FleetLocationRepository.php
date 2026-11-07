@@ -24,10 +24,16 @@ class FleetLocationRepository
                     'heading' => $payload['heading'] ?? null,
                     'speed_kmh' => $payload['speed_kmh'] ?? null,
                     'accuracy_m' => $payload['accuracy'] ?? null,
+                    'is_simulated' => (bool) ($payload['is_simulated'] ?? false),
                     'recorded_at' => now(),
                     'updated_at' => now(),
                 ]
             );
+
+            // Batch 49 item 4: a simulated point is never history (the reports read it).
+            if ($payload['is_simulated'] ?? false) {
+                return;
+            }
 
             DB::table('fleet_location_history')->insert([
                 'fleet_id' => $payload['fleet_id'],
@@ -44,17 +50,18 @@ class FleetLocationRepository
         // PostgreSQL + PostGIS path
         DB::statement('
             INSERT INTO fleet_locations
-                (fleet_id, trip_id, location, heading, speed_kmh, accuracy_m, recorded_at, updated_at)
+                (fleet_id, trip_id, location, heading, speed_kmh, accuracy_m, is_simulated, recorded_at, updated_at)
             VALUES
-                (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, NOW(), NOW())
+                (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, NOW(), NOW())
             ON CONFLICT (fleet_id) DO UPDATE SET
-                trip_id     = EXCLUDED.trip_id,
-                location    = EXCLUDED.location,
-                heading     = EXCLUDED.heading,
-                speed_kmh   = EXCLUDED.speed_kmh,
-                accuracy_m  = EXCLUDED.accuracy_m,
-                recorded_at = EXCLUDED.recorded_at,
-                updated_at  = NOW()
+                trip_id      = EXCLUDED.trip_id,
+                location     = EXCLUDED.location,
+                heading      = EXCLUDED.heading,
+                speed_kmh    = EXCLUDED.speed_kmh,
+                accuracy_m   = EXCLUDED.accuracy_m,
+                is_simulated = EXCLUDED.is_simulated,
+                recorded_at  = EXCLUDED.recorded_at,
+                updated_at   = NOW()
         ', [
             $payload['fleet_id'],
             $payload['trip_id'],
@@ -63,7 +70,13 @@ class FleetLocationRepository
             $payload['heading'] ?? null,
             $payload['speed_kmh'] ?? null,
             $payload['accuracy'] ?? null,
+            (bool) ($payload['is_simulated'] ?? false),
         ]);
+
+        // Batch 49 item 4: a simulated point is never history (the reports read it).
+        if ($payload['is_simulated'] ?? false) {
+            return;
+        }
 
         // Append to history (time-series, no conflict handling)
         DB::statement('
@@ -125,7 +138,12 @@ class FleetLocationRepository
      *
      * @return array{latitude: float, longitude: float, heading: float|null, age_seconds: int}|null
      */
-    public function getCurrentForTrip(int $fleetId, int $tripId): ?array
+    /**
+     * The trip's last position. Batch 49 item 4: a simulated position is returned only when asked for (the tracking
+     * view, which labels it); everything that decides something (booking a later stop, a Chauffeur's GPS boarding, a
+     * refund's last point) gets null, so it treats the position as unknown.
+     */
+    public function getCurrentForTrip(int $fleetId, int $tripId, bool $includeSimulated = false): ?array
     {
         if (DB::getDriverName() === 'sqlite') {
             $row = DB::selectOne("
@@ -134,6 +152,7 @@ class FleetLocationRepository
                     CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
                     heading,
                     accuracy_m,
+                    is_simulated,
                     recorded_at
                 FROM fleet_locations
                 WHERE fleet_id = ? AND trip_id = ?
@@ -148,6 +167,7 @@ class FleetLocationRepository
                     ST_X(location::geometry) AS longitude,
                     heading,
                     accuracy_m,
+                    is_simulated,
                     GREATEST(0, EXTRACT(EPOCH FROM (NOW() - recorded_at))) AS age_seconds
                 FROM fleet_locations
                 WHERE fleet_id = ? AND trip_id = ?
@@ -158,6 +178,10 @@ class FleetLocationRepository
         if (! $row || $row->latitude === null || $row->longitude === null || $age === null) {
             return null;
         }
+        $simulated = (bool) ($row->is_simulated ?? false);
+        if ($simulated && ! $includeSimulated) {
+            return null;
+        }
 
         return [
             'latitude' => (float) $row->latitude,
@@ -165,6 +189,7 @@ class FleetLocationRepository
             'heading' => $row->heading !== null ? (float) $row->heading : null,
             'accuracy_m' => isset($row->accuracy_m) && $row->accuracy_m !== null ? (float) $row->accuracy_m : null,
             'age_seconds' => (int) round((float) $age),
+            'simulated' => $simulated,
         ];
     }
 
@@ -217,6 +242,7 @@ class FleetLocationRepository
                 fl.heading,
                 fl.speed_kmh,
                 fl.accuracy_m,
+                fl.is_simulated,
                 fl.recorded_at,
                 GREATEST(0, EXTRACT(EPOCH FROM (NOW() - fl.recorded_at))) AS age_seconds,
                 f.plate_number,
