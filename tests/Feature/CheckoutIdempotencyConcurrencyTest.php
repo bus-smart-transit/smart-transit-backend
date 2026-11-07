@@ -167,7 +167,7 @@ it('creates only one online payment, hold, reward redemption, and gateway sessio
     expect(collect($results)->sum('provider_calls'))->toBe(1);
     expect(Payment::where('idempotency_scope_hash', hash('sha256', 'passenger:'.$passenger->passenger_id))
         ->where('idempotency_key_hash', hash('sha256', $key))->count())->toBe(1);
-    expect((int) $trip->fresh()->current_seated_capacity)->toBe(1);
+    expect((int) $trip->fresh()->current_seated_capacity)->toBe(0); // Batch 49 item 1: seats are taken only when the payment is confirmed
     expect((int) $passenger->fresh()->reward_points)->toBe(15);
     expect(RewardTransaction::where('passenger_id', $passenger->passenger_id)->where('type', 'redeemed')->count())->toBe(1);
 });

@@ -22,7 +22,8 @@ class OnlineCheckoutRequest extends FormRequest
             'booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
             // Roundtrip booking is retired (2026-10-26): a return journey is a separate purchase.
             'journey_type' => 'nullable|string|in:one_way',
-            'items' => 'required|array|min:1',
+            // Batch 49 item 1: one purchase holds at most this many tickets (config/booking.php).
+            'items' => 'required|array|min:1|max:'.(int) config('booking.max_seats_per_purchase'),
             'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
             'items.*.journey_leg' => 'prohibited',
             // 2026-10-27: discounts are given on the bus only; online fares earn reward points.
@@ -78,6 +79,7 @@ class OnlineCheckoutRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'items.max' => 'You can buy up to '.(int) config('booking.max_seats_per_purchase').' tickets in one purchase.',
             'items.*.seat_type.in' => 'Online tickets are for seats only. Standing places are sold on the bus.',
             'journey_type.in' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
             'items.*.journey_leg.prohibited' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',

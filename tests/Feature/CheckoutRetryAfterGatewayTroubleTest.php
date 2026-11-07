@@ -67,10 +67,10 @@ it('tells a retry of a refused checkout to start fresh at once, with the seats a
 
     crCheckout($this, $trip, $stops, $key)->assertStatus(409)
         ->assertJsonPath('errors.checkout.0', 'retry_with_new_key')
-        ->assertJsonPath('message', 'Your last attempt did not go through, and its seats were released. Try again.');
+        ->assertJsonPath('message', 'Your last attempt did not go through. Try again.');
 });
 
-it('holds an unanswered checkout for 2 minutes, then releases it and lets a fresh checkout start', function () {
+it('keeps an unanswered checkout for 2 minutes, then ends it and lets a fresh checkout start', function () {
     [$trip, $stops] = crTrip();
     $key = 'key-'.Str::random(24);
     // One stub that can come back up (Http::fake keeps the first stub it is given).
@@ -83,13 +83,14 @@ it('holds an unanswered checkout for 2 minutes, then releases it and lets a fres
 
     crCheckout($this, $trip, $stops, $key)->assertStatus(503); // the outcome is unknown
     $payment = Payment::firstOrFail();
-    expect($payment->idempotency_state)->toBe('unknown')->and($trip->fresh()->total_occupancy)->toBe(1);
+    // Batch 49 item 1: seats are taken only when the payment is confirmed, so an unanswered checkout holds none.
+    expect($payment->idempotency_state)->toBe('unknown')->and($trip->fresh()->total_occupancy)->toBe(0);
 
-    // Straight away: still held, and not yet a fresh start.
+    // Straight away: not yet a fresh start.
     crCheckout($this, $trip, $stops, $key)->assertStatus(409)->assertJsonPath('errors', null);
-    expect($trip->fresh()->total_occupancy)->toBe(1);
+    expect($trip->fresh()->total_occupancy)->toBe(0);
 
-    // After the 2-minute window: released, and the retry is told to start fresh.
+    // After the 2-minute window: ended, and the retry is told to start fresh.
     Carbon::setTestNow(now()->addMinutes(3));
     crCheckout($this, $trip, $stops, $key)->assertStatus(409)->assertJsonPath('errors.checkout.0', 'retry_with_new_key');
     expect($trip->fresh()->total_occupancy)->toBe(0)->and($payment->fresh()->status)->toBe('failed');
@@ -99,7 +100,7 @@ it('holds an unanswered checkout for 2 minutes, then releases it and lets a fres
     crCheckout($this, $trip, $stops, 'key-'.Str::random(24))->assertSuccessful();
 });
 
-it('keeps the hold of a checkout whose link reached the passenger, and replays it', function () {
+it('keeps a checkout whose link reached the passenger, and replays it', function () {
     [$trip, $stops] = crTrip();
     $key = 'key-'.Str::random(24);
     Http::fake(['api.paymongo.com/*' => Http::response(['data' => ['id' => 'cs_delivered', 'attributes' => ['checkout_url' => 'https://pay.example/x', 'payment_intent' => ['id' => 'pi_x']]]])]);
@@ -108,5 +109,5 @@ it('keeps the hold of a checkout whose link reached the passenger, and replays i
     Carbon::setTestNow(now()->addMinutes(5));
 
     crCheckout($this, $trip, $stops, $key)->assertSuccessful()->assertJsonPath('data.checkout_url', 'https://pay.example/x');
-    expect($trip->fresh()->total_occupancy)->toBe(1)->and(Payment::count())->toBe(1);
+    expect($trip->fresh()->total_occupancy)->toBe(0)->and(Payment::count())->toBe(1); // Batch 49 item 1: seats are taken only when the payment is confirmed
 });

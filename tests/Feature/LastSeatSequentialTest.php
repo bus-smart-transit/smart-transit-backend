@@ -12,10 +12,11 @@ require_once __DIR__.'/../Support/last_seat_fixture.php';
 
 uses(RefreshDatabase::class);
 
-// The last-seat race, one after the other, on every test run (SQLite): the second passenger is refused and leaves no
-// payment and no held seat. LastSeatRaceTest runs the same race at the same moment on PostgreSQL.
+// The last-seat race, one after the other, on every test run (SQLite). Batch 49 item 1: seats are taken only when the payment is confirmed: both
+// passengers may check out; the first payment confirmed gets the seat and the second is refunded (no ticket, no seat).
+// LastSeatRaceTest runs the confirmations at the same moment on PostgreSQL.
 
-it('refuses the second of two passengers for the last seat, without a payment or a held seat', function () {
+it('gives the last seat to the first payment confirmed and refunds the second, without a ticket or a seat', function () {
     [$trip, $payload] = lsOneSeatTrip();
     $first = lsPassenger('First');
     $second = lsPassenger('Second');
@@ -23,15 +24,22 @@ it('refuses the second of two passengers for the last seat, without a payment or
     Http::fake(['api.paymongo.com/*' => fn () => Http::response(['data' => ['id' => 'cs_'.Str::random(12), 'attributes' => ['checkout_url' => 'https://pay.example/x', 'payment_intent' => ['id' => 'pi_'.Str::random(8)]]]])]);
     $service = app(PaymentService::class);
 
-    $service->checkoutOnline($first->passenger_id, null, $payload, 'race-first-'.Str::random(20));
+    $firstPayment = $service->checkoutOnline($first->passenger_id, null, $payload, 'race-first-'.Str::random(20))['payment'];
+    $secondPayment = $service->checkoutOnline($second->passenger_id, null, $payload, 'race-second-'.Str::random(20))['payment'];
+    expect((int) $trip->fresh()->current_seated_capacity)->toBe(0)->and(Payment::count())->toBe(2);
 
+    $service->finalizeOnlinePayment($firstPayment->fresh());
+    $service->finalizeOnlinePayment($secondPayment->fresh());
+
+    expect((int) $trip->fresh()->current_seated_capacity)->toBe(1); // never 2: not oversold
+    expect($firstPayment->fresh()->status)->toBe('paid')->and($secondPayment->fresh()->status)->toBe('needs_refund');
+    expect(Ticket::count())->toBe(1)->and(Ticket::firstOrFail()->payment_id)->toBe($firstPayment->payment_id);
+
+    // A third passenger is now refused at checkout: the bus is full.
     try {
-        $service->checkoutOnline($second->passenger_id, null, $payload, 'race-second-'.Str::random(20));
-        $this->fail('The second passenger got a seat that was not there.');
+        $service->checkoutOnline(lsPassenger('Third')->passenger_id, null, $payload, 'race-third-'.Str::random(20));
+        $this->fail('The third passenger could check out for a seat that was not there.');
     } catch (ValidationException $e) {
         expect(collect($e->errors())->flatten()->first())->toBe('This trip is full.');
     }
-
-    expect((int) $trip->fresh()->current_seated_capacity)->toBe(1);
-    expect(Payment::count())->toBe(1)->and(Ticket::count())->toBe(0);
 });

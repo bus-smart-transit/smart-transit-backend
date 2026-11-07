@@ -53,7 +53,8 @@ class AdminOverviewRepository
     /** Payments the system took but could not turn into tickets: a person must refund them. */
     public function paymentsNeedingRefund(): int
     {
-        return DB::table('payments')->where('status', 'needs_refund')->count();
+        // Batch 49 item 1: an automatic refund still with PayMongo needs nobody; only the rest are refunded by hand.
+        return DB::table('payments')->where('status', 'needs_refund')->whereNull('gateway_refund_id')->count();
     }
 
     public function failedJobs(): int

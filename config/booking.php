@@ -18,6 +18,9 @@ return [
     'home_preview_limit' => (int) env('BOOKING_HOME_PREVIEW_LIMIT', 5),
     'trips_per_page' => (int) env('BOOKING_TRIPS_PER_PAGE', 10),
     'trips_max_per_page' => (int) env('BOOKING_TRIPS_MAX_PER_PAGE', 50),
+    // Batch 49 item 1: the most tickets one online purchase may hold (checked on the server; the form shows it too).
+    // Seats are taken only when the payment is confirmed, so this limits one purchase, not a hold.
+    'max_seats_per_purchase' => (int) env('BOOKING_MAX_SEATS_PER_PURCHASE', 20),
 
     // Batch 27 Part 2, Task 6: when the Chauffeur sells a ticket to someone boarding between stops, the server
     // uses the bus's own latest accepted position. A fix older than this, or less accurate than this, is not

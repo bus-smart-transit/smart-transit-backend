@@ -70,6 +70,37 @@ class TicketService
     }
 
     /**
+     * Batch 49 item 1: an online checkout prices its tickets and checks that enough seats are free right now, but takes
+     * none. The seats are taken only when PayMongo confirms the payment (PaymentService::finalizeOnlinePayment), all or
+     * nothing, so an unpaid checkout never blocks seats. The priced item is marked `seat_held` false, which tells the
+     * expiry job and the failure webhook there is nothing to give back.
+     *
+     * @return array<string, mixed>
+     */
+    public function priceForCheckout(array $item, int $count): array
+    {
+        $priced = $this->priceItem($item);
+
+        $trip = $this->tripRepository->findById((int) $item['trip_id']);
+        if ($trip && TripCapacity::wouldExceed($trip, (string) $item['seat_type'], $count)) {
+            $left = TripCapacity::summary($trip)['remaining'][(string) $item['seat_type']] ?? 0;
+            throw ValidationException::withMessages(['capacity' => [$left > 0
+                ? "Only {$left} ".($left === 1 ? 'seat is' : 'seats are').' left on this bus. Choose fewer tickets.'
+                : 'This trip is full.']]);
+        }
+
+        $priced['seat_held'] = false;
+
+        return $priced;
+    }
+
+    /** Batch 49 item 1: false only for checkouts made after seats stopped being held at checkout (older ones held them). */
+    public static function itemHoldsSeat(array $item): bool
+    {
+        return ($item['seat_held'] ?? true) !== false;
+    }
+
+    /**
      * The ticket this item would be, with its fare, checked against every sale rule. Reserves nothing, so a quote can
      * show the exact fare of a sale before it is made (the sale prices through this same method).
      */
@@ -509,10 +540,14 @@ class TicketService
 
     /**
      * Releases previously held capacity for an item that never became a
-     * ticket (payment failed, or its hold expired).
+     * ticket (payment failed, or its hold expired). An item whose seat was never held (Batch 49) gives nothing back.
      */
     public function releaseTicketHold(array $reserved): void
     {
+        if (! self::itemHoldsSeat($reserved)) {
+            return;
+        }
+
         $this->tripService->releaseBoarding($reserved['trip_id'], $reserved['seat_type']);
     }
 

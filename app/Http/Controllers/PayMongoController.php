@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\PaymentService;
 use App\Services\PayMongoService;
 use App\Services\TicketResolutionService;
+use App\Services\UnfulfilledPaymentService;
 use App\Support\Database\RlsContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -15,6 +16,7 @@ class PayMongoController extends Controller
         private PayMongoService $payMongoService,
         private PaymentService $paymentService,
         private TicketResolutionService $ticketResolutions,
+        private UnfulfilledPaymentService $unfulfilledPayments,
     ) {}
 
     public function handle(Request $request)
@@ -180,13 +182,21 @@ class PayMongoController extends Controller
                 }
                 $refund['attributes'] = (array) ($refund['attributes'] ?? []);
                 $refund['attributes']['payment_id'] ??= $paymentId;
-                $this->ticketResolutions->handleGatewayRefund($refund);
+                $this->settleRefund($refund);
             }
 
             return;
         }
 
-        $this->ticketResolutions->handleGatewayRefund($resource);
+        $this->settleRefund($resource);
+    }
+
+    /** A ticket refund (trip cancelled), else (Batch 49 item 1) the automatic refund of a payment that made no ticket. */
+    private function settleRefund(array $refund): void
+    {
+        if (! $this->ticketResolutions->handleGatewayRefund($refund)) {
+            $this->unfulfilledPayments->handleGatewayRefund($refund);
+        }
     }
 
     private function handlePaymentPaid(object $event): void

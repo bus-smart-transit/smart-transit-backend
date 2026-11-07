@@ -121,8 +121,8 @@ it('issues one ticket and takes one seat however many times the paid webhook is 
     $pax = piPassenger();
     $payment = Payment::findOrFail(piCheckout($this, $pax, $f)->assertSuccessful()->json('data.payment.payment_id'));
 
-    // Held at checkout; no ticket before payment.
-    expect($f['trip']->fresh()->total_occupancy)->toBe(1)->and(Ticket::count())->toBe(0);
+    // Batch 49 item 1: seats are taken only when the payment is confirmed; no ticket and no seat before payment.
+    expect($f['trip']->fresh()->total_occupancy)->toBe(0)->and(Ticket::count())->toBe(0);
 
     foreach (range(1, 4) as $delivery) {
         piPaid($this, $payment)->assertOk();
@@ -221,21 +221,21 @@ it('never takes a point value from the client: extra fields in the checkout chan
 
 // ----------------------------------------------------------------- 3. the last seat
 
-it('sells the last seat once: a second buyer is refused while it is held, and after it is paid', function () {
+it('sells the last seat once: the first payment confirmed gets it, and a buyer after that is refused', function () {
     $f = piFixture(seated: 1);
 
+    // Batch 49 item 1: seats are taken only when the payment is confirmed: two buyers may check out while the seat is free.
     $first = Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id'));
-    expect($f['trip']->fresh()->current_seated_capacity)->toBe(1);
-
-    // The seat is held for the first buyer: the second is refused and leaves nothing behind.
-    piCheckout($this, piPassenger(), $f)->assertStatus(422);
-    expect(Payment::count())->toBe(1)->and($f['trip']->fresh()->current_seated_capacity)->toBe(1);
+    $second = Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id'));
+    expect($f['trip']->fresh()->current_seated_capacity)->toBe(0);
 
     piPaid($this, $first)->assertOk();
-    piCheckout($this, piPassenger(), $f)->assertStatus(422);       // still refused once it is sold
+    piPaid($this, $second)->assertOk();                            // too late: no ticket, refunded
+    piCheckout($this, piPassenger(), $f)->assertStatus(422);       // refused once it is sold
     piCheckout($this, null, $f)->assertStatus(422);                // a guest too
 
-    expect(Ticket::count())->toBe(1)->and(Payment::count())->toBe(1);
+    expect(Ticket::count())->toBe(1)->and(Ticket::firstOrFail()->payment_id)->toBe($first->payment_id);
+    expect($second->fresh()->status)->toBe('needs_refund');
     expect($f['trip']->fresh()->current_seated_capacity)->toBe(1)->and($f['trip']->fresh()->total_occupancy)->toBe(1);
 });
 
@@ -243,10 +243,10 @@ it('lets the next buyer have the seat when the first payment fails', function ()
     $f = piFixture(seated: 1);
 
     $first = Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id'));
-    piCheckout($this, piPassenger(), $f)->assertStatus(422);
 
     piFailed($this, $first)->assertOk();
-    piFailed($this, $first)->assertOk();                           // redelivery frees the seat once, not twice
+    piFailed($this, $first)->assertOk();                           // redelivery changes nothing: no seat was taken
+    expect($first->fresh()->status)->toBe('failed');
     expect($f['trip']->fresh()->current_seated_capacity)->toBe(0)->and($f['trip']->fresh()->total_occupancy)->toBe(0);
 
     $second = Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id'));
@@ -255,20 +255,24 @@ it('lets the next buyer have the seat when the first payment fails', function ()
     expect($f['trip']->fresh()->current_seated_capacity)->toBe(1);
 });
 
-it('frees a held seat when the hold expires, and never oversells a bus with a few seats', function () {
+it('never oversells a bus with a few seats, and an unpaid checkout that expires takes nothing', function () {
     $f = piFixture(seated: 3);
 
-    // Five buyers, three seats: exactly three succeed.
-    $results = collect(range(1, 5))->map(fn () => piCheckout($this, piPassenger(), $f)->getStatusCode());
-    expect($results->filter(fn ($s) => $s === 200 || $s === 201)->count())->toBe(3);
-    expect($results->filter(fn ($s) => $s === 422)->count())->toBe(2);
-    expect($f['trip']->fresh()->current_seated_capacity)->toBe(3)->and(Payment::count())->toBe(3);
+    // Batch 49 item 1: seats are taken only when the payment is confirmed: five buyers may check out for three seats; only three payments get them.
+    $payments = collect(range(1, 5))->map(fn () => Payment::findOrFail(piCheckout($this, piPassenger(), $f)->assertSuccessful()->json('data.payment.payment_id')));
+    expect($f['trip']->fresh()->current_seated_capacity)->toBe(0)->and(Payment::count())->toBe(5);
 
-    // None of them pays; after the hold window the command gives the seats back.
+    $payments->take(4)->each(fn (Payment $payment) => piPaid($this, $payment)->assertOk());
+    expect($f['trip']->fresh()->current_seated_capacity)->toBe(3)->and(Ticket::count())->toBe(3);
+    expect($payments->get(3)->fresh()->status)->toBe('needs_refund');
+
+    // The fifth never pays; after its checkout window the command marks it expired and gives back no seat.
     Carbon::setTestNow(Carbon::parse('2026-10-04 07:20:00', 'Asia/Manila'));
     Artisan::call('payments:release-expired-holds');
-    expect($f['trip']->fresh()->current_seated_capacity)->toBe(0)->and($f['trip']->fresh()->total_occupancy)->toBe(0);
+    expect($payments->get(4)->fresh()->status)->toBe('expired');
+    expect($f['trip']->fresh()->current_seated_capacity)->toBe(3)->and($f['trip']->fresh()->total_occupancy)->toBe(3);
 
-    piCheckout($this, piPassenger(), $f)->assertSuccessful();
-    expect($f['trip']->fresh()->current_seated_capacity)->toBe(1);
+    // A sold-out bus refuses the next checkout; a later bus with room would not.
+    piCheckout($this, piPassenger(), $f)->assertStatus(422);
+
 });

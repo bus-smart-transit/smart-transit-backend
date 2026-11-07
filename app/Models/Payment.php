@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $payment_intent_id
  * @property array<array-key, mixed>|null $items_payload
  * @property Carbon|null $hold_expires_at
+ * @property string|null $gateway_refund_id
  * @property-read OnlinePayment|null $onlinePayment
  * @property-read OnsitePayment|null $onsitePayment
  * @property-read Collection<int, Ticket> $tickets
@@ -77,6 +78,7 @@ class Payment extends Model
         'refunded_at',
         'refund_note',
         'refunded_by_user_id',
+        'gateway_refund_id',
         'idempotency_scope_hash',
         'idempotency_key_hash',
         'idempotency_request_hash',

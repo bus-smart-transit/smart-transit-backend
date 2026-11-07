@@ -378,7 +378,7 @@ it('returns the booking window from one place, and a config change moves it', fu
     bkRoute($eastWest);
 
     $window = $this->getJson('/api/booking/window')->assertSuccessful()->json('data');
-    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03', 'online_booking_fee' => 10]); // the fee: Batch 45 Feature A
+    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03', 'online_booking_fee' => 10, 'max_seats_per_purchase' => 20]); // the fee: Batch 45 Feature A; the limit: Batch 49
 
     $meta = $this->getJson('/api/booking/stops')->assertSuccessful()->json('data.meta');
     expect($meta['last_bookable_date'])->toBe('2026-11-03');

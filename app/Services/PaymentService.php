@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\CheckoutIdempotencyConflict;
 use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
 use App\Exceptions\PayMongoNotConfigured;
+use App\Jobs\RefundUnfulfilledPayment;
 use App\Models\Payment;
 use App\Repositories\OnlinePaymentRepository;
 use App\Repositories\OnsitePaymentRepository;
@@ -44,9 +45,8 @@ class PaymentService
      *   stop-based:   ['trip_id','seat_type','origin_stop_id','destination_stop_id']
      *   custom-point: ['trip_id','seat_type','origin_lat','origin_lng','destination_lat','destination_lng']
      *
-     * No ticket rows are created here. Each item's seat/standing capacity
-     * is reserved and its fare computed via TicketService::reserveAndPrice(),
-     * and that reservation is stored as JSON on payments.items_payload.
+     * No ticket rows are created here and (Batch 49 item 1) no seat is taken: each item is priced and checked against
+     * the seats free right now via TicketService::priceForCheckout(), and stored as JSON on payments.items_payload.
      * Actual `tickets` rows are only created once the webhook confirms
      * payment — see PaymentService::finalizeOnlinePayment().
      */
@@ -216,14 +216,9 @@ class PaymentService
                     }
 
                     foreach ($groupedItems as $group) {
-                        // Compute fare once per unique item and reserve remaining
-                        // repeated quantity as one batched capacity operation.
-                        $template = $this->ticketService->reserveAndPrice($group['item']);
-
-                        $extraCount = max(0, ((int) $group['count']) - 1);
-                        if ($extraCount > 0) {
-                            $this->ticketService->reserveFromTemplate($template, $extraCount);
-                        }
+                        // Batch 49 item 1: price once per unique item and check the seats are free now; nothing is
+                        // taken until the payment is confirmed (finalizeOnlinePayment).
+                        $template = $this->ticketService->priceForCheckout($group['item'], (int) $group['count']);
 
                         for ($i = 0; $i < (int) $group['count']; $i++) {
                             $reserved = $template;
@@ -297,9 +292,8 @@ class PaymentService
 
                     $payment->amount = $netTotal;
                     $payment->items_payload = $reservedItems;
-                    // Matches PayMongo's default checkout session expiry window.
-                    // Confirm against your PayMongo dashboard settings if you've
-                    // customized session expiry.
+                    // Matches PayMongo's default checkout session expiry window. Since Batch 49 no seat is held; after
+                    // this time the expiry job marks the checkout expired and gives back the reward points it used.
                     $payment->hold_expires_at = Carbon::now()->addMinutes(15);
                     $payment->save();
 
@@ -471,7 +465,7 @@ class PaymentService
                 throw new CheckoutIdempotencyConflict('This checkout has been settled. Check its payment status before starting another checkout.');
             }
             if ($this->releaseIfAttemptIsOver($payment)) {
-                throw new CheckoutIdempotencyConflict('Your last attempt did not go through, and its seats were released. Try again.', retryWithNewKey: true);
+                throw new CheckoutIdempotencyConflict('Your last attempt did not go through. Try again.', retryWithNewKey: true);
             }
             throw new CheckoutIdempotencyConflict('A checkout with this key is still processing or did not complete. Check its status before trying again.');
         }
@@ -733,6 +727,17 @@ class PaymentService
                     return 'needs_refund';
                 }
 
+                // Batch 49 item 1: a checkout that held no seat takes its seats now, all or nothing. When they are gone
+                // (the bus filled up while this passenger paid), no ticket is made, the reward points come back and the
+                // money is refunded automatically.
+                if ($locked->status === 'pending' && ! $this->paymentHoldsSeats($locked) && ! $this->reclaimReleasedHold($locked, reclaimPoints: false)) {
+                    $this->paymentRepository->markStatus($locked->payment_id, 'needs_refund', false);
+                    $this->rewardService->returnRedeemedPoints($locked->payment_id);
+                    $this->settleUnknownCheckout($locked);
+
+                    return 'needs_refund';
+                }
+
                 $this->confirmOnlinePayment($locked->payment_id);
                 $this->settleUnknownCheckout($locked);
 
@@ -749,16 +754,17 @@ class PaymentService
             }
 
             if ($outcome === 'needs_refund') {
-                Log::error('PaymentService: a payment arrived after its hold was released and could not be honoured; it needs a refund.', [
+                Log::error('PaymentService: a payment was confirmed but its seats were no longer free; it is refunded automatically.', [
                     'payment_id' => $payment->payment_id,
                     'transaction_reference' => $payment->transaction_reference,
                 ]);
                 $this->notifyOperators(
                     $payment,
-                    'Payment needs a refund',
-                    'A payment (transaction '.$payment->transaction_reference.') arrived after its seats were released and no ticket was issued. Please refund it.',
+                    'Payment being refunded',
+                    'A payment (transaction '.$payment->transaction_reference.') was confirmed after the bus filled up, so no ticket was issued. It is being refunded automatically; check the refund list if it fails.',
                     'payment_needs_refund',
                 );
+                RefundUnfulfilledPayment::dispatch((int) $payment->payment_id)->afterCommit();
 
                 return;
             }
@@ -779,14 +785,23 @@ class PaymentService
         });
     }
 
+    /** Batch 49 item 1: false for a checkout made after seats stopped being held at checkout. */
+    private function paymentHoldsSeats(Payment $payment): bool
+    {
+        $items = $payment->items_payload ?? [];
+
+        return $items === [] || TicketService::itemHoldsSeat($items[0]);
+    }
+
     /**
-     * Takes the seats (and the reward points) of a payment whose hold was released, again. All or nothing: the
-     * attempt runs in its own savepoint, so a refusal leaves nothing half-taken.
+     * Takes the seats (and, unless they are still taken, the reward points) of a payment that does not hold them: its
+     * hold was released, or (Batch 49) it never held any. All or nothing: the attempt runs in its own savepoint, so a
+     * refusal leaves nothing half-taken.
      */
-    private function reclaimReleasedHold(Payment $payment): bool
+    private function reclaimReleasedHold(Payment $payment, bool $reclaimPoints = true): bool
     {
         try {
-            DB::transaction(function () use ($payment) {
+            DB::transaction(function () use ($payment, $reclaimPoints) {
                 foreach ($payment->items_payload ?? [] as $reservedItem) {
                     $trip = $this->tripRepository->findById((int) ($reservedItem['trip_id'] ?? 0));
                     if (! $trip || ! in_array($trip->status, ['scheduled', 'delayed', 'boarding'], true)) {
@@ -797,7 +812,7 @@ class PaymentService
                     $this->ticketService->reserveFromTemplate($reservedItem);
                 }
 
-                if (! $this->rewardService->reclaimRedeemedPoints($payment->payment_id)) {
+                if ($reclaimPoints && ! $this->rewardService->reclaimRedeemedPoints($payment->payment_id)) {
                     throw ValidationException::withMessages(['reward_points_to_use' => ['The reward points are no longer available.']]);
                 }
             });

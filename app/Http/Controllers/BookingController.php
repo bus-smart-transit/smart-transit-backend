@@ -57,7 +57,7 @@ class BookingController extends Controller
     public function window()
     {
         // Batch 45 Feature A: the booking page shows the online booking fee before the passenger pays (BookingFee owns it).
-        return $this->success(BookingWindow::describe() + ['online_booking_fee' => BookingFee::online()], 'Booking window retrieved successfully');
+        return $this->success(BookingWindow::describe() + ['online_booking_fee' => BookingFee::online(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase')], 'Booking window retrieved successfully');
     }
 
     // Available trips for a Manila date (default today), optionally for one journey, paginated.

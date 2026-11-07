@@ -9,15 +9,19 @@ use App\Models\User;
 use App\Support\Database\RlsContext;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 /**
  * Online payments the system took money for but could not turn into tickets (a payment that arrived after its seats
  * were released and could not be honoured: see PaymentService::finalizeOnlinePayment). They are marked `needs_refund`.
  *
- * The Operator refunds the money in PayMongo (the dashboard, or whichever way the company refunds) and records it here
- * with a note, normally the PayMongo refund id. This does NOT call PayMongo: it is the record of a refund a person made,
- * kept with who recorded it and when. An Operator sees only payments for trips of their own; another Operator's
+ * Batch 49 item 1 (user approved): the full amount is first sent back through PayMongo automatically
+ * (submitAutomaticRefund, run by the RefundUnfulfilledPayment job); the signed refund event then marks the payment
+ * refunded (handleGatewayRefund). While that refund is in progress nobody can record a refund by hand. When sending fails
+ * or PayMongo reports the refund failed, the payment waits here as before: the Operator refunds the money in PayMongo
+ * and records it with a note, normally the PayMongo refund id (recordRefund does NOT call PayMongo), kept with who
+ * recorded it and when. An Operator sees only payments for trips of their own; another Operator's
  * payment is the same answer as a missing one.
  */
 class UnfulfilledPaymentService
@@ -90,6 +94,10 @@ class UnfulfilledPaymentService
                     throw ValidationException::withMessages(['status' => ['This payment is not waiting for a refund.']]);
                 }
 
+                if ($payment->gateway_refund_id !== null) {
+                    throw ValidationException::withMessages(['status' => ['An automatic refund for this payment is already in progress. Wait for PayMongo to finish it.']]);
+                }
+
                 $payment->status = self::REFUNDED;
                 $payment->is_valid = false;
                 $payment->refunded_at = now();
@@ -113,6 +121,110 @@ class UnfulfilledPaymentService
             app(RefundCompletedMailer::class)->send($refunded, (float) $refunded->amount + (float) $refunded->fee_amount);
 
             return $this->present(collect([$refunded]))[0];
+        });
+    }
+
+    /**
+     * Batch 49 item 1: sends the whole amount the buyer paid (fares and booking fee) back through PayMongo. Only a
+     * `needs_refund` payment with no refund in progress; safe to call twice. A failure leaves it for a refund by hand.
+     */
+    public function submitAutomaticRefund(int $paymentId): void
+    {
+        RlsContext::withBypass(function () use ($paymentId) {
+            $payment = Payment::find($paymentId);
+            if (! $payment || $payment->status !== self::NEEDS_REFUND || $payment->gateway_refund_id !== null || $payment->payment_method !== 'online') {
+                return;
+            }
+
+            try {
+                $payMongo = app(PayMongoService::class);
+                $payId = $payment->gateway_payment_id ?: ($payment->gateway_reference ? $payMongo->findPaymentIdForCheckoutSession($payment->gateway_reference) : null);
+                if (! $payId) {
+                    throw new \RuntimeException('The payment could not be found at the payment provider.');
+                }
+
+                // What PayMongo charged: the fares (never under PHP 1, as at checkout) plus the booking fee.
+                $centavos = max(100, (int) round((float) $payment->amount * 100)) + (int) round((float) $payment->fee_amount * 100);
+                $refund = $payMongo->createRefund(
+                    $payId,
+                    $centavos,
+                    (string) config('refunds.gateway_reason'),
+                    'The bus filled up before payment '.$payment->transaction_reference.' was confirmed',
+                    ['payment_id' => (string) $payment->payment_id, 'kind' => 'unfulfilled_payment'],
+                );
+
+                $payment->forceFill([
+                    'gateway_payment_id' => $payId,
+                    'gateway_refund_id' => $refund['id'] ?? null,
+                    'refund_note' => 'Automatic refund sent to PayMongo.',
+                ])->save();
+                AuditLogger::log('payment.refund_submitted', 'Payment', (int) $payment->payment_id, [
+                    'transaction_reference' => $payment->transaction_reference,
+                    'amount' => $centavos / 100,
+                    'gateway_refund_id' => $refund['id'] ?? null,
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Automatic refund of an unfulfilled payment could not be sent.', ['payment_id' => $payment->payment_id, 'error' => $e->getMessage()]);
+                $payment->forceFill(['refund_note' => 'Automatic refund failed. Refund it by hand.'])->save();
+                AuditLogger::log('payment.refund_failed', 'Payment', (int) $payment->payment_id, ['reason' => mb_substr($e->getMessage(), 0, 255)]);
+            }
+        });
+    }
+
+    /**
+     * Batch 49 item 1: the signed PayMongo refund event for an automatic refund of an unfulfilled payment, matched by
+     * the refund id stored when it was sent. Succeeded: the payment is refunded and the buyer is emailed once. Failed:
+     * the refund id is cleared so the Operator can refund it by hand. False when the refund is not one of these.
+     *
+     * @param  array<string, mixed>  $refund  the refund resource
+     */
+    public function handleGatewayRefund(array $refund): bool
+    {
+        $refundId = $refund['id'] ?? null;
+        if (! is_string($refundId) || $refundId === '') {
+            return false;
+        }
+        $status = strtolower((string) ($refund['attributes']['status'] ?? ''));
+
+        return RlsContext::withBypass(function () use ($refundId, $status) {
+            $outcome = DB::transaction(function () use ($refundId, $status) {
+                $payment = Payment::where('gateway_refund_id', $refundId)->lockForUpdate()->first();
+                if (! $payment) {
+                    return null;
+                }
+                if ($payment->status !== self::NEEDS_REFUND) {
+                    return ['payment' => $payment, 'emailed' => false]; // already settled: a replay changes nothing
+                }
+
+                if (in_array($status, ['succeeded', 'paid'], true)) {
+                    $payment->forceFill([
+                        'status' => self::REFUNDED,
+                        'is_valid' => false,
+                        'refunded_at' => now(),
+                        'refund_note' => 'Refunded automatically through PayMongo ('.$refundId.').',
+                    ])->save();
+                    AuditLogger::log('payment.refund_completed', 'Payment', (int) $payment->payment_id, ['gateway_refund_id' => $refundId]);
+
+                    return ['payment' => $payment, 'emailed' => true];
+                }
+
+                if ($status === 'failed') {
+                    $payment->forceFill(['gateway_refund_id' => null, 'refund_note' => 'Automatic refund failed at PayMongo. Refund it by hand.'])->save();
+                    AuditLogger::log('payment.refund_failed', 'Payment', (int) $payment->payment_id, ['gateway_refund_id' => $refundId]);
+                }
+
+                return ['payment' => $payment, 'emailed' => false];
+            });
+
+            if ($outcome === null) {
+                return false;
+            }
+            if ($outcome['emailed']) {
+                $refunded = $outcome['payment'];
+                app(RefundCompletedMailer::class)->send($refunded, (float) $refunded->amount + (float) $refunded->fee_amount);
+            }
+
+            return true;
         });
     }
 
@@ -246,7 +358,10 @@ class UnfulfilledPaymentService
                 'gateway_payment_id' => $payment->gateway_payment_id,
                 'reason' => $payment->idempotency_state === 'unknown'
                     ? 'PayMongo did not return a definitive checkout-session response. Verify the transaction reference in PayMongo before releasing the hold.'
-                    : 'The payment arrived after the seats were released and no ticket could be issued.',
+                    : 'The payment was confirmed after the seats were gone, so no ticket could be issued.',
+                // Batch 49 item 1: true while the automatic refund is with PayMongo (nothing to do by hand).
+                'automatic_refund_pending' => $payment->status === self::NEEDS_REFUND && $payment->gateway_refund_id !== null,
+                'refunded_automatically' => $payment->status === self::REFUNDED && $payment->gateway_refund_id !== null && $payment->refunded_by_user_id === null,
                 'refunded_at' => $payment->refunded_at?->toIso8601String(),
                 'refund_note' => $payment->refund_note,
                 'refunded_by_name' => $payment->refunded_by_user_id ? ($actors[$payment->refunded_by_user_id] ?? null) : null,
