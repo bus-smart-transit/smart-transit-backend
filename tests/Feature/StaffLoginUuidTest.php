@@ -4,6 +4,7 @@ use App\Mail\PassengerOtpMail;
 use App\Models\StaffUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
@@ -41,6 +42,31 @@ it('gives the staff member\'s uuid after the password and signs them in with it 
     $this->postJson('/api/staff/verify-otp', ['account_uuid' => $staff->company_user_uuid, 'otp' => $code])
         ->assertSuccessful()
         ->assertJsonStructure(['data' => ['token']]);
+});
+
+// 2026-11-08 (user): the email and the sign-in page's countdown state the code's real lifetime (one config value).
+it('states the real login code lifetime in the email and to the sign-in page', function () {
+    [$user, $staff] = sluOperator();
+    config(['auth.login_code_minutes' => 7]);
+
+    $this->postJson('/api/auth/login', ['portal' => 'staff', 'email' => $user->email, 'password' => 'password123', 'role' => 'operator'])
+        ->assertSuccessful()
+        ->assertJsonPath('data.otp_expires_in_seconds', 420);
+
+    $code = null;
+    Mail::assertSent(PassengerOtpMail::class, function (PassengerOtpMail $mail) use (&$code) {
+        $code = $mail->otp;
+        $html = $mail->render();
+        expect($html)->toContain('It expires in <strong>7 minutes</strong>')->not->toContain('10 minutes');
+
+        return true;
+    });
+
+    // The code still works inside 7 minutes and has expired after them.
+    $this->travel(6)->minutes();
+    expect(Cache::has('staff-otp:'.$user->user_id))->toBeTrue();
+    $this->travel(2)->minutes();
+    $this->postJson('/api/staff/verify-otp', ['account_uuid' => $staff->company_user_uuid, 'otp' => $code])->assertStatus(422);
 });
 
 it('refuses the numeric user id and an unknown uuid at the code step', function () {

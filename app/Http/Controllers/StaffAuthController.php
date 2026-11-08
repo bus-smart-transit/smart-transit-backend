@@ -8,6 +8,7 @@ use App\Services\AuditLogger;
 use App\Services\FcmService;
 use App\Services\StaffService;
 use App\Services\StepUpService;
+use App\Services\UserService;
 use App\Traits\ApiResponse;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
@@ -198,7 +199,7 @@ class StaffAuthController extends Controller
 
         $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $cacheKey = 'step-up-otp:'.$user->user_id;
-        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(UserService::loginCodeMinutes()));
 
         $name = $user->username ?? explode('@', $user->email)[0];
         Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));

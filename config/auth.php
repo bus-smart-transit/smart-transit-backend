@@ -146,4 +146,18 @@ return [
         'ip_window_minutes' => 15,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Login code lifetime (2026-11-08, user)
+    |--------------------------------------------------------------------------
+    |
+    | How long an emailed login code works: passenger sign-in and email check,
+    | staff sign-in and the staff security check. The one value the server
+    | keeps the code for, the email states and the staff sign-in page counts
+    | down from (sent as `otp_expires_in_seconds`).
+    |
+    */
+
+    'login_code_minutes' => 3,
+
 ];

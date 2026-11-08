@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Services\UserService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -33,6 +34,8 @@ class PassengerOtpMail extends Mailable
             with: [
                 'originalEmail' => $this->recipientEmail,
                 'verify' => $this->verify,
+                // 2026-11-08 (user): the email states the code's real lifetime.
+                'expiresInMinutes' => UserService::loginCodeMinutes(),
             ],
         );
     }

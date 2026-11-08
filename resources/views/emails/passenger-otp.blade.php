@@ -27,9 +27,9 @@
               </p>
               <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6;">
                 @if($verify ?? false)
-                Welcome to SmartTransit! Enter the code below to verify your email and finish creating your account. It expires in <strong>10 minutes</strong> and can only be used once.
+                Welcome to SmartTransit! Enter the code below to verify your email and finish creating your account. It expires in <strong>{{ $expiresInMinutes }} minutes</strong> and can only be used once.
                 @else
-                Use the code below to complete your sign-in. It expires in <strong>10 minutes</strong> and can only be used once.
+                Use the code below to complete your sign-in. It expires in <strong>{{ $expiresInMinutes }} minutes</strong> and can only be used once.
                 @endif
               </p>
 

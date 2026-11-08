@@ -80,7 +80,7 @@ class UserService
         $cacheKey = 'passenger-otp:'.$user->user_id;
 
         // Store hashed OTP — prevents cache-leak from exposing the code directly.
-        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(self::loginCodeMinutes()));
 
         $name = $user->username ?? explode('@', $user->email)[0];
         $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
@@ -99,7 +99,17 @@ class UserService
             // 2026-10-29: the account's uuid, not the numeric user id; step 2 sends it back.
             'account_uuid' => (string) $user->passengerProfile?->passenger_uuid,
             'email_masked' => $this->maskEmail($user->email),
+            'otp_expires_in_seconds' => self::loginCodeMinutes() * 60,
         ];
+    }
+
+    /**
+     * 2026-11-08 (user): how long an emailed login code works, from config('auth.login_code_minutes'). The cache
+     * lifetime, the email text and the staff sign-in countdown all use this one value.
+     */
+    public static function loginCodeMinutes(): int
+    {
+        return max(1, (int) config('auth.login_code_minutes', 3));
     }
 
     /**
@@ -240,7 +250,7 @@ class UserService
             $cacheKey = 'staff-otp:'.$user->user_id;
 
             // Store hashed OTP to prevent cache-leak exposure.
-            Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(10));
+            Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(self::loginCodeMinutes()));
 
             $name = $user->username ?? explode('@', $user->email)[0];
             $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
@@ -258,6 +268,7 @@ class UserService
                 // 2026-10-29: the account's uuid, not the numeric user id; step 2 sends it back.
                 'account_uuid' => (string) $user->companyProfile?->company_user_uuid,
                 'email_masked' => $this->maskEmail($user->email),
+                'otp_expires_in_seconds' => self::loginCodeMinutes() * 60,
             ];
         } catch (\Exception $e) {
             \Log::error('initiateStaffLoginOtp error: '.$e->getMessage().' | '.$e->getTraceAsString());
