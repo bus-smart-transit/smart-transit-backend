@@ -845,3 +845,29 @@ it('refunds the booking fee once with the first ticket of a purchase when the op
         ->and($amounts)->toBe([4700, 5700]) // 47 fare, and 47 fare + 10 fee
         ->and((float) (TicketResolution::where('ticket_id', $cash->ticket_id)->value('fee_amount') ?? 0))->toBe(0.0);
 });
+
+// 2026-11-08 (user): a cancelled-trip refund that succeeded left the Schedule queue and was listed nowhere. The Refunds
+// tab's "Cancelled trips" list shows every ticket refund, done ones included; another company does not see them.
+it('lists cancelled-trip refunds, in progress and done, for the company that cancelled the trip only', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', rfPassenger());
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    $resolution = TicketResolution::where('ticket_id', $ticket->ticket_id)->firstOrFail();
+
+    $row = $this->actingAs($f['operator'])->getJson('/api/operator/ticket-refunds')->assertOk()->json('data.data.0');
+    expect($row['ticket_uuid'])->toBe($ticket->ticket_uuid)->and($row['status'])->toBe('pending')->and((float) $row['amount'])->toBe(47.0);
+
+    rfRefundWebhook($this, (string) $resolution->fresh()->gateway_refund_id, 'succeeded')->assertOk();
+    $done = $this->actingAs($f['operator'])->getJson('/api/operator/ticket-refunds')->assertOk()->json('data');
+    expect($done['data'][0]['status'])->toBe('succeeded')
+        ->and($done['data'][0]['completed_at'])->not->toBeNull()
+        ->and($done['meta']['total'])->toBe(1);
+
+    app('auth')->forgetGuards();
+    $other = rfStaff('operator');
+    $this->actingAs($other)->getJson('/api/operator/ticket-refunds')->assertOk()->assertJsonPath('data.meta.total', 0);
+});

@@ -98,6 +98,18 @@ class TicketResolutionController extends Controller
         })->values(), 'Tickets needing attention retrieved successfully');
     }
 
+    /** 2026-11-08 (user): every cancelled-trip ticket refund (in progress, done or failed), for the Refunds tab. */
+    public function refundHistory(Request $request)
+    {
+        $companyUserId = $this->operatorScope($request);
+        if ($companyUserId === false) {
+            return $this->error('Staff profile not found.', 404);
+        }
+        $page = (int) ($request->validate(['page' => 'nullable|integer|min:1'])['page'] ?? 1);
+
+        return $this->success($this->resolutions->refundHistory($companyUserId, $page), 'Cancelled-trip refunds retrieved successfully');
+    }
+
     public function staffShow(Request $request, string $ticketUuid)
     {
         $ticket = $this->staffTicket($request, $ticketUuid);

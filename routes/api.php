@@ -250,6 +250,8 @@ Route::prefix('operator')
         Route::patch('trips/{tripId}/cancel', [TripController::class, 'cancel'])->middleware('throttle:20,1,mgmt-trips-cancel-patch');
         // Batch 28 Stage 3, item 6: staff-assisted rebook/refund (acts for the passenger, recorded with the actor).
         Route::get('ticket-resolutions', [TicketResolutionController::class, 'queue']);
+        // 2026-11-08 (user): the Refunds tab's "Cancelled trips" list (every ticket refund, done ones included; read only).
+        Route::get('ticket-refunds', [TicketResolutionController::class, 'refundHistory'])->middleware('throttle:60,1,mgmt-ticket-refunds');
         Route::get('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffShow'])->middleware('throttle:60,1,mgmt-tickets-resolution');
         Route::post('tickets/{ticketUuid}/resolution', [TicketResolutionController::class, 'staffChoose'])->middleware('throttle:30,1,mgmt-tickets-resolution-post');
         Route::post('ticket-resolutions/{resolutionId}/cash', [TicketResolutionController::class, 'recordCash'])->middleware('throttle:30,1,mgmt-ticket-resolutions-cash-post');
