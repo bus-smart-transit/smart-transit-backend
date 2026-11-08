@@ -871,3 +871,34 @@ it('lists cancelled-trip refunds, in progress and done, for the company that can
     $other = rfStaff('operator');
     $this->actingAs($other)->getJson('/api/operator/ticket-refunds')->assertOk()->assertJsonPath('data.meta.total', 0);
 });
+
+// 2026-11-08 (user): the Refunds tab is one table: a payment that made no ticket and a cancelled-trip ticket refund
+// side by side, newest first, each with one plain status, filterable, own company only.
+it('lists payment refunds and cancelled-trip refunds in one table with one status filter', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    rfTicket($f, $f['trip'], [], 'gcash', rfPassenger());
+    Payment::create([
+        'amount' => 47, 'fee_amount' => 10, 'payment_uuid' => (string) Str::uuid(), 'transaction_reference' => 'TXN-FILLED-UP', 'payment_method' => 'online', 'payment_channel' => 'gcash',
+        'status' => 'needs_refund', 'is_valid' => false, 'payment_created' => now()->subHour(),
+        'items_payload' => [['trip_id' => $f['trip']->trip_id, 'seat_type' => 'seated', 'passenger_id' => null]],
+    ]);
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    $all = $this->actingAs($f['operator'])->getJson('/api/operator/refunds')->assertOk()->json('data');
+    expect($all['meta']['total'])->toBe(2)
+        ->and(collect($all['data'])->pluck('reason')->all())->toBe(['Trip cancelled', 'Paid, but no ticket was made'])
+        ->and(collect($all['data'])->pluck('status')->all())->toBe(['in_progress', 'needs_refund'])
+        ->and($all['data'][1]['needs_action'])->toBeTrue()
+        ->and((float) $all['data'][1]['amount'])->toBe(57.0)
+        ->and($all['meta']['counts'])->toMatchArray(['all' => 2, 'needs_action' => 1, 'in_progress' => 1, 'refunded' => 0]);
+
+    $needs = $this->actingAs($f['operator'])->getJson('/api/operator/refunds?status=needs_action')->assertOk()->json('data');
+    expect($needs['meta']['total'])->toBe(1)->and($needs['data'][0]['transaction_reference'])->toBe('TXN-FILLED-UP');
+
+    $this->actingAs($f['operator'])->getJson('/api/operator/refunds?status=nonsense')->assertStatus(422);
+    app('auth')->forgetGuards();
+    $this->actingAs(rfStaff('operator'))->getJson('/api/operator/refunds')->assertOk()->assertJsonPath('data.meta.total', 0);
+});

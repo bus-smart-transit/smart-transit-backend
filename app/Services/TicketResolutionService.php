@@ -569,30 +569,44 @@ class TicketResolutionService
      */
     public function refundHistory(?int $companyUserId, int $page, int $perPage = 20): array
     {
-        $paginator = TicketResolution::with(['ticket.trip.fleetRoute.route', 'ticket.passenger', 'ticket.payment'])
-            ->where('resolution', TicketResolution::REFUND)
-            ->when($companyUserId !== null, fn ($q) => $q->whereHas('ticket.trip', fn ($t) => CompanyScope::whereMadeByCompany($t, 'trips.company_user_id', $companyUserId)))
-            ->orderByDesc('id')
-            ->paginate($perPage, ['*'], 'page', max(1, $page));
+        $paginator = $this->refundQuery($companyUserId)->paginate($perPage, ['*'], 'page', max(1, $page));
 
         return [
-            'data' => collect($paginator->items())->map(function (TicketResolution $resolution) {
-                $ticket = $resolution->ticket;
-
-                return [
-                    'id' => (int) $resolution->id,
-                    'ticket_uuid' => $ticket?->ticket_uuid,
-                    'route_name' => $ticket?->trip?->fleetRoute?->route?->route_name,
-                    'trip_date' => $ticket?->trip?->trip_date?->toDateString(),
-                    'departure_time' => $ticket?->trip?->departure_time ? substr((string) $ticket->trip->departure_time, 0, 5) : null,
-                    'passenger_name' => $ticket?->passenger?->name,
-                    'guest_email' => $ticket?->payment?->guest_email,
-                    'transaction_reference' => $ticket?->payment?->transaction_reference,
-                    'gateway_refund_id' => $resolution->gateway_refund_id,
-                ] + $this->presentResolution($resolution);
-            })->values()->all(),
+            'data' => collect($paginator->items())->map(fn (TicketResolution $resolution) => $this->presentRefund($resolution))->values()->all(),
             'meta' => ['page' => $paginator->currentPage(), 'per_page' => $paginator->perPage(), 'total' => $paginator->total(), 'last_page' => $paginator->lastPage()],
         ];
+    }
+
+    /** 2026-11-08: every cancelled-trip ticket refund, unpaged, for the Refunds tab's one table (RefundListService). */
+    public function refundRows(?int $companyUserId): array
+    {
+        return $this->refundQuery($companyUserId)->get()->map(fn (TicketResolution $resolution) => $this->presentRefund($resolution))->values()->all();
+    }
+
+    private function refundQuery(?int $companyUserId)
+    {
+        return TicketResolution::with(['ticket.trip.fleetRoute.route', 'ticket.passenger', 'ticket.payment'])
+            ->where('resolution', TicketResolution::REFUND)
+            ->when($companyUserId !== null, fn ($q) => $q->whereHas('ticket.trip', fn ($t) => CompanyScope::whereMadeByCompany($t, 'trips.company_user_id', $companyUserId)))
+            ->orderByDesc('id');
+    }
+
+    /** @return array<string, mixed> */
+    private function presentRefund(TicketResolution $resolution): array
+    {
+        $ticket = $resolution->ticket;
+
+        return [
+            'id' => (int) $resolution->id,
+            'ticket_uuid' => $ticket?->ticket_uuid,
+            'route_name' => $ticket?->trip?->fleetRoute?->route?->route_name,
+            'trip_date' => $ticket?->trip?->trip_date?->toDateString(),
+            'departure_time' => $ticket?->trip?->departure_time ? substr((string) $ticket->trip->departure_time, 0, 5) : null,
+            'passenger_name' => $ticket?->passenger?->name,
+            'guest_email' => $ticket?->payment?->guest_email,
+            'transaction_reference' => $ticket?->payment?->transaction_reference,
+            'gateway_refund_id' => $resolution->gateway_refund_id,
+        ] + $this->presentResolution($resolution);
     }
 
     public function presentResolution(TicketResolution $resolution): array

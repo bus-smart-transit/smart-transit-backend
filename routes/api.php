@@ -316,6 +316,8 @@ Route::prefix('operator')
         // Online payments that took money but could not become tickets (a payment that arrived after its seats were released
         // and could not be honoured), and the Operator's record that they refunded them. Own throttle buckets.
         Route::get('payments/needs-refund', [UnfulfilledPaymentController::class, 'index'])->middleware('throttle:60,1,refund-list');
+        // 2026-11-08 (user): the Refunds tab as one table (payment refunds and cancelled-trip ticket refunds).
+        Route::get('refunds', [UnfulfilledPaymentController::class, 'refunds'])->middleware('throttle:60,1,refunds-table');
         Route::post('payments/{id}/refunded', [UnfulfilledPaymentController::class, 'recordRefund'])->where('id', '[0-9]+')->middleware('throttle:30,1,refund-record');
         Route::post('payments/{id}/checkout-reconciled-not-paid', [UnfulfilledPaymentController::class, 'reconcileCheckoutNotPaid'])->where('id', '[0-9]+')->middleware('throttle:30,1,checkout-reconcile');
 

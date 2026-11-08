@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\RefundListService;
 use App\Services\UnfulfilledPaymentService;
 use App\Traits\ApiResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -27,6 +28,20 @@ class UnfulfilledPaymentController extends Controller
         ]);
 
         return $this->success($this->payments->paginate($this->ownerId($request), $data), 'Payments retrieved successfully');
+    }
+
+    /**
+     * 2026-11-08 (user): the Refunds tab's one table: payment refunds and cancelled-trip ticket refunds together, with
+     * one status filter and one set of pages (RefundListService). Read only; own company only.
+     */
+    public function refunds(Request $request, RefundListService $refunds)
+    {
+        $data = $request->validate([
+            'status' => ['nullable', 'in:'.implode(',', RefundListService::STATUSES)],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        return $this->success($refunds->paginate($this->ownerId($request), $data['status'] ?? 'all', (int) ($data['page'] ?? 1)), 'Refunds retrieved successfully');
     }
 
     /** Batch 48 Phase 5: GET /admin/payments/needs-refund, the same list across every company, read only. */

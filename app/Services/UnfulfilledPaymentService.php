@@ -74,6 +74,17 @@ class UnfulfilledPaymentService
     }
 
     /**
+     * 2026-11-08: every refund-related payment (needs refund, refunded, unclear checkout), unpaged, for the Refunds tab's
+     * one table (RefundListService). $operatorCompanyUserId null = every company.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function rows(?int $operatorCompanyUserId): array
+    {
+        return RlsContext::withBypass(fn () => $this->present($this->ownedPayments($operatorCompanyUserId)));
+    }
+
+    /**
      * Records that the Operator refunded this payment. Only a `needs_refund` payment can be recorded, once.
      *
      * @return array<string, mixed>
