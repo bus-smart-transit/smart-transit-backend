@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\FleetRoute;
 use App\Models\Trip;
+use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -27,7 +28,7 @@ class FleetScheduleGuard
     /** Statuses in which a trip still has the bus. */
     public const OCCUPYING = ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'];
 
-    public function __construct(private RouteDurationFactorService $durations) {}
+    public function __construct(private RouteDurationFactorService $durations, private FareRuleResolver $fares) {}
 
     /**
      * @throws ValidationException
@@ -41,6 +42,27 @@ class FleetScheduleGuard
 
         $this->assertInsideOperatingWindow($fleetRoute, $departureTime);
         $this->assertBusIsFree($fleetRoute, $tripDate, $departureTime, $legDirection, $serviceType, $ignoreTripId);
+        $this->assertHasFare($fleetRoute, $tripDate, $serviceType);
+    }
+
+    /**
+     * Batch 50 (user, 2026-11-08): a trip that could never be sold is not scheduled. The bus needs a seated fare rule in
+     * force on that day for this route and service type (FareRuleResolver, the one fare owner).
+     *
+     * @throws ValidationException
+     */
+    private function assertHasFare(FleetRoute $fleetRoute, string $tripDate, ?string $serviceType): void
+    {
+        $fleetRoute->loadMissing('fleet');
+        if ($this->fares->isAvailable($fleetRoute->fleet, (int) $fleetRoute->route_id, $serviceType, 'seated', $tripDate)) {
+            return;
+        }
+
+        $service = ServiceType::normalize($serviceType) === ServiceType::EXPRESS ? 'express ' : '';
+        throw ValidationException::withMessages(['fleet_route_id' => [sprintf(
+            'This bus has no %sfare for this route on %s, so its trips could not be sold. Add a fare rule for it first (Fleets, Fare rules), then schedule it.',
+            $service, Carbon::parse($tripDate)->format('M j, Y'),
+        )]]);
     }
 
     private function assertInsideOperatingWindow(FleetRoute $fleetRoute, string $departureTime): void

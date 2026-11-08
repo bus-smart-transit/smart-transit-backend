@@ -151,6 +151,7 @@ class FleetLocationRepository
                     CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
                     CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
                     heading,
+                    speed_kmh,
                     accuracy_m,
                     is_simulated,
                     recorded_at
@@ -166,6 +167,7 @@ class FleetLocationRepository
                     ST_Y(location::geometry) AS latitude,
                     ST_X(location::geometry) AS longitude,
                     heading,
+                    speed_kmh,
                     accuracy_m,
                     is_simulated,
                     GREATEST(0, EXTRACT(EPOCH FROM (NOW() - recorded_at))) AS age_seconds
@@ -187,6 +189,7 @@ class FleetLocationRepository
             'latitude' => (float) $row->latitude,
             'longitude' => (float) $row->longitude,
             'heading' => $row->heading !== null ? (float) $row->heading : null,
+            'speed_kmh' => isset($row->speed_kmh) && $row->speed_kmh !== null ? (float) $row->speed_kmh : null,
             'accuracy_m' => isset($row->accuracy_m) && $row->accuracy_m !== null ? (float) $row->accuracy_m : null,
             'age_seconds' => (int) round((float) $age),
             'simulated' => $simulated,

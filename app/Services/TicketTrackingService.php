@@ -260,6 +260,10 @@ class TicketTrackingService
         if ($trip->status === 'completed') {
             return ['state' => 'arrived', 'message' => 'The bus has completed this trip.'] + $view;
         }
+        // Batch 50 (user): at its last stop the bus has arrived, whatever the age of its last position.
+        if ($view['arrived_at_final'] ?? false) {
+            return ['state' => 'arrived', 'message' => 'The bus has arrived at its final destination, '.($view['final_stop'] ?? 'its last stop').'.'] + $view;
+        }
 
         // Batch 49 item 4: a simulated position is shown, labelled "Simulated".
         $position = $this->locations->getCurrentForTrip((int) $fleetRoute->fleet_id, (int) $trip->trip_id, includeSimulated: true);
@@ -340,6 +344,13 @@ class TicketTrackingService
             }
         }
         $view['refresh']['eta_basis'] = $timeline['refresh']['eta_basis'];
+        // Batch 50: passed stops (gray on the map), the next stop with its live ETA, the final stop, and arrival.
+        $plain = collect($timeline['stops'])->where('custom', false)->values();
+        $view['passed_stop_ids'] = $plain->where('progress', 'passed')->pluck('stop_id')->map(fn ($id) => (int) $id)->values()->all();
+        $nextRow = $plain->first(fn ($row) => $row['progress'] === 'current') ?? $plain->first(fn ($row) => $row['progress'] === 'upcoming');
+        $view['next_stop'] = $nextRow ? ['name' => $nextRow['name'], 'eta' => $nextRow['eta'], 'eta_time' => $nextRow['eta_time'], 'eta_source' => $nextRow['eta_source']] : null;
+        $view['final_stop'] = $plain->last()['name'] ?? null;
+        $view['arrived_at_final'] = (bool) ($timeline['refresh']['arrived'] ?? false);
 
         return $view;
     }

@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Services\PaymentService;
+use App\Services\TicketTrackingService;
 use App\Services\TripProgressService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -170,4 +171,65 @@ it('hides a trip once it is completed or cancelled', function () {
     expect(dtSearch($this, $f, 'D'))->toBe([]);
     $f['trip']->update(['status' => 'cancelled']);
     expect(dtSearch($this, $f, 'D'))->toBe([]);
+});
+
+// ---------------------------------------------------------------- Batch 50 (user, 2026-11-08)
+
+it('works out passed stops and a live ETA from the bus position, without any Driver tap', function () {
+    $f = dtFixture();
+    $f['trip']->forceFill(['last_acknowledged_stop_id' => null, 'last_acknowledged_at' => null])->save();
+    dtBusAt($f, 7.15); // past A and B, before D
+
+    $timeline = $this->getJson('/api/trips/'.$f['trip']->trip_id.'/timeline')->assertOk()->json('data');
+    $rows = collect($timeline['stops'])->keyBy('name');
+    expect($rows['Dt Stop A']['progress'])->toBe('passed')
+        ->and($rows['Dt Stop B']['progress'])->toBe('passed')
+        ->and($rows['Dt Stop D']['progress'])->toBe('current')
+        ->and($rows['Dt Stop D']['eta_source'])->toBe('live')
+        ->and($rows['Dt Stop E']['eta_source'])->toBe('live')
+        ->and($timeline['refresh']['arrived'])->toBeFalse();
+
+    // ~13.3 km to D at the 30 km/h fallback: about 27 minutes from 08:20.
+    expect(Carbon::parse($rows['Dt Stop D']['eta'])->setTimezone('Asia/Manila')->format('H:i'))->toBe('08:46');
+});
+
+it('says the bus has arrived at its final destination when it is at the last stop, even once its position is old', function () {
+    $f = dtFixture();
+    dtBusAt($f, 7.15);
+    dtCheckout($this, $f, 'D')->assertSuccessful();
+    app(PaymentService::class)->finalizeOnlinePayment(Payment::firstOrFail());
+    $ticket = Ticket::firstOrFail();
+    $token = app(TicketTrackingService::class)->tokenFor($ticket);
+    dtBusAt($f, 7.3595); // now at E, the last stop
+
+    $view = $this->getJson('/api/track/'.$token)->assertOk()->json('data');
+    expect($view['state'])->toBe('arrived')
+        ->and($view['message'])->toBe('The bus has arrived at its final destination, Dt Stop E.')
+        ->and($view['passed_stop_ids'])->toContain($f['stops']['D']->stop_id);
+
+    $card = collect($this->getJson('/api/fleet/locations')->json('data'))->firstWhere('trip_id', $f['trip']->trip_id);
+    if ($card) { // the PostgreSQL-only list; on SQLite the repository returns nothing
+        expect($card->trip_progress['arrived'] ?? null)->toBeTrue();
+    }
+});
+
+it('lists a departed trip from the next stop the bus has not reached when no start is chosen', function () {
+    $f = dtFixture();
+    dtBusAt($f, 7.15);
+
+    $trips = $this->getJson('/api/booking/trips?date=2026-10-05')->assertOk()->json('data.trips');
+    expect($trips)->toHaveCount(1)
+        ->and($trips[0]['origin']['name'])->toBe('Dt Stop D')
+        ->and($trips[0]['bookable'])->toBeTrue()
+        ->and($trips[0]['progress']['label'])->toBe('On the way');
+});
+
+it('refuses to schedule a bus that has no fare in force', function () {
+    $f = dtFixture();
+    FareRule::query()->delete();
+    $operator = User::where('role', 'operator')->firstOrFail();
+
+    $this->actingAs($operator)->postJson('/api/operator/trips', [
+        'fleet_route_id' => $f['trip']->fleet_route_id, 'trip_date' => '2026-10-06', 'departure_time' => '09:00', 'trip_type' => 'one_way',
+    ])->assertStatus(422)->assertJsonPath('errors.fleet_route_id.0', 'This bus has no fare for this route on Oct 6, 2026, so its trips could not be sold. Add a fare rule for it first (Fleets, Fare rules), then schedule it.');
 });

@@ -251,6 +251,8 @@ it('mirrors served stops and express offsets on a reverse leg', function () {
 
 it('lets an operator create a trip with a service type and rejects an unknown one', function () {
     [, , $fleetRoute, $operator] = exRoute();
+    // Batch 50: a bus is scheduled only with a fare in force for that service type (an express trip needs an express rule).
+    FareRule::create(['fleet_id' => $fleetRoute->fleet_id, 'service_type' => 'express', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 20, 'fare_per_km' => 2.5, 'note' => 'SAMPLE']);
     $driver = exStaff('driver');
     $conductor = exStaff('conductor');
     $payload = [
@@ -266,6 +268,8 @@ it('lets an operator create a trip with a service type and rejects an unknown on
 
 it('creates every leg of a shift block with the chosen service type', function () {
     [, , $fleetRoute, $operator] = exRoute();
+    // Batch 50: a bus is scheduled only with a fare in force for that service type (an express trip needs an express rule).
+    FareRule::create(['fleet_id' => $fleetRoute->fleet_id, 'service_type' => 'express', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 20, 'fare_per_km' => 2.5, 'note' => 'SAMPLE']);
     $driver = exStaff('driver');
     $conductor = exStaff('conductor');
     $legs = (int) config('shift_blocks.legs_per_block');

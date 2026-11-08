@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Company;
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -38,6 +39,7 @@ function cfsBus(User $owner, string $plate): FleetRoute
 {
     $route = Route::create(['route_name' => 'Cfs '.Str::random(4), 'origin' => 'A', 'destination' => 'B']);
     $fleet = Fleet::create(['company_user_id' => cfsId($owner), 'company_id' => $owner->companyProfile->company_id, 'plate_number' => $plate, 'capacity' => 50, 'seated_capacity' => 40, 'standing_capacity' => 10, 'status' => 'active']);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
 
     return FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '05:00', 'end_time' => '22:00', 'status' => 'active']);
 }

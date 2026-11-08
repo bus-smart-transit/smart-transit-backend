@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -43,6 +44,7 @@ function scBlock($test, string $date, array $times = ['06:00', '09:00', '12:00',
     StaffUser::whereIn('company_user_id', [scCid($driver), scCid($conductor)])->update(['company_id' => StaffUser::whereKey(scCid($operator))->value('company_id')]);
     $route = Route::create(['route_name' => 'Sched Route', 'origin' => 'Alpha', 'destination' => 'Omega']);
     $fleet = Fleet::create(['company_user_id' => scCid($operator), 'plate_number' => 'SC-'.fake()->unique()->numerify('####'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active']);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
     $fleetRoute = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '06:00', 'end_time' => '22:00', 'status' => 'active']);
 
     $blockId = $test->actingAs($operator)->postJson('/api/operator/shift-blocks', [

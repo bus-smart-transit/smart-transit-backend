@@ -6,6 +6,7 @@ use App\Repositories\FleetLocationRepository;
 use App\Repositories\GpsSimulationRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 
@@ -109,12 +110,27 @@ class FleetLocationService
         }
 
         $stops = collect($timeline['stops'] ?? [])->where('custom', false)->values();
-        $next = $stops->first(fn (array $stop) => $stop['progress'] === 'current')
-            ?? $stops->first(fn (array $stop) => $stop['progress'] === 'upcoming');
+        $arrived = (bool) ($timeline['refresh']['arrived'] ?? false);
+        $next = $arrived ? null : ($stops->first(fn (array $stop) => $stop['progress'] === 'current')
+            ?? $stops->first(fn (array $stop) => $stop['progress'] === 'upcoming'));
         $gpsStale = $ageSeconds !== null && (float) $ageSeconds > (int) config('tracking.stale_seconds');
         $live = ($next['eta_source'] ?? null) === 'live' && ! $gpsStale;
+        $final = $stops->last();
+        $finalLive = ($final['eta_source'] ?? null) === 'live' && ! $gpsStale;
+        $departedAt = $this->tripRepository->findById($tripId)?->departed_at;
 
         return [
+            // Batch 50 (user, 2026-11-08): what the Active buses card shows. Departed at, the destination and when the bus
+            // gets there (live from its position when known, else the timetable), the stops it has passed (gray on the
+            // map), and whether it has arrived at its final stop.
+            'departed_at' => $departedAt ? Carbon::parse($departedAt)->setTimezone(config('app.timezone'))->format('H:i') : null,
+            'destination' => $final['name'] ?? null,
+            'destination_eta_time' => $arrived ? null : ($finalLive ? ($final['eta_time'] ?? null) : ($final['scheduled_time'] ?? null)),
+            'destination_eta_basis' => $arrived || $final === null ? null : ($finalLive ? 'live' : 'scheduled'),
+            'arrived' => $arrived,
+            'passed_stop_ids' => $stops->where('progress', 'passed')->pluck('stop_id')->map(fn ($id) => (int) $id)->values()->all(),
+            'next_stop_eta' => $next ? ($live ? ($next['eta'] ?? null) : null) : null,
+
             'next_stop' => $next['name'] ?? null,
             'eta_time' => $next ? ($live ? $next['eta_time'] : $next['scheduled_time']) : null,
             'eta_basis' => $next === null || ($live ? $next['eta_time'] : $next['scheduled_time']) === null ? null : ($live ? 'live' : 'scheduled'),

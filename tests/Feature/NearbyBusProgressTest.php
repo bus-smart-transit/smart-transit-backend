@@ -42,10 +42,15 @@ function nbpGet($test, array $timeline, int $ageSeconds, int $seated = 3, int $s
 }
 
 it('gives the live ETA at the next stop, the scheduled time and the delay apart, and the passengers on board', function () {
-    expect(nbpGet($this, nbpTimeline('live', 5), 30))->toBe([
+    $progress = nbpGet($this, nbpTimeline('live', 5), 30);
+    expect($progress)->toMatchArray([
         'next_stop' => 'Bravo', 'eta_time' => '08:20', 'eta_basis' => 'live', 'scheduled_time' => '08:15',
         'delay_minutes' => 5, 'gps_stale' => false, 'passengers' => 5,
     ]);
+    // Batch 50: the card also says where the bus is going and when it gets there.
+    expect($progress['destination'])->toBe('Charlie')
+        ->and($progress['destination_eta_time'])->toBe('08:40')
+        ->and($progress['arrived'])->toBeFalse();
 });
 
 it('falls back to the scheduled time when the bus GPS is old', function () {

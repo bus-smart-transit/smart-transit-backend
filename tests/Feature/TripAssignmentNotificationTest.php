@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -54,6 +55,7 @@ function makeUnassignedTripForNotificationTest(int $companyUserId): Trip
         'standing_capacity' => 10,
         'status' => 'active',
     ]);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
 
     $fleetRoute = FleetRoute::create([
         'fleet_id' => $fleet->fleet_id,
@@ -146,6 +148,7 @@ test('scheduling a new trip with driver and conductor assigned up front notifies
         'standing_capacity' => 10,
         'status' => 'active',
     ]);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
     $fleetRoute = FleetRoute::create([
         'fleet_id' => $fleet->fleet_id,
         'route_id' => $route->route_id,

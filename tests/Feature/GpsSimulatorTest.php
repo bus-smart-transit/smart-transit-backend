@@ -112,8 +112,13 @@ it('writes a marked position that is shown as simulated but used by nothing that
     expect($repo->getCurrentForTrip($f['fleet']->fleet_id, $f['trip']->trip_id))->toBeNull()
         ->and($repo->getCurrentForTrip($f['fleet']->fleet_id, $f['trip']->trip_id, includeSimulated: true)['simulated'])->toBeTrue()
         ->and(DB::table('fleet_location_history')->count())->toBe(0)
-        ->and(app(TripProgressService::class)->stopIsAhead($f['trip']->fresh(), $f['stops'][2]->stop_id))->toBeFalse()
         ->and(DB::table('audit_logs')->where('action', 'gps_simulation.start')->count())->toBe(1);
+
+    // Batch 50 (user, 2026-11-08): while the simulator is switched on, a simulated bus counts for booking a stop ahead of
+    // it (the demo); with the switch off its point decides nothing.
+    expect(app(TripProgressService::class)->stopIsAhead($f['trip']->fresh(), $f['stops'][2]->stop_id))->toBeTrue();
+    config(['route_geometry.gps.simulator_enabled' => false]);
+    expect(app(TripProgressService::class)->stopIsAhead($f['trip']->fresh(), $f['stops'][2]->stop_id))->toBeFalse();
 });
 
 it('moves the bus along the route at the chosen speed', function () {

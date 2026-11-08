@@ -18,6 +18,12 @@ use Illuminate\Support\Collection;
  *  - that position is not past the stop by more than booking.later_stop_passed_margin_m.
  * Without a fresh on-route position nothing is known, so no stop of a departed trip is bookable ("Not provided").
  * A trip that has not departed is not this class's concern: every stop of it is ahead.
+ *
+ * Batch 50 (user, 2026-11-08): `live()` is the one answer to "where is the bus": the stops passed (the Driver's taps and
+ * the live position, whichever is further), the stop it is at or heading to, whether it has arrived at its final stop,
+ * and the live ETA to every stop ahead (distance left along the route line at the bus's reported speed). While the GPS
+ * simulator is switched on (route_geometry.gps.simulator_enabled, the user's demo switch) a simulated position counts
+ * like a phone's; refunds and the Chauffeur's GPS boarding never use it (they read the repository directly).
  */
 class TripProgressService
 {
@@ -75,6 +81,50 @@ class TripProgressService
         return ['state' => 'on_the_way', 'label' => 'On the way', 'next_stop' => $this->nextStopName($trip)];
     }
 
+    /**
+     * Batch 50: where a running bus is. passed_index: the last stop it has passed (-1 none); arrived: it is at (or the
+     * Driver tapped) its final stop; eta: stop index => seconds until the bus reaches it (live GPS only, stops ahead).
+     *
+     * @return array{running: bool, known: bool, passed_index: int, at_index: int|null, arrived: bool, eta_seconds: array<int, int>, simulated: bool}
+     */
+    public function live(Trip $trip): array
+    {
+        $none = ['running' => false, 'known' => false, 'passed_index' => -1, 'at_index' => null, 'arrived' => false, 'eta_seconds' => [], 'simulated' => false];
+        if (! self::isRunning($trip->status)) {
+            return $none;
+        }
+        $snap = $this->snapshot($trip);
+        $last = $snap['stops']->count() - 1;
+        $passed = $snap['ack_index'];
+        $at = null;
+        $eta = [];
+        if ($snap['known']) {
+            $radius = (float) config('tracking.at_stop_radius_m');
+            $metresPerSecond = max(1.0, ((float) ($snap['speed_kmh'] ?? 0) > 3 ? (float) $snap['speed_kmh'] : (float) config('tracking.eta_fallback_kmh')) / 3.6);
+            foreach ($snap['along'] as $index => $along) {
+                if ($along === null) {
+                    continue;
+                }
+                $gap = $along - $snap['bus_along_m'];
+                if ($gap < -$radius) {
+                    $passed = max($passed, $index);        // well behind the bus
+                } elseif (abs($gap) <= $radius && $index > $snap['ack_index']) {
+                    $at ??= $index;                        // at this stop now
+                } elseif ($index > $passed) {
+                    $eta[$index] = (int) max(0, round($gap / $metresPerSecond - (int) ($snap['age_seconds'] ?? 0)));
+                }
+            }
+        }
+        $arrived = $last >= 0 && ($snap['ack_index'] >= $last || $at === $last || $passed >= $last);
+        if ($arrived) {
+            $passed = $last;
+            $at = $last;
+            $eta = [];
+        }
+
+        return ['running' => true, 'known' => $snap['known'], 'passed_index' => $passed, 'at_index' => $at, 'arrived' => $arrived, 'eta_seconds' => $eta, 'simulated' => $snap['simulated']];
+    }
+
     private function nextStopName(Trip $trip): ?string
     {
         $snapshot = $this->snapshot($trip);
@@ -115,7 +165,7 @@ class TripProgressService
         }
 
         $busAlong = null;
-        $position = $this->locations->getCurrentForTrip((int) $trip->fleetRoute->fleet_id, (int) $trip->trip_id);
+        $position = $this->locations->getCurrentForTrip((int) $trip->fleetRoute->fleet_id, (int) $trip->trip_id, includeSimulated: (bool) config('route_geometry.gps.simulator_enabled'));
         if ($position !== null && $position['age_seconds'] <= (int) config('tracking.stale_seconds')) {
             $snap = $this->routeSnap->snap($routeId, (float) $position['latitude'], (float) $position['longitude'], $direction);
             if ($snap !== null && ($snap['on_route'] ?? false)) {
@@ -127,6 +177,9 @@ class TripProgressService
             'known' => $busAlong !== null,
             'ack_index' => (int) $ackIndex,
             'bus_along_m' => $busAlong,
+            'speed_kmh' => $position['speed_kmh'] ?? null,
+            'age_seconds' => $position['age_seconds'] ?? null,
+            'simulated' => (bool) ($position['simulated'] ?? false),
             'stops' => $stops,
             'index_of' => $indexOf,
             'along' => $along,

@@ -16,6 +16,10 @@ return [
     'grace_minutes_after' => (int) env('TRACKING_GRACE_MINUTES_AFTER', 30),
     'max_active_hours' => (int) env('TRACKING_MAX_ACTIVE_HOURS', 12),
     'stale_seconds' => (int) env('TRACKING_STALE_SECONDS', 120),
+    // Batch 50: the bus is AT a stop within this many metres of it along the route (and has arrived when that stop is
+    // the last one); the live ETA uses the speed the bus reports, or this speed when it reports none.
+    'at_stop_radius_m' => (float) env('TRACKING_AT_STOP_RADIUS_M', 150),
+    'eta_fallback_kmh' => (float) env('TRACKING_ETA_FALLBACK_KMH', 30),
     'poll_seconds' => (int) env('TRACKING_POLL_SECONDS', 10),
     'backfill_days' => (int) env('TRACKING_BACKFILL_DAYS', 1),
 

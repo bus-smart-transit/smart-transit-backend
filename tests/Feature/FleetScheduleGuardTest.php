@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -50,6 +51,7 @@ function fgWorld(?int $runMinutes = null, string $name = 'Fg Route'): array
 function fgBus(array $w, string $start = '06:00', string $end = '22:00', ?Route $route = null): FleetRoute
 {
     $fleet = Fleet::create(['company_user_id' => $w['company'], 'plate_number' => 'FG-'.fake()->unique()->numerify('####'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active', 'vehicle_class' => 'aircon']);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
 
     return FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => ($route ?? $w['route'])->route_id, 'start_time' => $start, 'end_time' => $end, 'status' => 'active']);
 }
@@ -202,6 +204,7 @@ it('refuses a shift block with a leg outside the window or on a busy bus, and cr
 it('assigns a route to a bus once: the same route twice is refused, another route is fine', function () {
     $w = fgWorld();
     $fleet = Fleet::create(['company_user_id' => $w['company'], 'plate_number' => 'FG-ROUTE', 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active']);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
     $other = Route::create(['route_name' => 'Fg Other', 'origin' => 'C', 'destination' => 'D']);
     $service = app(FleetService::class);
 

@@ -39,6 +39,7 @@ class TripTimelineService
         private FareRuleService $fareRuleService,
         private RouteDurationFactorService $durationFactors,
         private PlaceGroups $places,
+        private TripProgressService $progress,
     ) {}
 
     /**
@@ -118,12 +119,21 @@ class TripTimelineService
         $live = $this->liveProgress($trip, $routeStops, $base, $service, $factor);
         $tripOver = in_array($trip->status, ['completed'], true);
         $etaAvailable = $trip->status !== 'cancelled' && $base !== null;
+        // Batch 50: where the bus is from its live position and the Driver's taps (TripProgressService, one owner). With a
+        // fresh position, stops behind it are passed and the ETA to every stop ahead is live (distance at its speed).
+        $gps = $this->progress->live($trip);
+        $now = Carbon::now($timezone);
 
         $rows = [];
         foreach ($routeStops as $index => $routeStop) {
             $eta = $etaAvailable ? $this->etaFor($base, $this->durationFactors->scale(ServiceType::offsetMinutes($service, $routeStop), $factor), $live['delay_minutes'], $live['after_index'], $index) : null;
             // Batch 45 Feature C: the same stop time without the live delay, so a screen can show "scheduled" and the delay apart.
             $scheduled = $etaAvailable ? $this->etaFor($base, $this->durationFactors->scale(ServiceType::offsetMinutes($service, $routeStop), $factor), 0.0, -1, $index) : null;
+            $etaSource = $eta === null ? null : ($live['applied'] && $index > $live['after_index'] ? 'live' : 'scheduled');
+            if (isset($gps['eta_seconds'][$index])) {
+                $eta = $now->copy()->addSeconds($gps['eta_seconds'][$index]);
+                $etaSource = 'live';
+            }
             $rows[] = [
                 'stop_id' => (int) $routeStop->stop_id,
                 'name' => $routeStop->stop->stop_name,
@@ -133,9 +143,9 @@ class TripTimelineService
                 'distance_km' => round((float) $routeStop->distance_from_origin_km, 2),
                 'eta' => $eta?->toIso8601String(),
                 'eta_time' => $eta?->format('H:i'),
-                'eta_source' => $eta === null ? null : ($live['applied'] && $index > $live['after_index'] ? 'live' : 'scheduled'),
+                'eta_source' => $etaSource,
                 'scheduled_time' => $scheduled?->format('H:i'),
-                'progress' => $this->progressFor($trip->status, $tripOver, $live, $index),
+                'progress' => $this->progressFor($trip->status, $tripOver, $live, $index, $gps),
                 'custom' => false,
             ];
         }
@@ -241,7 +251,11 @@ class TripTimelineService
             'refresh' => [
                 'poll_interval_seconds' => (int) config('timeline.poll_interval_seconds'),
                 'generated_at' => Carbon::now($timezone)->toIso8601String(),
-                'eta_basis' => $live['applied'] ? 'live' : ($etaAvailable ? 'scheduled' : 'unavailable'),
+                'eta_basis' => $live['applied'] || $gps['eta_seconds'] !== [] ? 'live' : ($etaAvailable ? 'scheduled' : 'unavailable'),
+                // Batch 50: the bus is at (or the Driver tapped) its final stop; the tracking pages say it arrived.
+                'arrived' => $gps['arrived'],
+                'position_known' => $gps['known'],
+                'simulated' => $gps['simulated'],
                 // Batch 45 Feature C: minutes late (negative = early) from the last acknowledged stop; null without live progress.
                 'delay_minutes' => $live['applied'] ? (int) round($live['delay_minutes']) : null,
             ],
@@ -302,13 +316,24 @@ class TripTimelineService
         return $base->copy()->addMinutes((int) round($minutes));
     }
 
-    private function progressFor(string $status, bool $tripOver, array $live, int $index): string
+    private function progressFor(string $status, bool $tripOver, array $live, int $index, ?array $gps = null): string
     {
         if ($tripOver) {
             return 'passed';
         }
         if (! in_array($status, ['departed', 'in-progress'], true)) {
             return 'upcoming';
+        }
+        // Batch 50: the live position (with the Driver's taps) decides when it is known.
+        if ($gps !== null && ($gps['known'] || $gps['arrived'])) {
+            if ($gps['arrived']) {
+                return $index === $gps['at_index'] ? 'current' : 'passed';
+            }
+            if ($index <= $gps['passed_index']) {
+                return 'passed';
+            }
+
+            return $index === ($gps['at_index'] ?? $gps['passed_index'] + 1) ? 'current' : 'upcoming';
         }
         if ($index <= $live['after_index']) {
             return 'passed';

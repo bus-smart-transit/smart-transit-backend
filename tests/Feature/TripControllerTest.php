@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
@@ -68,6 +69,7 @@ function makeFleetRoute(?User $owner = null): FleetRoute
         'standing_capacity' => 10,
         'status' => 'active',
     ]);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
     $fleet->refresh();
 
     $fleetRoute = FleetRoute::create([

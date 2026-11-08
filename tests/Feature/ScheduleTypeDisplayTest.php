@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\FareRule;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\PassengerUser;
@@ -47,6 +48,7 @@ function sdFixture(array $express = ['A', 'B', 'D', 'E']): array
     }
     $company = $operator->companyProfile->company_user_id;
     $fleet = Fleet::create(['company_user_id' => $company, 'plate_number' => 'SD-'.fake()->unique()->numerify('####'), 'capacity' => 40, 'seated_capacity' => 30, 'standing_capacity' => 10, 'status' => 'active', 'vehicle_class' => 'aircon']);
+    FareRule::create(['fleet_id' => $fleet->fleet_id, 'service_type' => 'regular', 'seat_type' => 'seated', 'status' => 'active', 'base_fare' => 15, 'fare_per_km' => 2, 'note' => 'SAMPLE: Batch 50, a bus needs a fare to be scheduled']);
     $fleetRoute = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '06:00', 'end_time' => '22:00', 'status' => 'active']);
     $mk = fn (array $o = []) => Trip::create(array_merge([
         'fleet_route_id' => $fleetRoute->fleet_route_id, 'company_user_id' => $company, 'trip_date' => '2026-10-05', 'departure_time' => '08:00', 'trip_type' => 'one_way',

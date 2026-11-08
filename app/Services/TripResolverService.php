@@ -345,6 +345,14 @@ class TripResolverService
         $isStopping = fn ($index) => ServiceType::isServed($service, $stops[$index]);
         $stoppingIndexes = $stops->keys()->filter($isStopping)->values();
 
+        // Batch 50 (user): with no start chosen, a trip on the road starts at the next stop the bus has not reached, so the
+        // list shows it from that stop (bookable) instead of from its first stop (passed). Unknown position: unchanged.
+        if ($originId === null && TripProgressService::isRunning($trip->status)) {
+            $ahead = $stoppingIndexes->first(fn ($i) => $this->progress->stopIsAhead($trip, (int) $stops[$i]->stop_id));
+            if ($ahead !== null && $ahead !== $stoppingIndexes->last()) {
+                $originId = (int) $stops[$ahead]->stop_id;
+            }
+        }
         // Batch 49 item 6: a chosen stop is a place; this trip matches through whichever stop of it its route has.
         $originId = $this->places->onRoute($originId, $stops->pluck('stop_id'));
         $destinationId = $this->places->onRoute($destinationId, $stops->pluck('stop_id'));
