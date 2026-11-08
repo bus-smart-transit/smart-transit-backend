@@ -155,3 +155,20 @@ test('passenger trip search accepts only the seated seat type', function () {
     $this->getJson('/api/booking/trips?seat_type=standing')->assertStatus(422)->assertJsonValidationErrors(['seat_type']);
     $this->getJson('/api/booking/trips?seat_type=seated')->assertSuccessful();
 });
+
+// Batch 50 item 7 (user, 2026-11-08): a guest's ticket and tracking code are sent by email, so a guest must give one;
+// a signed-in passenger's account email is used and none is asked for.
+test('a guest checkout needs an email, a signed-in passenger does not', function () {
+    $passenger = makePassengerUserForCheckoutTest();
+    $operator = makeOperatorForCheckoutTest();
+    $trip = makeTripForCheckoutTest($operator->companyProfile->company_user_id);
+    $payload = ['payment_channel' => 'gcash', 'items' => [['trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'origin_lat' => 7.1, 'origin_lng' => 125.6, 'destination_lat' => 7.2, 'destination_lng' => 125.7]]];
+
+    $this->postJson('/api/checkout', $payload)
+        ->assertStatus(422)
+        ->assertJsonPath('errors.guest_email.0', 'Enter your email. Your ticket and tracking code are sent there.');
+    $this->postJson('/api/checkout', $payload + ['guest_email' => 'not-an-email'])->assertStatus(422)->assertJsonValidationErrors(['guest_email']);
+
+    $response = $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload);
+    expect($response->json('errors.guest_email'))->toBeNull();
+});

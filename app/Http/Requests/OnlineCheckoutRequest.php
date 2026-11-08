@@ -6,6 +6,7 @@ use App\Models\Trip;
 use App\Support\BookingWindow;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class OnlineCheckoutRequest extends FormRequest
@@ -43,7 +44,8 @@ class OnlineCheckoutRequest extends FormRequest
             'items.*.destination_label' => ['nullable', 'string', 'max:255'],
             // C4: the passenger picks GCash or Maya; PayMongo's hosted checkout collects the rest.
             'payment_channel' => 'required|string|in:gcash,maya',
-            'guest_email' => ['nullable', 'email'],
+            // Batch 50 item 7 (user): a guest's ticket and tracking code are sent by email, so a guest must give one.
+            'guest_email' => [Rule::requiredIf(fn () => $this->user() === null), 'nullable', 'email'],
             'return_base_url' => ['nullable', 'url', 'max:255'],
             'reward_points_to_use' => ['nullable', 'integer', 'min:1'],
             'idempotency_key' => ['nullable', 'string', 'min:16', 'max:128'],
@@ -79,6 +81,7 @@ class OnlineCheckoutRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'guest_email.required' => 'Enter your email. Your ticket and tracking code are sent there.',
             'items.max' => 'You can buy up to '.(int) config('booking.max_seats_per_purchase').' tickets in one purchase.',
             'items.*.seat_type.in' => 'Online tickets are for seats only. Standing places are sold on the bus.',
             'journey_type.in' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',
