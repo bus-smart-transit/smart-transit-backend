@@ -207,6 +207,10 @@ it('says the bus has arrived at its final destination when it is at the last sto
         ->and($view['message'])->toBe('The bus has arrived at its final destination, Dt Stop E.')
         ->and($view['passed_stop_ids'])->toContain($f['stops']['D']->stop_id);
 
+    // Hours later the bus has sent nothing more (the simulation ended at the last stop): still arrived, not "old".
+    Carbon::setTestNow(now()->addHours(2));
+    expect($this->getJson('/api/track/'.$token)->assertOk()->json('data.state'))->toBe('arrived');
+
     $card = collect($this->getJson('/api/fleet/locations')->json('data'))->firstWhere('trip_id', $f['trip']->trip_id);
     if ($card) { // the PostgreSQL-only list; on SQLite the repository returns nothing
         expect($card->trip_progress['arrived'] ?? null)->toBeTrue();

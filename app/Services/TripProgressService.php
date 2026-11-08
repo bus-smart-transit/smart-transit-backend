@@ -115,7 +115,10 @@ class TripProgressService
                 }
             }
         }
-        $arrived = $last >= 0 && ($snap['ack_index'] >= $last || $at === $last || $passed >= $last);
+        // Arrived: the Driver tapped the last stop, or the bus is (or its last position, however old, is) at it.
+        $finalAlong = $last >= 0 ? ($snap['along'][$last] ?? null) : null;
+        $parkedAtEnd = $finalAlong !== null && $snap['last_along_m'] !== null && $snap['last_along_m'] >= $finalAlong - (float) config('tracking.at_stop_radius_m');
+        $arrived = $last >= 0 && ($snap['ack_index'] >= $last || $at === $last || $passed >= $last || $parkedAtEnd);
         if ($arrived) {
             $passed = $last;
             $at = $last;
@@ -165,11 +168,17 @@ class TripProgressService
         }
 
         $busAlong = null;
+        $lastAlong = null;
         $position = $this->locations->getCurrentForTrip((int) $trip->fleetRoute->fleet_id, (int) $trip->trip_id, includeSimulated: (bool) config('route_geometry.gps.simulator_enabled'));
-        if ($position !== null && $position['age_seconds'] <= (int) config('tracking.stale_seconds')) {
+        if ($position !== null) {
             $snap = $this->routeSnap->snap($routeId, (float) $position['latitude'], (float) $position['longitude'], $direction);
             if ($snap !== null && ($snap['on_route'] ?? false)) {
-                $busAlong = (float) $snap['distance_along_route_m'];
+                // Batch 50: an old position still says where the bus stopped (a bus parked at its last stop has arrived);
+                // only a fresh one is used for the ETA and for selling stops ahead.
+                $lastAlong = (float) $snap['distance_along_route_m'];
+                if ($position['age_seconds'] <= (int) config('tracking.stale_seconds')) {
+                    $busAlong = $lastAlong;
+                }
             }
         }
 
@@ -177,6 +186,7 @@ class TripProgressService
             'known' => $busAlong !== null,
             'ack_index' => (int) $ackIndex,
             'bus_along_m' => $busAlong,
+            'last_along_m' => $lastAlong,
             'speed_kmh' => $position['speed_kmh'] ?? null,
             'age_seconds' => $position['age_seconds'] ?? null,
             'simulated' => (bool) ($position['simulated'] ?? false),
