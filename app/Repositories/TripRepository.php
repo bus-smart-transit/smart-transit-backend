@@ -46,6 +46,25 @@ class TripRepository
         return Trip::with('fleetRoute')->where('trip_date', $date)->get();
     }
 
+    /**
+     * 2026-11-08 (user): the trips of $date that have not departed yet and are about to: boarding (any time), or
+     * scheduled / delayed with a departure time up to $untilTime. Earliest first. Read by WaitingBusService only.
+     */
+    public function listWaitingToDepart(string $date, string $untilTime): Collection
+    {
+        return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
+            ->where('trip_date', $date)
+            ->where(function ($query) use ($untilTime) {
+                $query->where('status', 'boarding')
+                    ->orWhere(function ($query) use ($untilTime) {
+                        $query->whereIn('status', ['scheduled', 'delayed'])->where('departure_time', '<=', $untilTime);
+                    });
+            })
+            ->orderBy('departure_time')
+            ->orderBy('trip_id')
+            ->get();
+    }
+
     public function listUpcomingByOperator(int $operatorCompanyUserId, string $statusFilter = 'all', int $page = 1, int $perPage = 100): LengthAwarePaginator
     {
         $today = $this->serviceToday();

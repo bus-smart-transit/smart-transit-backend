@@ -19,6 +19,7 @@ class FleetLocationService
         private TripTimelineService $timelineService,
         private TicketRepository $ticketRepository,
         private GpsSimulationRepository $simulations,
+        private WaitingBusService $waitingBuses,
     ) {}
 
     /**
@@ -74,7 +75,26 @@ class FleetLocationService
 
     private function loadActiveLocations(): object
     {
-        return $this->fleetLocationRepository->getAllActiveLocations()->map(function ($row) {
+        // 2026-11-08 (user): until the Driver presses Depart a bus shows still at its first stop (WaitingBusService),
+        // not at its phone's position; from Depart it is the live position. A bus running another trip stays live.
+        $live = $this->fleetLocationRepository->getAllActiveLocations()
+            ->reject(fn ($row) => ($row->trip_status ?? null) === 'boarding')
+            ->map(function ($row) {
+                $row->waiting = false;
+
+                return $row;
+            });
+        $liveFleets = $live->map(fn ($row) => (int) $row->fleet_id)->all();
+        $waiting = $this->waitingBuses->rows()
+            ->reject(fn ($row) => in_array((int) $row->fleet_id, $liveFleets, true))
+            ->map(function ($row) {
+                $row->route_position = null;
+                $row->trip_progress = $this->tripProgress((int) $row->trip_id, null);
+
+                return $row;
+            });
+
+        return $live->map(function ($row) {
             $row->route_position = null;
             if ($row->route_id && $row->latitude !== null && $row->longitude !== null) {
                 $row->route_position = $this->routeSnapService->snap(
@@ -87,7 +107,7 @@ class FleetLocationService
             $row->trip_progress = ! empty($row->trip_id) ? $this->tripProgress((int) $row->trip_id, $row->age_seconds ?? null) : null;
 
             return $row;
-        });
+        })->concat($waiting)->values();
     }
 
     /**

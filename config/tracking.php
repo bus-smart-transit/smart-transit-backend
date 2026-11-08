@@ -27,6 +27,11 @@ return [
     // location stays on their device: the page measures the distance itself from the public bus list.
     'nearby_radius_km' => (float) env('TRACKING_NEARBY_RADIUS_KM', 5),
 
+    // 2026-11-08 (user): a bus that has not departed shows on the public map as waiting at its first stop, from this
+    // many minutes before its departure (today's trips only), until the Driver presses Depart. A boarding trip shows
+    // whatever its time. See App\Services\WaitingBusService.
+    'waiting_bus_minutes_before' => (int) env('TRACKING_WAITING_BUS_MINUTES_BEFORE', 60),
+
     // Seconds the public map's bus list (GET fleet/locations) is shared between callers; 0 turns the cache off.
     'active_locations_cache_seconds' => (int) env('TRACKING_ACTIVE_LOCATIONS_CACHE_SECONDS', 5),
 

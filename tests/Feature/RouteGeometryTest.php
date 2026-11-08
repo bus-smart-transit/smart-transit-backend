@@ -22,6 +22,7 @@ use App\Services\RouteSnapService;
 use App\Services\StopCoordinateValidator;
 use App\Services\StopService;
 use App\Services\TripTimelineService;
+use App\Services\WaitingBusService;
 use App\Support\Geo\GeoLine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -299,7 +300,7 @@ it('ignores GPS fixes whose accuracy is worse than the configured threshold', fu
     $locations = Mockery::mock(FleetLocationRepository::class);
     $locations->shouldReceive('upsertLocation')->twice();
 
-    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class), app(TripTimelineService::class), app(TicketRepository::class), app(GpsSimulationRepository::class));
+    $service = new FleetLocationService($locations, $trips, app(RouteSnapService::class), app(TripTimelineService::class), app(TicketRepository::class), app(GpsSimulationRepository::class), app(WaitingBusService::class));
 
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 850]))->toBeFalse();
     expect($service->updateLocation(1, ['latitude' => 7.07, 'longitude' => 125.6, 'accuracy' => 12]))->toBeTrue();
