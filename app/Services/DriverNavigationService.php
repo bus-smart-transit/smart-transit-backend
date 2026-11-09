@@ -2,16 +2,20 @@
 
 namespace App\Services;
 
-use App\Repositories\TripRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
+use App\Repositories\TripRepository;
 
 class DriverNavigationService
 {
     private TripRepository $tripRepository;
+
     private RouteStopRepository $routeStopRepository;
+
     private TicketRepository $ticketRepository;
+
     private RouteSnapService $routeSnapService;
+
     private RequestedStopPlacementService $placementService;
 
     public function __construct(
@@ -34,12 +38,12 @@ class DriverNavigationService
     public function getCurrentTripWithStops(int $driverId): ?array
     {
         $trip = $this->tripRepository->findCurrentByDriver($driverId);
-        
-        if (!$trip) {
+
+        if (! $trip) {
             return null;
         }
 
-        if (!$trip->fleetRoute || !$trip->fleetRoute->route_id) {
+        if (! $trip->fleetRoute || ! $trip->fleetRoute->route_id) {
             return null;
         }
 
@@ -66,12 +70,12 @@ class DriverNavigationService
                 ->map(function ($group) {
                     return [
                         'destination_stop_name' => $group->first()->destinationStop->stop_name ?? 'Unknown',
-                        'passengers' => $group->map(fn($ticket) => [
+                        'passengers' => $group->map(fn ($ticket) => [
                             'passenger_name' => $this->resolvePassengerDisplayName($ticket),
                             'ticket_id' => $ticket->ticket_id,
                             'ticket_uuid' => $ticket->ticket_uuid,
-                            'seat_type' => $ticket->seat_type
-                        ])->values()->toArray()
+                            'seat_type' => $ticket->seat_type,
+                        ])->values()->toArray(),
                     ];
                 })->values();
 
@@ -84,7 +88,7 @@ class DriverNavigationService
                 'distance_from_origin_km' => $routeStop->distance_from_origin_km,
                 'latitude' => $routeStop->stop->latitude !== null ? (float) $routeStop->stop->latitude : null,
                 'longitude' => $routeStop->stop->longitude !== null ? (float) $routeStop->stop->longitude : null,
-                'passengers_by_destination' => $passengersByDestination
+                'passengers_by_destination' => $passengersByDestination,
             ];
         })->map(function ($row) use ($acknowledgedOrder, $acknowledgedStopId) {
             $isAcknowledged = false;
@@ -95,8 +99,24 @@ class DriverNavigationService
             }
 
             $row['is_acknowledged'] = $isAcknowledged;
+
             return $row;
         })->toArray();
+
+        // Batch 52 item 2 (production test, 2026-11-09): each stop's expected time from the trip timeline (the one ETA
+        // owner: live from the bus position when known, else the timetable), so the Driver sees "{stop} in n min" even
+        // when the live traffic service is unavailable.
+        $times = [];
+        try {
+            foreach ((app(TripTimelineService::class)->build((int) $trip->trip_id)['stops'] ?? []) as $row) {
+                if (! ($row['custom'] ?? false) && isset($row['stop_id'])) {
+                    $times[(int) $row['stop_id']] = ['eta' => $row['eta'] ?? null, 'eta_time' => $row['eta_time'] ?? null, 'eta_source' => $row['eta_source'] ?? null];
+                }
+            }
+        } catch (\Throwable) {
+            $times = []; // no timeline: no times, nothing guessed
+        }
+        $stopsData = array_map(fn (array $row) => $row + ($times[(int) $row['stop_id']] ?? ['eta' => null, 'eta_time' => null, 'eta_source' => null]), $stopsData);
 
         return [
             'trip_id' => $trip->trip_id,
@@ -145,12 +165,12 @@ class DriverNavigationService
     public function getStopDetails(int $driverId, int $stopId): ?array
     {
         $trip = $this->tripRepository->findCurrentByDriver($driverId);
-        
-        if (!$trip) {
+
+        if (! $trip) {
             return null;
         }
 
-        if (!$trip->fleetRoute || !$trip->fleetRoute->route_id) {
+        if (! $trip->fleetRoute || ! $trip->fleetRoute->route_id) {
             return null;
         }
 
@@ -165,7 +185,7 @@ class DriverNavigationService
             $stopId
         );
 
-        if (!$routeStop) {
+        if (! $routeStop) {
             return null;
         }
 
@@ -174,12 +194,12 @@ class DriverNavigationService
             ->map(function ($group) {
                 return [
                     'destination_stop_name' => $group->first()->destinationStop->stop_name ?? 'Unknown',
-                    'passengers' => $group->map(fn($ticket) => [
+                    'passengers' => $group->map(fn ($ticket) => [
                         'passenger_name' => $this->resolvePassengerDisplayName($ticket),
                         'ticket_id' => $ticket->ticket_id,
                         'ticket_uuid' => $ticket->ticket_uuid,
-                        'seat_type' => $ticket->seat_type
-                    ])->values()->toArray()
+                        'seat_type' => $ticket->seat_type,
+                    ])->values()->toArray(),
                 ];
             })->values();
 
@@ -192,7 +212,7 @@ class DriverNavigationService
             'latitude' => $routeStop->stop->latitude !== null ? (float) $routeStop->stop->latitude : null,
             'longitude' => $routeStop->stop->longitude !== null ? (float) $routeStop->stop->longitude : null,
             'is_acknowledged' => (int) $stopId === (int) ($trip->last_acknowledged_stop_id ?? 0),
-            'passengers_by_destination' => $passengersByDestination
+            'passengers_by_destination' => $passengersByDestination,
         ];
     }
 
@@ -206,13 +226,13 @@ class DriverNavigationService
     {
         $trip = $this->tripRepository->findCurrentByDriver($driverId);
 
-        if (!$trip || !$trip->fleetRoute || !in_array($trip->status, ['departed', 'in-progress'], true)) {
+        if (! $trip || ! $trip->fleetRoute || ! in_array($trip->status, ['departed', 'in-progress'], true)) {
             return false;
         }
 
         $stops = $this->routeStopRepository->getOrderedStopsForDirection($trip->fleetRoute->route_id, $trip->leg_direction);
         $target = $stops->firstWhere('stop_id', $stopId);
-        if (!$target) {
+        if (! $target) {
             return false;
         }
 
@@ -223,6 +243,23 @@ class DriverNavigationService
         }
 
         return $this->tripRepository->updateLastAcknowledgedStop($trip->trip_id, $stopId);
+    }
+
+    /**
+     * Batch 52 item 4 (production test, 2026-11-09): why a stop tap was not recorded, in plain words, for the Driver.
+     * acknowledgeStop() answers false in these cases; the screen used to be told it worked.
+     */
+    public function stopTapRefusal(int $driverId, int $stopId): string
+    {
+        $trip = $this->tripRepository->findCurrentByDriver($driverId);
+        if (! $trip || ! $trip->fleetRoute) {
+            return 'You have no trip on the road right now.';
+        }
+        if (! in_array($trip->status, ['departed', 'in-progress'], true)) {
+            return 'Depart first, then tap the stops you pass.';
+        }
+
+        return "That stop is not on this trip's route.";
     }
 
     private function resolvePassengerDisplayName(object $ticket): string

@@ -278,3 +278,41 @@ test('stop acknowledgement is idempotent and never moves backwards', function ()
 
     expect($service->acknowledgeStop($driverId, 999999))->toBeFalse();
 });
+
+// Batch 52 item 4 (production test, 2026-11-09): a tap the server does not record says why; it used to answer success.
+test('a stop tap before Depart is refused with the reason, not answered as done', function () {
+    $operator = lgUser('operator');
+    $driver = lgUser('driver');
+    $fleetRoute = lgFleetRoute($operator);
+    $stop = Stop::create(['stop_name' => 'Tap 1', 'latitude' => 7.01, 'longitude' => 125.6]);
+    RouteStop::create(['route_id' => $fleetRoute->route_id, 'stop_id' => $stop->stop_id, 'stop_order' => 1, 'distance_from_origin_km' => 0]);
+    $trip = lgTrip($fleetRoute, $operator, ['status' => 'boarding', 'driver_id' => $driver->companyProfile->company_user_id]);
+    $service = app(DriverNavigationService::class);
+    $driverId = $driver->companyProfile->company_user_id;
+
+    expect($service->acknowledgeStop($driverId, $stop->stop_id))->toBeFalse()
+        ->and($service->stopTapRefusal($driverId, $stop->stop_id))->toBe('Depart first, then tap the stops you pass.')
+        ->and(Trip::find($trip->trip_id)->last_acknowledged_stop_id)->toBeNull();
+
+    $trip->forceFill(['status' => 'departed'])->save();
+    expect($service->stopTapRefusal($driverId, 999999))->toBe("That stop is not on this trip's route.");
+});
+
+// Batch 52 item 2 (production test, 2026-11-09): the Driver's stops carry their expected time from the trip timeline,
+// so the Driver sees "{stop} in n min" even when the live traffic service has no estimate.
+test('the Driver stop list carries each stop time from the trip timeline', function () {
+    $operator = lgUser('operator');
+    $driver = lgUser('driver');
+    $fleetRoute = lgFleetRoute($operator);
+    foreach ([1 => 0, 2 => 20] as $order => $offset) {
+        $stop = Stop::create(['stop_name' => "Eta {$order}", 'latitude' => 7.0 + $order / 100, 'longitude' => 125.6]);
+        RouteStop::create(['route_id' => $fleetRoute->route_id, 'stop_id' => $stop->stop_id, 'stop_order' => $order, 'distance_from_origin_km' => $order * 5, 'scheduled_offset_min' => $offset]);
+    }
+    lgTrip($fleetRoute, $operator, ['status' => 'departed', 'departure_time' => '08:00', 'driver_id' => $driver->companyProfile->company_user_id]);
+
+    $stops = app(DriverNavigationService::class)->getCurrentTripWithStops($driver->companyProfile->company_user_id)['stops'];
+
+    expect($stops[0])->toHaveKeys(['eta', 'eta_time', 'eta_source'])
+        ->and($stops[1]['eta_time'])->toBe('08:20')
+        ->and($stops[1]['eta'])->not->toBeNull();
+});
