@@ -15,6 +15,21 @@ class StopRepository
         return Stop::create($payload);
     }
 
+    /**
+     * Batch 52 item 1: the ids of the stops whose town is one of $towns (exact region spellings).
+     *
+     * @param  list<string>  $towns
+     * @return list<int>
+     */
+    public function idsInTowns(array $towns): array
+    {
+        if ($towns === []) {
+            return [];
+        }
+
+        return Stop::query()->whereIn('municipality', $towns)->pluck('stop_id')->map(fn ($id) => (int) $id)->all();
+    }
+
     public function findById(int $stopId): ?Stop
     {
         return Stop::find($stopId);

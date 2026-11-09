@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\FillStopTown;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
@@ -48,6 +49,10 @@ class StopService
         ], fn ($value, $key) => ! in_array($key, ['stop_code', 'company_id', 'location_label'], true) || $value !== null, ARRAY_FILTER_USE_BOTH));
 
         $stop->setAttribute('warnings', $this->nearbyWarnings($stop->stop_id, $lat, $lng, $stop->company_id));
+        // Batch 52 item 1: a stop without a town gets the one its position is in (in the background).
+        if (($stop->municipality ?? '') === '') {
+            FillStopTown::dispatch((int) $stop->stop_id)->afterCommit();
+        }
 
         return $stop;
     }
@@ -117,6 +122,10 @@ class StopService
         }
 
         $stop = $this->stopRepository->findById($stopId);
+        // Batch 52 item 1: a moved stop still without a town gets the one its new position is in.
+        if ($stop && $moved && ($stop->municipality ?? '') === '') {
+            FillStopTown::dispatch($stopId)->afterCommit();
+        }
         if ($stop && $moved) {
             $stop->setAttribute('warnings', array_merge(
                 $this->nearbyWarnings($stopId, (float) $stop->latitude, (float) $stop->longitude, $stop->company_id),

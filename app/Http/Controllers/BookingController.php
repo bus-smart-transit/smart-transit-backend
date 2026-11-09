@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\AddressSearchService;
 use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
+use App\Services\TripAreaService;
 use App\Services\TripResolverService;
 use App\Support\BookingFee;
 use App\Support\BookingWindow;
@@ -63,9 +64,13 @@ class BookingController extends Controller
     // Available trips for a Manila date (default today), optionally for one journey, paginated.
     // The journey is given as readable stop codes (never ids) and is optional so the home preview
     // can list today's buses before anything is chosen. Bad codes or dates answer a friendly 422.
-    public function trips(Request $request)
+    public function trips(Request $request, TripAreaService $areas)
     {
         $data = $request->validate([
+            // Batch 52 item 1: the passenger's town (or province), and the stop ids nearest first as measured on the device.
+            'town' => 'nullable|string|max:100',
+            'province' => 'nullable|string|max:100',
+            'prefer' => ['nullable', 'string', 'max:2000', 'regex:/^\d+(,\d+)*$/'],
             'from' => 'nullable|string|max:64',
             'to' => 'nullable|string|max:64',
             'date' => 'nullable|string|max:10',
@@ -75,14 +80,22 @@ class BookingController extends Controller
         ]);
 
         $journey = $this->bookingLinkService->resolveJourney($data);
+        $area = null;
+        if (! empty($data['town']) || ! empty($data['province'])) {
+            $prefer = ! empty($data['prefer']) ? array_slice(array_map('intval', explode(',', $data['prefer'])), 0, 200) : [];
+            $area = $areas->resolve($data['town'] ?? null, $data['province'] ?? null, $prefer) ?? ['level' => ! empty($data['town']) ? 'town' : 'province', 'name' => (string) ($data['town'] ?? $data['province']), 'stop_ids' => []];
+        }
         $result = $this->tripResolverService->available([
+            ...($area !== null && empty($journey['from']) ? ['area_stop_ids' => $area['stop_ids']] : []),
             'origin_stop_id' => $journey['from']['stop_id'] ?? null,
             'destination_stop_id' => $journey['to']['stop_id'] ?? null,
             'date' => $journey['date'],
             'seat_type' => $data['seat_type'] ?? null,
         ], (int) ($data['page'] ?? 1), isset($data['per_page']) ? (int) $data['per_page'] : null);
 
-        return $this->success($result + ['from' => $journey['from'], 'to' => $journey['to']], 'Trips retrieved');
+        $areaInfo = $area !== null ? ['level' => $area['level'], 'name' => $area['name'], 'stops' => count($area['stop_ids'])] : null;
+
+        return $this->success($result + ['from' => $journey['from'], 'to' => $journey['to'], 'area' => $areaInfo], 'Trips retrieved');
     }
 
     // Book Later: the departures of one Manila date that fit the journey, to choose from.

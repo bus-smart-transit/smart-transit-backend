@@ -28,15 +28,24 @@ class RegionPlaceService
             return null;
         }
 
-        $place = Cache::remember("region-place:{$lat}:{$lng}", now()->addDays(7), function () use ($lat, $lng) {
-            foreach ($this->geocoder->townNames($lat, $lng) as $name) {
+        $key = "region-place:{$lat}:{$lng}";
+        $place = Cache::get($key);
+        if ($place === null) {
+            // Batch 52: only a definite answer is kept (a town, or names the region list does not have). No names at all
+            // (the lookup failed or was skipped by the 1 request/second limit) is not cached, so it is tried again.
+            $names = $this->geocoder->townNames($lat, $lng);
+            if ($names === []) {
+                return null;
+            }
+            $place = '';
+            foreach ($names as $name) {
                 if ($match = $this->match($name)) {
-                    return $match;
+                    $place = $match;
+                    break;
                 }
             }
-
-            return '';
-        });
+            Cache::put($key, $place, now()->addDays(7));
+        }
 
         return $place === '' ? null : ['place' => $place, 'province' => $this->provinceOf($place)];
     }

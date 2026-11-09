@@ -67,7 +67,10 @@ class TripResolverService
         $date = $this->assertDateInWindow($query['date'] ?? $now->toDateString(), $now, $timezone);
 
         $perPage = max(1, min($perPage ?? (int) config('booking.trips_per_page'), (int) config('booking.trips_max_per_page')));
-        $found = $this->eligibleOnDate($date, $originId, $destinationId, $seatType, $now, $timezone);
+        // Batch 52 item 1: with an area (the stops of the passenger's town or province, nearest first), each trip is
+        // listed from the first of its stops there that can still be booked.
+        $area = isset($query['area_stop_ids']) ? array_values(array_map('intval', (array) $query['area_stop_ids'])) : null;
+        $found = $this->eligibleOnDate($date, $originId, $destinationId, $seatType, $now, $timezone, $area);
         $total = count($found);
         $lastPage = max(1, (int) ceil($total / $perPage));
         $page = max(1, min($page, $lastPage));
@@ -99,7 +102,7 @@ class TripResolverService
      *
      * @return array<int, array>
      */
-    private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): array
+    private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone, ?array $area = null): array
     {
         $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
         // Batch 49 item 2: a trip on the road is listed too ("Departed", or bookable from a stop still ahead).
@@ -110,7 +113,9 @@ class TripResolverService
 
         $found = [];
         foreach ($trips as $trip) {
-            $candidate = $this->evaluate($trip, $originId, $destinationId, $seatType, $from, $timezone);
+            $candidate = $area === null
+                ? $this->evaluate($trip, $originId, $destinationId, $seatType, $from, $timezone)
+                : $this->fromArea($trip, $area, $destinationId, $seatType, $from, $timezone);
             // Batch 51 item 10 (user, 2026-11-09): "Available trips" lists only trips that can still be booked. A bus on
             // the road with no stop ahead it can be sold from (it passed them, or its position is unknown or off the
             // route) is not listed; it shows on the Track Bus map instead. A booking link to it still says "Departed".
@@ -121,6 +126,24 @@ class TripResolverService
         usort($found, fn ($a, $b) => $a['boards_at']->getTimestamp() <=> $b['boards_at']->getTimestamp());
 
         return $found;
+    }
+
+    /**
+     * Batch 52 item 1: the trip boarded at the first stop of the area (nearest first) that is on its route and can still
+     * be booked there (not passed by the bus), or null when none is.
+     *
+     * @param  list<int>  $area
+     */
+    private function fromArea(Trip $trip, array $area, ?int $destinationId, string $seatType, Carbon $from, string $timezone): ?array
+    {
+        foreach ($area as $stopId) {
+            $candidate = $this->evaluate($trip, $stopId, $destinationId, $seatType, $from, $timezone);
+            if ($candidate && ! $candidate['departed']) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /** The first date after `$date`, inside the booking window, that has an eligible departure. */
