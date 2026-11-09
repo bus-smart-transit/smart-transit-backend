@@ -6,6 +6,7 @@ use App\Repositories\FleetLocationRepository;
 use App\Repositories\GpsSimulationRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\TripCapacity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -137,7 +138,9 @@ class FleetLocationService
         $live = ($next['eta_source'] ?? null) === 'live' && ! $gpsStale;
         $final = $stops->last();
         $finalLive = ($final['eta_source'] ?? null) === 'live' && ! $gpsStale;
-        $departedAt = $this->tripRepository->findById($tripId)?->departed_at;
+        $trip = $this->tripRepository->findById($tripId);
+        $departedAt = $trip?->departed_at;
+        $trip?->loadMissing('fleetRoute.fleet');
 
         return [
             // Batch 50 (user, 2026-11-08): what the Active buses card shows. Departed at, the destination and when the bus
@@ -150,6 +153,11 @@ class FleetLocationService
             'arrived' => $arrived,
             'passed_stop_ids' => $stops->where('progress', 'passed')->pluck('stop_id')->map(fn ($id) => (int) $id)->values()->all(),
             'next_stop_eta' => $next ? ($live ? ($next['eta'] ?? null) : null) : null,
+            // Batch 51 items 1 and 5 (user, 2026-11-09): full times (live when known, else the timetable) so screens
+            // say "{place} in n min", and whether every place on the bus is sold (TripCapacity, the one definition).
+            'next_stop_at' => $next ? ($live ? ($next['eta'] ?? null) : ($next['scheduled_at'] ?? null)) : null,
+            'destination_eta' => $arrived || $final === null ? null : ($finalLive ? ($final['eta'] ?? null) : ($final['scheduled_at'] ?? null)),
+            'full' => $trip?->fleetRoute?->fleet ? (bool) TripCapacity::summary($trip)['is_full'] : null,
 
             'next_stop' => $next['name'] ?? null,
             'eta_time' => $next ? ($live ? $next['eta_time'] : $next['scheduled_time']) : null,

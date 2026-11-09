@@ -53,6 +53,25 @@ it('gives the live ETA at the next stop, the scheduled time and the delay apart,
         ->and($progress['arrived'])->toBeFalse();
 });
 
+// Batch 51 items 1 and 5 (user, 2026-11-09): full times so screens say "{place} in n min" (live when known, else the
+// timetable), and whether the bus is full (unknown here: no trip in the database, so null, never a guess).
+it('gives the full next-stop and destination times, live or scheduled', function () {
+    $timeline = nbpTimeline('live', 5);
+    $timeline['stops'] = array_map(fn ($stop) => $stop + ['eta' => '2026-11-09T'.$stop['eta_time'].':00+08:00', 'scheduled_at' => '2026-11-09T'.$stop['scheduled_time'].':00+08:00'], $timeline['stops']);
+    $live = nbpGet($this, $timeline, 30);
+    expect($live['next_stop_at'])->toBe('2026-11-09T08:20:00+08:00')
+        ->and($live['destination_eta'])->toBe('2026-11-09T08:40:00+08:00')
+        ->and($live['full'])->toBeNull();
+});
+
+it('gives the timetable times in full when the bus GPS is old', function () {
+    $timeline = nbpTimeline('live', 5);
+    $timeline['stops'] = array_map(fn ($stop) => $stop + ['eta' => '2026-11-09T'.$stop['eta_time'].':00+08:00', 'scheduled_at' => '2026-11-09T'.$stop['scheduled_time'].':00+08:00'], $timeline['stops']);
+    $stale = nbpGet($this, $timeline, 600);
+    expect($stale['next_stop_at'])->toBe('2026-11-09T08:15:00+08:00')
+        ->and($stale['destination_eta'])->toBe('2026-11-09T08:35:00+08:00');
+});
+
 it('falls back to the scheduled time when the bus GPS is old', function () {
     $progress = nbpGet($this, nbpTimeline('live', 5), 600);
 

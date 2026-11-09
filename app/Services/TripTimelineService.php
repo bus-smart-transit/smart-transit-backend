@@ -145,6 +145,8 @@ class TripTimelineService
                 'eta_time' => $eta?->format('H:i'),
                 'eta_source' => $etaSource,
                 'scheduled_time' => $scheduled?->format('H:i'),
+                // Batch 51 item 1: the timetable time in full, so a screen can count minutes when there is no live ETA.
+                'scheduled_at' => $scheduled?->toIso8601String(),
                 'progress' => $this->progressFor($trip->status, $tripOver, $live, $index, $gps),
                 'custom' => false,
             ];
