@@ -90,14 +90,13 @@ beforeEach(function () {
 });
 afterEach(fn () => Carbon::setTestNow());
 
-it('shows the trip as Departed, not bookable, to someone searching from a stop the bus has passed', function () {
+// Batch 51 item 10 (user, 2026-11-09): "Available trips" lists only trips that can still be booked; a bus that has
+// passed the passenger's stop is not listed (it is on the Track Bus map). Was: listed as "Departed", not bookable.
+it('leaves the trip out of the list for someone searching from a stop the bus has passed, and refuses it', function () {
     $f = dtFixture();
     dtBusAt($f, 7.15); // between B and D
 
-    $trips = dtSearch($this, $f, 'B');
-    expect($trips)->toHaveCount(1)
-        ->and($trips[0]['bookable'])->toBeFalse()
-        ->and($trips[0]['progress'])->toBe(['state' => 'departed', 'label' => 'Departed', 'next_stop' => null]);
+    expect(dtSearch($this, $f, 'B'))->toBe([]);
     dtCheckout($this, $f, 'B')->assertStatus(422)->assertJsonFragment(['The bus has already left that stop. Choose a stop ahead of it, or another trip.']);
 });
 
@@ -118,7 +117,7 @@ it('stops selling a stop once the Driver taps it', function () {
     dtBusAt($f, 7.26);
     $f['trip']->forceFill(['last_acknowledged_stop_id' => $f['stops']['D']->stop_id, 'last_acknowledged_at' => now()])->save();
 
-    expect(dtSearch($this, $f, 'D')[0]['bookable'])->toBeFalse();
+    expect(dtSearch($this, $f, 'D'))->toBe([]); // Batch 51 item 10: not listed once it cannot be booked
     dtCheckout($this, $f, 'D')->assertStatus(422);
 });
 
@@ -126,14 +125,14 @@ it('stops selling a stop once the live position is past it, even if the Driver f
     $f = dtFixture();
     dtBusAt($f, 7.30); // past D (7.27), about 3 km
 
-    expect(dtSearch($this, $f, 'D')[0]['progress']['state'])->toBe('departed');
+    expect(dtSearch($this, $f, 'D'))->toBe([]); // Batch 51 item 10: not listed once it cannot be booked
     dtCheckout($this, $f, 'D')->assertStatus(422);
 });
 
 it('sells nothing on a departed trip when the bus position is missing or old, and says nothing is known', function () {
     $f = dtFixture();
 
-    expect(dtSearch($this, $f, 'D')[0]['bookable'])->toBeFalse(); // no position at all
+    expect(dtSearch($this, $f, 'D'))->toBe([]); // no position at all: not listed (Batch 51 item 10)
 
     dtBusAt($f, 7.15);
     Carbon::setTestNow(now()->addSeconds((int) config('tracking.stale_seconds') + 60));
@@ -236,4 +235,16 @@ it('refuses to schedule a bus that has no fare in force', function () {
     $this->actingAs($operator)->postJson('/api/operator/trips', [
         'fleet_route_id' => $f['trip']->fleet_route_id, 'trip_date' => '2026-10-06', 'departure_time' => '09:00', 'trip_type' => 'one_way',
     ])->assertStatus(422)->assertJsonPath('errors.fleet_route_id.0', 'This bus has no fare for this route on Oct 6, 2026, so its trips could not be sold. Add a fare rule for it first (Fleets, Fare rules), then schedule it.');
+});
+
+// Batch 51 item 10 (user, 2026-11-09): the homepage list (no start chosen) shows a bus on the road only while a stop
+// ahead of it can be booked; a bus whose position is unknown or off its route is left out, the same for every company.
+it('leaves a departed trip out of the homepage list when its position is unknown or off the route', function () {
+    $f = dtFixture();
+
+    expect($this->getJson('/api/booking/trips?date=2026-10-05')->assertOk()->json('data.trips'))->toBe([]); // no position
+
+    app(FleetLocationRepository::class)->upsertLocation(['fleet_id' => $f['fleet']->fleet_id, 'trip_id' => $f['trip']->trip_id, 'latitude' => 7.15, 'longitude' => 125.05, 'accuracy' => 8.0]); // about 5.5 km off the line
+    expect($this->getJson('/api/booking/trips?date=2026-10-05')->assertOk()->json('data.trips'))->toBe([]);
+
 });

@@ -133,7 +133,7 @@ class StaffService
      * scheduling needs (id, name, username, gender, availability, joined date). Phone, address, birth date and email
      * stay with the Admin ($withContactDetails) and with the person's own profile.
      */
-    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $companyId = null): object
+    public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $companyId = null, bool $includeBusy = false): object
     {
         // Batch 46 (least privilege): an Operator lists only their company's crew; null (the Admin) lists everyone.
         $drivers = $this->staffRepository->listByRole('driver', $companyId);
@@ -141,22 +141,53 @@ class StaffService
             return $this->presentStaff($drivers, $withContactDetails);
         }
 
-        $assignedIds = Trip::query()
+        // One trip per person per day (TripService::assertNotAlreadyAssignedThatDay): every trip that day that is not
+        // cancelled counts, a completed one too.
+        $dayTrips = Trip::query()
             ->whereDate('trip_date', $tripDate)
             ->whereNotNull('driver_id')
             ->where('status', '!=', 'cancelled')
-            ->pluck('driver_id');
+            ->orderBy('departure_time')
+            ->get(['driver_id', 'departure_time', 'status'])
+            ->groupBy(fn ($trip) => (int) $trip->driver_id);
         $releasedIds = TripAssignmentRequest::query()
             ->where('role', 'driver')
             ->where('status', TripAssignmentRequest::APPROVED)
             ->whereHas('trip', fn ($query) => $query->whereDate('trip_date', $tripDate))
-            ->pluck('staff_company_user_id');
-        $unavailableIds = $assignedIds->merge($releasedIds)->map(fn ($id) => (int) $id)->unique();
+            ->pluck('staff_company_user_id')
+            ->map(fn ($id) => (int) $id);
 
-        return $this->presentStaff(
-            $drivers->reject(fn ($driver) => $unavailableIds->contains((int) $driver->company_user_id))->values(),
-            $withContactDetails,
-        );
+        // Batch 51 item 6 (2026-11-09): with $includeBusy the busy drivers stay in the list with the reason, so the
+        // Operator sees why someone cannot be chosen ("Already on a trip that day (14:00, completed)").
+        $busyReason = function ($driver) use ($dayTrips, $releasedIds): ?string {
+            $id = (int) $driver->company_user_id;
+            if ($dayTrips->has($id)) {
+                $trip = $dayTrips->get($id)->first();
+                $time = $trip->departure_time ? substr((string) $trip->departure_time, 0, 5) : null;
+                $status = str_replace(['-', '_'], ' ', (string) $trip->status);
+
+                return 'Already on a trip that day ('.($time ? "{$time}, " : '').$status.')';
+            }
+
+            return $releasedIds->contains($id) ? 'Released from a trip that day' : null;
+        };
+
+        if (! $includeBusy) {
+            return $this->presentStaff($drivers->reject(fn ($driver) => $busyReason($driver) !== null)->values(), $withContactDetails);
+        }
+
+        $reasons = $drivers->mapWithKeys(fn ($driver) => [(int) $driver->company_user_id => $busyReason($driver)]);
+
+        return $this->presentStaff($drivers, $withContactDetails)->map(function ($row) use ($reasons) {
+            $id = (int) (is_array($row) ? $row['company_user_id'] : $row->company_user_id);
+            if (is_array($row)) {
+                $row['busy_reason'] = $reasons->get($id);
+            } else {
+                $row->setAttribute('busy_reason', $reasons->get($id));
+            }
+
+            return $row;
+        })->values();
     }
 
     public function listConductors(bool $withContactDetails = false, ?int $companyId = null): object

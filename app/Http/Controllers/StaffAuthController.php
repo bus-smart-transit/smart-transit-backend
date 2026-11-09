@@ -359,6 +359,7 @@ class StaffAuthController extends Controller
     {
         $validated = $request->validate([
             'trip_date' => ['sometimes', 'date_format:Y-m-d'],
+            'include_busy' => ['sometimes', 'boolean'],
         ]);
 
         return $this->success(
@@ -366,6 +367,7 @@ class StaffAuthController extends Controller
                 $validated['trip_date'] ?? null,
                 $request->user()?->role === 'admin',
                 $this->crewScopeOf($request),
+                (bool) ($validated['include_busy'] ?? false),
             ),
             'Drivers retrieved successfully',
         );

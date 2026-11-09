@@ -111,7 +111,10 @@ class TripResolverService
         $found = [];
         foreach ($trips as $trip) {
             $candidate = $this->evaluate($trip, $originId, $destinationId, $seatType, $from, $timezone);
-            if ($candidate) {
+            // Batch 51 item 10 (user, 2026-11-09): "Available trips" lists only trips that can still be booked. A bus on
+            // the road with no stop ahead it can be sold from (it passed them, or its position is unknown or off the
+            // route) is not listed; it shows on the Track Bus map instead. A booking link to it still says "Departed".
+            if ($candidate && ! $candidate['departed']) {
                 $found[] = $candidate;
             }
         }
@@ -142,7 +145,8 @@ class TripResolverService
             if ($next !== null && $tripDate >= $next) {
                 continue;
             }
-            if ($this->evaluate($trip, $originId, $destinationId, $seatType, $first, $timezone)) {
+            $candidate = $this->evaluate($trip, $originId, $destinationId, $seatType, $first, $timezone);
+            if ($candidate && ! $candidate['departed']) { // Batch 51 item 10: only a date with a bookable trip
                 $next = $tripDate;
             }
         }
