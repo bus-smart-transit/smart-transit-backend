@@ -120,6 +120,8 @@ Route::get('track/{token}', [TrackingController::class, 'show'])
     ->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/fares', [FareRuleController::class, 'listFares'])->middleware('throttle:public-read');
 Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:public-read');
+// Batch 51 item 3: "Are you in {place}?" on the homepage (a point rounded to about 1 km; cached; own limit).
+Route::get('/region/place', [RegionController::class, 'place'])->middleware('throttle:20,1,region-place');
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:public-read');
 Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:public-read');

@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RegionPlaceRequest;
+use App\Services\RegionPlaceService;
 use App\Services\RegionService;
 use App\Traits\ApiResponse;
 
@@ -18,5 +20,11 @@ class RegionController extends Controller
     public function show()
     {
         return $this->success($this->regionService->toArray(), 'Region retrieved successfully');
+    }
+
+    /** Batch 51 item 3: the region town a point is in, for "Are you in {place}?"; null when unknown or outside. */
+    public function place(RegionPlaceRequest $request, RegionPlaceService $places)
+    {
+        return $this->success($places->placeAt((float) $request->validated('lat'), (float) $request->validated('lng')), 'Place retrieved');
     }
 }

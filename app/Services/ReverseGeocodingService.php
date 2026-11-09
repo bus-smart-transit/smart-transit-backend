@@ -30,7 +30,7 @@ class ReverseGeocodingService
                     'addressdetails' => 1,
                 ]);
 
-            if (!$response->successful()) {
+            if (! $response->successful()) {
                 return null;
             }
 
@@ -47,7 +47,7 @@ class ReverseGeocodingService
                 $address['city'] ?? ($address['town'] ?? null),
             ]);
 
-            if (!empty($parts)) {
+            if (! empty($parts)) {
                 return implode(', ', $parts);
             }
         } catch (\Throwable) {
@@ -55,5 +55,36 @@ class ReverseGeocodingService
         }
 
         return null;
+    }
+
+    /**
+     * Batch 51 item 3 (user, 2026-11-09): the town or city names Nominatim gives for a point, most specific first
+     * (city, town, municipality, county), for RegionPlaceService to match against the region list. Empty on failure.
+     *
+     * @return list<string>
+     */
+    public function townNames(float $lat, float $lng): array
+    {
+        if (! $this->throttle->acquire()) {
+            return [];
+        }
+
+        try {
+            $response = Http::timeout(5)
+                ->acceptJson()
+                ->withHeaders(['User-Agent' => 'smart-transit-reverse-geocoder/1.0', 'Accept-Language' => 'en'])
+                ->get('https://nominatim.openstreetmap.org/reverse', ['lat' => $lat, 'lon' => $lng, 'format' => 'jsonv2', 'zoom' => 10, 'addressdetails' => 1]);
+            if (! $response->successful()) {
+                return [];
+            }
+            $address = (array) ($response->json('address') ?? []);
+
+            return array_values(array_filter(array_map(
+                fn (string $key) => trim((string) ($address[$key] ?? '')),
+                ['city', 'town', 'municipality', 'county'],
+            )));
+        } catch (\Throwable) {
+            return [];
+        }
     }
 }

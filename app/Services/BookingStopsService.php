@@ -72,6 +72,10 @@ class BookingStopsService
                 'stop_code' => $this->places->placeCode($place) ?? $entry['stop']->stop_code,
                 'name' => $this->places->displayName($place) ?? $entry['stop']->stop_name,
                 'route_ids' => array_values(array_unique($entry['route_ids'])),
+                // Batch 51 item 2: the stop's place, so the homepage finds the nearest stop on the passenger's device
+                // (the passenger's location is never sent for this). Stop positions are public on the route maps too.
+                'latitude' => $entry['stop']->latitude !== null ? (float) $entry['stop']->latitude : null,
+                'longitude' => $entry['stop']->longitude !== null ? (float) $entry['stop']->longitude : null,
             ];
         }
 
