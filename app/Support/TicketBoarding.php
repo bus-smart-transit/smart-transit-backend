@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\RouteStop;
 use Illuminate\Support\Collection;
 
 /**
@@ -17,6 +18,16 @@ final class TicketBoarding
     public const BETWEEN_STOPS = 'Boarded between stops';
 
     /** True for a ticket whose boarding point is a snapped position, not a stop. */
+    /**
+     * Batch 51 item 8 (user, 2026-11-09): the Ticket ID a Chauffeur types when a passenger cannot show the QR: the first
+     * 8 characters of the ticket's uuid, in capitals (TicketService::resolveShortCode finds it within the running trip).
+     * Separate from the tracking code, which only follows the bus.
+     */
+    public static function ticketId(?string $uuid): string
+    {
+        return strtoupper(substr((string) $uuid, 0, 8));
+    }
+
     public static function isSnapped(object $ticket): bool
     {
         return ($ticket->origin_stop_id ?? null) === null && ($ticket->origin_lat ?? null) !== null;
@@ -25,7 +36,7 @@ final class TicketBoarding
     /**
      * The last stop passed before a boarding point, in the leg's direction.
      *
-     * @param  Collection<int, \App\Models\RouteStop>  $routeStops  the route's stops with stored (outbound) distance_from_origin_km
+     * @param  Collection<int, RouteStop>  $routeStops  the route's stops with stored (outbound) distance_from_origin_km
      */
     public static function precedingStopId(Collection $routeStops, ?int $boardingDistanceM, ?string $legDirection): ?int
     {

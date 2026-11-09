@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\TicketTrackingMail;
 use App\Models\Payment;
 use App\Models\Ticket;
+use App\Support\TicketBoarding;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\PngWriter;
 use Illuminate\Support\Facades\Log;
@@ -93,12 +94,13 @@ class TrackingLinkMailer
             if ($tickets->count() > 1 && ($payment->email_group_qr ?? true)) {
                 $content = $qr->generateQRData($tickets->first())['group_qr_content'] ?? null;
 
-                return $content ? [['label' => 'Group QR: boards all '.$tickets->count().' tickets in one scan', 'png' => $draw($content)]] : [];
+                return $content ? [['label' => 'Group QR: boards all '.$tickets->count().' tickets in one scan', 'png' => $draw($content), 'ids' => $tickets->map(fn (Ticket $t) => TicketBoarding::ticketId($t->ticket_uuid))->values()->all()]] : [];
             }
 
             return $tickets->values()->map(fn (Ticket $ticket, int $i) => [
                 'label' => $tickets->count() > 1 ? 'Ticket '.($i + 1).' of '.$tickets->count() : 'Your ticket',
                 'png' => $draw((string) $qr->generateQRData($ticket)['qr_content']),
+                'ids' => [TicketBoarding::ticketId($ticket->ticket_uuid)], // Batch 51 item 8: typed by the Chauffeur when needed
             ])->all();
         } catch (\Throwable $e) {
             Log::warning('Ticket QR for the tracking email could not be drawn for payment '.$payment->payment_id.': '.$e->getMessage());

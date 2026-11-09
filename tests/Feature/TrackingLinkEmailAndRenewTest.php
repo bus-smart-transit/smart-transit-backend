@@ -198,6 +198,8 @@ it('carries a single ticket boarding QR as an image, never the ticket id as text
     expect($qrCodes)->toHaveCount(1)->and($qrCodes[0]['label'])->toBe('Your ticket');
     expect(bin2hex(substr(base64_decode($qrCodes[0]['png']), 0, 8)))->toBe('89504e470d0a1a0a'); // a real PNG image
     expect($html)->toContain('Your boarding QR')->toContain('keep this email to yourself')->toContain('/track/'.tlkToken($ticket));
+    // Batch 51 item 8: the Ticket ID the Chauffeur types when the QR cannot be shown.
+    expect($qrCodes[0]['ids'])->toBe([strtoupper(substr($ticket->ticket_uuid, 0, 8))])->and($html)->toContain('Ticket ID (give it to the Chauffeur if you cannot show the QR)')->toContain(strtoupper(substr($ticket->ticket_uuid, 0, 8)));
     expect($html)->not->toContain($ticket->ticket_uuid);
 });
 

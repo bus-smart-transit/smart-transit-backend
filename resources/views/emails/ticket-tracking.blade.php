@@ -64,6 +64,10 @@
               <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;text-align:center;">
                 <img src="{{ isset($message) ? $message->embedData(base64_decode($qr['png']), 'ticket-qr-'.$loop->index.'.png', 'image/png') : 'data:image/png;base64,'.$qr['png'] }}" alt="{{ $qr['label'] }}" width="200" height="200" style="display:block;margin:0 auto;">
                 <p style="margin:8px 0 0;font-size:13px;color:#0f172a;">{{ $qr['label'] }}</p>
+                @if(! empty($qr['ids'])){{-- Batch 51 item 8: the Chauffeur types it when the QR cannot be shown --}}
+                <p style="margin:6px 0 0;font-size:12px;color:#475569;">{{ count($qr['ids']) > 1 ? 'Ticket IDs' : 'Ticket ID' }} (give it to the Chauffeur if you cannot show the QR)</p>
+                <p style="margin:2px 0 0;font-family:Consolas,Menlo,monospace;font-size:18px;font-weight:700;letter-spacing:2px;color:#0f172a;">{{ implode(', ', $qr['ids']) }}</p>
+                @endif
               </div>
               @endforeach
               @endif
