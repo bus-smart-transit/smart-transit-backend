@@ -1051,6 +1051,9 @@ class TicketService
         $ticket->setAttribute('tracking_token', $this->trackingService->tokenFor($ticket));
         // Batch 49 item 5: the short code the owner types at "Track my bus" (null when it can no longer be tracked).
         $ticket->setAttribute('tracking_code', $this->trackingService->codeFor($ticket));
+        // Batch 51 item 7: the person this ticket was booked for, when it is not the buyer (owners only).
+        $ticket->setAttribute('traveller_name', $ticket->payment?->traveller_name);
+        $ticket->setAttribute('traveller_contact', $ticket->payment?->traveller_contact);
 
         // Passenger-facing: the bus is identified by its company label, never by the plate.
         $fleet = $ticket->trip?->fleetRoute?->fleet;

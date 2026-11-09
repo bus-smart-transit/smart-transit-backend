@@ -14,6 +14,7 @@ use App\Repositories\PaymentRepository;
 use App\Repositories\TripRepository;
 use App\Support\BookingFee;
 use App\Support\Database\RlsContext;
+use App\Support\TravellerContact;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -164,6 +165,9 @@ class PaymentService
                         'payment_method' => 'online',
                         'payment_channel' => $payload['payment_channel'],
                         'guest_email' => $guestEmail,
+                        // Batch 51 item 7: the person this booking is for, when it is not the buyer.
+                        'traveller_name' => isset($payload['traveller_name']) && trim((string) $payload['traveller_name']) !== '' ? trim((string) $payload['traveller_name']) : null,
+                        'traveller_contact' => TravellerContact::normalize($payload['traveller_contact'] ?? null),
                         'status' => 'pending',
                         'is_valid' => true,
                         'idempotency_scope_hash' => $identity['scope_hash'] ?? null,

@@ -44,6 +44,13 @@ class FinancialController extends Controller
             'refunds' => $this->reports->refundsCsv($owner, $filters),
             default => $this->reports->transactionsCsv($owner, $filters),
         };
+        // Batch 51 item 4 (user): Downloaded by, Company and Date above the table.
+        $profile = $request->user()?->companyProfile;
+        $csv = $this->reports->withDetails($csv, [
+            ['Downloaded by', (string) ($profile?->name ?: ($request->user()?->username ?? 'Not provided'))],
+            ['Company', (string) ($profile?->company?->company_name ?? ($request->user()?->role === 'admin' ? 'All companies' : 'Not provided'))],
+            ['Date', now(config('app.timezone'))->format('Y-m-d H:i')],
+        ]);
         AuditLogger::log('financials.export', 'Financials', null, ['type' => $type, 'from' => $filters['from'], 'to' => $filters['to']]);
 
         $name = "financial-{$type}-{$filters['from']}".($filters['to'] !== $filters['from'] ? "_to_{$filters['to']}" : '').'.csv';

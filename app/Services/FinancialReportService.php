@@ -239,6 +239,27 @@ class FinancialReportService
         );
     }
 
+    /**
+     * Batch 51 item 4 (user, 2026-11-09): who downloaded the export, their company and when, as label/value lines above
+     * the table (then a blank line). The website's PDF shows the same lines from this text.
+     *
+     * @param  array<int, array{0: string, 1: string}>  $lines
+     */
+    public function withDetails(string $csv, array $lines): string
+    {
+        $out = fopen('php://temp', 'r+');
+        foreach ($lines as [$label, $value]) {
+            fputcsv($out, [$label, $this->safeCell($value)]);
+        }
+        fwrite($out, "\n");
+        rewind($out);
+        $head = stream_get_contents($out);
+        fclose($out);
+        $body = str_starts_with($csv, "\xEF\xBB\xBF") ? substr($csv, 3) : $csv;
+
+        return "\xEF\xBB\xBF".$head.$body;
+    }
+
     /** @param array<int, string> $header @param array<int, array<int, mixed>> $rows */
     private function csv(array $header, array $rows): string
     {

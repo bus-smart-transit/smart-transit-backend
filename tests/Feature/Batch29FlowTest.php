@@ -17,6 +17,15 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
+/** Batch 51 item 4: the export starts with Downloaded by, Company and Date, then a blank line; this is the table after it (BOM removed). */
+function b29CsvTable(string $csv): string
+{
+    $text = str_starts_with($csv, "\xEF\xBB\xBF") ? substr($csv, 3) : $csv;
+    $parts = preg_split('/\r?\n\r?\n/', $text, 2);
+
+    return $parts[1] ?? $text;
+}
+
 // Batch 29 end-to-end flow: one working day across every feature of the batch, through the real HTTP endpoints.
 // Schedule a two-leg block -> accept before starting -> pair -> cash sale -> Operator cancels the trip and refunds the cash
 // ticket -> the Chauffeur ends the shift with a count -> the remittance batch is confirmed, flagged and resolved ->
@@ -160,7 +169,7 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     expect([$log[0]['status'], $log[0]['amount'], $log[0]['refunded']])->toEqual(['refunded', $fare, $refund]);
 
     $csv = $this->actingAs($operator)->get('/api/operator/financials/export?type=refunds&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
-    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($csv, 3)))));
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', b29CsvTable($csv)))));
     expect($rows)->toHaveCount(2);
     expect($rows[1][3])->toBe(DB::table('payments')->value('transaction_reference'));   // linked to the original sale
     expect($rows[1][2])->toBe('Cash');

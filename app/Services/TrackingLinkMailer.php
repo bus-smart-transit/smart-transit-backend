@@ -72,6 +72,8 @@ class TrackingLinkMailer
                 (string) $buyer,
                 (bool) $intercept,
                 $this->qrCodes($payment, $tickets),
+                (string) ($payment->traveller_name ?? ''),
+                (string) ($payment->traveller_contact ?? ''),
             ));
         } catch (\Throwable $e) {
             Log::warning('Tracking link email could not be sent for payment '.$payment->payment_id.': '.$e->getMessage());

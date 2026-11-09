@@ -172,3 +172,18 @@ test('a guest checkout needs an email, a signed-in passenger does not', function
     $response = $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload);
     expect($response->json('errors.guest_email'))->toBeNull();
 });
+
+// Batch 51 item 7 (user, 2026-11-09): booking for someone else needs their name and a valid email or mobile number.
+test('asks for both the name and a valid contact when booking for someone else', function () {
+    $passenger = makePassengerUserForCheckoutTest();
+    $operator = makeOperatorForCheckoutTest();
+    $trip = makeTripForCheckoutTest($operator->companyProfile->company_user_id);
+    $payload = ['payment_channel' => 'gcash', 'items' => [['trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'origin_lat' => 7.1, 'origin_lng' => 125.6, 'destination_lat' => 7.2, 'destination_lng' => 125.7]]];
+
+    $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload + ['traveller_name' => 'Lola Ana'])
+        ->assertStatus(422)->assertJsonPath('errors.traveller_contact.0', 'Enter their email or mobile number.');
+    $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload + ['traveller_name' => 'Lola Ana', 'traveller_contact' => '12345'])
+        ->assertStatus(422)->assertJsonPath('errors.traveller_contact.0', 'Enter their email, or a mobile number like 09171234567.');
+    $this->actingAs($passenger)->postJson('/api/passengers/checkout', $payload + ['traveller_contact' => '09171234567'])
+        ->assertStatus(422)->assertJsonPath('errors.traveller_name.0', 'Enter the name of the person you are booking for.');
+});

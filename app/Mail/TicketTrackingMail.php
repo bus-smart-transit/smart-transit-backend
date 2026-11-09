@@ -31,6 +31,9 @@ class TicketTrackingMail extends Mailable
         public readonly bool $redirected = false,
         /** @var list<array{label: string, png: string}> §4.10: the boarding QR (base64 PNG), one group QR or one per ticket */
         public readonly array $qrCodes = [],
+        /** Batch 51 item 7: the person the booking is for, when it is not the buyer ("" = the buyer travels) */
+        public readonly string $travellerName = '',
+        public readonly string $travellerContact = '',
     ) {}
 
     public function envelope(): Envelope

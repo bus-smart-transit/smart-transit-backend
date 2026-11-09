@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\Trip;
 use App\Support\BookingWindow;
+use App\Support\TravellerContact;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
@@ -46,6 +47,14 @@ class OnlineCheckoutRequest extends FormRequest
             'payment_channel' => 'required|string|in:gcash,maya',
             // Batch 50 item 7 (user): a guest's ticket and tracking code are sent by email, so a guest must give one.
             'guest_email' => [Rule::requiredIf(fn () => $this->user() === null), 'nullable', 'email'],
+            // Batch 51 item 7 (user): booking for someone else: their name and an email or Philippine mobile number
+            // (TravellerContact). The ticket still goes to the buyer's email until an SMS service is chosen.
+            'traveller_name' => ['nullable', 'string', 'max:100', 'required_with:traveller_contact'],
+            'traveller_contact' => ['nullable', 'string', 'max:120', 'required_with:traveller_name', function (string $attribute, mixed $value, \Closure $fail) {
+                if ($value !== null && $value !== '' && TravellerContact::normalize((string) $value) === null) {
+                    $fail('Enter their email, or a mobile number like 09171234567.');
+                }
+            }],
             'return_base_url' => ['nullable', 'url', 'max:255'],
             'reward_points_to_use' => ['nullable', 'integer', 'min:1'],
             'idempotency_key' => ['nullable', 'string', 'min:16', 'max:128'],
@@ -82,6 +91,8 @@ class OnlineCheckoutRequest extends FormRequest
     {
         return [
             'guest_email.required' => 'Enter your email. Your ticket and tracking code are sent there.',
+            'traveller_name.required_with' => 'Enter the name of the person you are booking for.',
+            'traveller_contact.required_with' => 'Enter their email or mobile number.',
             'items.max' => 'You can buy up to '.(int) config('booking.max_seats_per_purchase').' tickets in one purchase.',
             'items.*.seat_type.in' => 'Online tickets are for seats only. Standing places are sold on the bus.',
             'journey_type.in' => 'Roundtrip booking is no longer offered. Book the return journey as a separate ticket.',

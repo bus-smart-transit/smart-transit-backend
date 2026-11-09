@@ -28,6 +28,12 @@
                 Tracking opens about {{ $opensMinutesBefore }} minutes before departure.
               </p>
 
+              @if(! empty($travellerName)){{-- Batch 51 item 7: booked for someone else --}}
+              <p style="margin:0 0 20px;font-size:14px;color:#0f172a;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 14px;">
+                Booked for <strong>{{ $travellerName }}</strong>@if(! empty($travellerContact)) ({{ $travellerContact }})@endif. Please send them this ticket, or the QR and the Ticket ID.
+              </p>
+              @endif
+
               @if($redirected && $accountEmail)
               <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px 16px;margin-bottom:20px;border-radius:4px;">
                 <p style="margin:0;font-size:13px;color:#92400e;">

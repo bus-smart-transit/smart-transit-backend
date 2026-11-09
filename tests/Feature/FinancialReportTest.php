@@ -14,6 +14,15 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
+/** Batch 51 item 4: the export starts with Downloaded by, Company and Date, then a blank line; this is the table after it (BOM removed). */
+function fnCsvTable(string $csv): string
+{
+    $text = str_starts_with($csv, "\xEF\xBB\xBF") ? substr($csv, 3) : $csv;
+    $parts = preg_split('/\r?\n\r?\n/', $text, 2);
+
+    return $parts[1] ?? $text;
+}
+
 // Batch 29, Stage 2: the financial page. Paid tickets only, refunds subtracted separately, Manila days and hours with
 // the mixed timestamp convention (UTC on onsite_payment.issued_at and ticket_resolutions.completed_at, Manila elsewhere).
 // Self-contained fixtures with made-up names.
@@ -314,11 +323,23 @@ it('returns the same rows as a paginated, sortable log and as the CSV export', f
     expect($csv->headers->get('content-disposition'))->toContain('financial-transactions-2026-10-05.csv');
     $text = $csv->getContent();
     expect(str_starts_with($text, "\xEF\xBB\xBF"))->toBeTrue(); // BOM for Excel
-    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', fnCsvTable($text)))));
     expect($rows)->toHaveCount(4); // header + the same 3 rows as the screen
     expect(array_sum(array_map(fn ($r) => (float) $r[13], array_slice($rows, 1))))->toEqual(60.0);
     expect($rows[1][5])->toEqual("'=Evil Route"); // a formula-looking cell is neutralised
     expect($rows[1][2])->toEqual('2026-10-05 10:00:00');
+});
+
+// Batch 51 item 4 (user, 2026-11-09): the export says who downloaded it, their company and when, above the table.
+it('puts Downloaded by, Company and Date above the table', function () {
+    $w = fnWorld();
+    $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=daily&from=2026-10-05')->assertSuccessful()->getContent();
+    $lines = array_map('str_getcsv', array_slice(preg_split('/\r?\n/', substr($text, 3)), 0, 4));
+    expect($lines[0])->toBe(['Downloaded by', $w['operator']->companyProfile->name])
+        ->and($lines[1][0])->toBe('Company')
+        ->and($lines[2][0])->toBe('Date')
+        ->and($lines[2][1])->toMatch('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/')
+        ->and($lines[3])->toBe([null]);
 });
 
 it('exports the daily summary from the same query', function () {
@@ -327,7 +348,7 @@ it('exports the daily summary from the same query', function () {
     fnSale($w, [50.00], '2026-10-05 12:00:00', 'cash', 'onsite', 'paid', '2026-10-05 04:00:00');
 
     $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=daily&from=2026-10-04&to=2026-10-05')->assertSuccessful()->getContent();
-    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', fnCsvTable($text)))));
 
     expect($rows[0][0])->toEqual('Date');
     expect($rows[1])->toEqual(['2026-10-04', '100.00', '0.00', '100.00', '1', '0.00', '100.00']);
@@ -348,7 +369,7 @@ it('answers an empty range with zeros, an empty log and a header-only CSV', func
     expect($data['by_hour'])->toHaveCount(24);
     expect(fnGet($this, $w['operator'], '/transactions', $q)->json('data'))->toMatchArray(['data' => [], 'meta' => ['page' => 1, 'per_page' => 25, 'total' => 0, 'last_page' => 1, 'sort' => 'paid_at', 'dir' => 'desc']]);
     $csv = $this->actingAs($w['operator'])->get('/api/operator/financials/export?'.http_build_query($q))->getContent();
-    expect(array_filter(preg_split('/\r?\n/', substr($csv, 3))))->toHaveCount(1);
+    expect(array_filter(preg_split('/\r?\n/', fnCsvTable($csv))))->toHaveCount(1);
 });
 
 it('defaults to today in Manila and counts boarded tickets by their boarded time', function () {
@@ -409,7 +430,7 @@ it('exports the refund lines with a link back to the original sale', function ()
     fnRefund($s['ticket_ids'][0], $w['trip']->trip_id, 60.00, '2026-10-05 02:30:00', 'succeeded', 'cash');
 
     $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=refunds&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
-    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', fnCsvTable($text)))));
 
     expect($rows)->toHaveCount(2);
     expect($rows[1][0])->toBe('2026-10-05 10:30:00');   // completed 02:30 UTC = 10:30 Manila
@@ -421,7 +442,7 @@ it('exports the refund lines with a link back to the original sale', function ()
 
     // By sale basis the same line belongs to the 4th.
     $byDay4 = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=refunds&refund_basis=sale&from=2026-10-04&to=2026-10-04')->getContent();
-    expect(array_filter(preg_split('/\r?\n/', substr($byDay4, 3))))->toHaveCount(2);
+    expect(array_filter(preg_split('/\r?\n/', fnCsvTable($byDay4))))->toHaveCount(2);
 });
 
 it('keeps the admin endpoints out of reach of every non-admin session', function () {
@@ -457,7 +478,7 @@ it('shows the online booking fee apart from the fares, once per purchase (Featur
         ->and($kpis['booking_fees'])->toEqual(['collected' => 10, 'refunded' => 10, 'net' => 0]);
 
     $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=transactions&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
-    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', substr($text, 3)))));
+    $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', fnCsvTable($text)))));
     expect(end($rows[0]))->toBe('Booking fee (PHP)')
         ->and(collect(array_slice($rows, 1))->map(fn ($r) => end($r))->sort()->values()->all())->toBe(['0.00', '10.00']);
 });

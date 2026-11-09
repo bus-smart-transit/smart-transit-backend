@@ -70,6 +70,8 @@ class Payment extends Model
         'payment_uuid',
         'is_valid',
         'guest_email',
+        'traveller_name', // Batch 51 item 7: booking for someone else
+        'traveller_contact',
         'gateway_reference',
         'payment_intent_id',
         'gateway_payment_id',
