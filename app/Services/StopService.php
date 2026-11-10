@@ -109,6 +109,11 @@ class StopService
         if (array_key_exists('location_label', $update)) {
             $update['location_label'] = $this->label($update['location_label']);
         }
+        // Batch 56 (user, 2026-11-10): the town is filled from the pin, so a moved pin is looked up again (the old town
+        // may be wrong now), unless a town was given with the move.
+        if ($moved && ! array_key_exists('municipality', $update)) {
+            $update['municipality'] = null;
+        }
 
         if ($update !== []) {
             $this->stopRepository->update($stopId, $update);
@@ -122,7 +127,7 @@ class StopService
         }
 
         $stop = $this->stopRepository->findById($stopId);
-        // Batch 52 item 1: a moved stop still without a town gets the one its new position is in.
+        // Batch 52 item 1: a moved stop still without a town gets the one its new position is in (Batch 56: every move).
         if ($stop && $moved && ($stop->municipality ?? '') === '') {
             FillStopTown::dispatch($stopId)->afterCommit();
         }

@@ -12,8 +12,10 @@ use App\Models\User;
 use App\Repositories\StopRepository;
 use App\Services\RegionPlaceService;
 use App\Services\ReverseGeocodingService;
+use App\Services\StopService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
@@ -112,4 +114,21 @@ it('fills a stop town from its position, never over one already set', function (
     (new FillStopTown($set->stop_id))->handle(app(StopRepository::class), app(RegionPlaceService::class));
 
     expect($empty->fresh()->municipality)->toBe($t['a'])->and($set->fresh()->municipality)->toBe($t['b']);
+});
+
+// Batch 56 (user, 2026-11-10): the town shown for a stop comes from its pin, so moving the pin looks it up again.
+it('looks the town up again when a stop is moved, and keeps it when only the name changes', function () {
+    Bus::fake([FillStopTown::class]);
+    $t = tfaTowns();
+    $center = config('region.center');
+    $stop = Stop::create(['stop_name' => 'Moving Stop', 'latitude' => $center['lat'], 'longitude' => $center['lng'], 'municipality' => $t['a']]);
+    $service = app(StopService::class);
+
+    $service->updateStop($stop->stop_id, ['stop_name' => 'Renamed Stop']);
+    expect($stop->fresh()->municipality)->toBe($t['a']);
+    Bus::assertNotDispatched(FillStopTown::class);
+
+    $service->updateStop($stop->stop_id, ['latitude' => $center['lat'] + 0.01, 'longitude' => $center['lng']]);
+    expect($stop->fresh()->municipality)->toBeNull();
+    Bus::assertDispatched(FillStopTown::class, fn ($job) => $job->stopId === $stop->stop_id);
 });
