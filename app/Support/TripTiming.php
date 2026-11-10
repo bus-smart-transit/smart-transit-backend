@@ -18,6 +18,12 @@ use Illuminate\Support\Carbon;
  */
 final class TripTiming
 {
+    /** Batch 53 item 1: minutes a bus that has not departed stays shown and bookable after its departure time. */
+    public static function lateGraceMinutes(): int
+    {
+        return max(0, (int) config('booking.late_departure_grace_minutes', 30));
+    }
+
     public static function departureAt(Trip $trip): ?Carbon
     {
         $date = $trip->trip_date?->toDateString();

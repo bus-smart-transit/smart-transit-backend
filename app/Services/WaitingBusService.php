@@ -5,12 +5,14 @@ namespace App\Services;
 use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
+use App\Support\TripTiming;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 /**
  * 2026-11-08 (user): the one owner of "which buses wait at their first stop" on the public map.
  *
+ * Batch 53: until booking.late_departure_grace_minutes after its departure (TripTiming::lateGraceMinutes), then not.
  * A trip of today that has not departed shows as a still bus at the first stop of its leg from
  * tracking.waiting_bus_minutes_before (60) before its departure until the Driver presses Depart; a boarding trip shows
  * whatever its time. Future dates never show. One row per bus (its earliest such trip). The row has the same fields as
@@ -33,8 +35,11 @@ class WaitingBusService
         $now = ($now ?? now())->copy()->setTimezone((string) config('app.timezone'));
         $until = $now->copy()->addMinutes(max(0, (int) config('tracking.waiting_bus_minutes_before', 60)));
         $untilTime = $until->toDateString() === $now->toDateString() ? $until->format('H:i:s') : '23:59:59';
+        // Batch 53 item 1 (user): a bus that never departed stops showing once it is later than the grace.
+        $late = $now->copy()->subMinutes(TripTiming::lateGraceMinutes());
+        $fromTime = $late->toDateString() === $now->toDateString() ? $late->format('H:i:s') : '00:00:00';
 
-        return $this->trips->listWaitingToDepart($now->toDateString(), $untilTime)
+        return $this->trips->listWaitingToDepart($now->toDateString(), $untilTime, $fromTime)
             ->filter(fn (Trip $trip) => $trip->fleetRoute?->fleet !== null && $trip->fleetRoute?->route_id !== null)
             ->unique(fn (Trip $trip) => (int) $trip->fleetRoute->fleet_id)
             ->map(fn (Trip $trip) => $this->rowFor($trip))

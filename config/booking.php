@@ -20,6 +20,10 @@ return [
     'trips_max_per_page' => (int) env('BOOKING_TRIPS_MAX_PER_PAGE', 50),
     // Batch 49 item 1: the most tickets one online purchase may hold (checked on the server; the form shows it too).
     // Seats are taken only when the payment is confirmed, so this limits one purchase, not a hold.
+    // Batch 53 item 1 (user, 2026-11-10): a bus that has not departed stays on the Track Bus map and bookable for this
+    // many minutes after its departure time (running late), then neither. TripTiming::lateGraceMinutes() reads it.
+    'late_departure_grace_minutes' => (int) env('BOOKING_LATE_DEPARTURE_GRACE_MINUTES', 30),
+
     'max_seats_per_purchase' => (int) env('BOOKING_MAX_SEATS_PER_PURCHASE', 20),
     // Batch 49 item 6: stops with the same name (ignoring case, spaces and accents) within this many metres are one
     // place for passengers (PlaceGroups). Production pairs are 0 to 9 m apart; two real places 300 m apart stay apart.

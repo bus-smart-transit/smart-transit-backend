@@ -119,3 +119,19 @@ it('lists waiting buses on the public map, and a departed bus at its live positi
 
     Carbon::setTestNow();
 });
+
+// Batch 53 item 1 (user, 2026-11-10): a bus that never departed was shown waiting all day while the trip list had
+// dropped it. One rule now: it shows, and stays bookable, until booking.late_departure_grace_minutes after its time.
+it('drops a bus that never departed from the map and the list after the late grace, together', function () {
+    config(['booking.late_departure_grace_minutes' => 30, 'tracking.active_locations_cache_seconds' => 0]);
+    $f = wbFixture();
+    $trip = ($f['trip'])(($f['bus'])('1'), '2026-11-09', '08:00', 'delayed');
+
+    expect(wbRows('2026-11-09 08:29'))->toHaveCount(1)->and(wbRows('2026-11-09 08:31'))->toBe([]);
+
+    Carbon::setTestNow(Carbon::parse('2026-11-09 08:29', 'Asia/Manila'));
+    expect(collect($this->getJson('/api/booking/trips?date=2026-11-09')->assertOk()->json('data.trips'))->pluck('trip_id')->all())->toContain($trip->trip_id);
+    Carbon::setTestNow(Carbon::parse('2026-11-09 08:31', 'Asia/Manila'));
+    expect(collect($this->getJson('/api/booking/trips?date=2026-11-09')->assertOk()->json('data.trips'))->pluck('trip_id')->all())->not->toContain($trip->trip_id);
+    Carbon::setTestNow();
+});

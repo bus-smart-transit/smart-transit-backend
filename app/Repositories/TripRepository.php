@@ -50,10 +50,13 @@ class TripRepository
      * 2026-11-08 (user): the trips of $date that have not departed yet and are about to: boarding (any time), or
      * scheduled / delayed with a departure time up to $untilTime. Earliest first. Read by WaitingBusService only.
      */
-    public function listWaitingToDepart(string $date, string $untilTime): Collection
+    public function listWaitingToDepart(string $date, string $untilTime, string $fromTime = '00:00:00'): Collection
     {
+        // Batch 53 item 1: a trip whose departure time is before $fromTime (more than the late grace ago) is no longer
+        // waiting: it did not run.
         return Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->where('trip_date', $date)
+            ->where('departure_time', '>=', $fromTime)
             ->where(function ($query) use ($untilTime) {
                 $query->where('status', 'boarding')
                     ->orWhere(function ($query) use ($untilTime) {

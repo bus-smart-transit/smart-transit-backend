@@ -10,6 +10,7 @@ use App\Support\BusLabel;
 use App\Support\PlaceGroups;
 use App\Support\ServiceType;
 use App\Support\TripRunInfo;
+use App\Support\TripTiming;
 use App\Support\VehicleClass;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -406,7 +407,9 @@ class TripResolverService
         // bookable, at the bus's expected time there; from a stop behind it, it is listed as "Departed".
         $running = TripProgressService::isRunning($trip->status);
         $ahead = ! $running || $this->progress->stopIsAhead($trip, (int) $stops[$originIndex]->stop_id);
-        if (! $running && $boardsAt->lt($target)) {
+        // Batch 53 item 1 (user): a bus that has not departed stays bookable for the late grace after its time at this
+        // stop (it is running late), the same rule as the Track Bus map.
+        if (! $running && $boardsAt->copy()->addMinutes(TripTiming::lateGraceMinutes())->lt($target)) {
             return null;
         }
         if ($running && $ahead) {
