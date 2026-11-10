@@ -198,7 +198,11 @@ test('operator calendar shows every trip of their company, not only the ones the
     $this->actingAs($operator)->getJson('/api/staff/calendar/day?date=2026-10-15')
         ->assertSuccessful()
         ->assertJsonPath('data.total', 1)
-        ->assertJsonPath('data.items.0.trip_id', $theirs->trip_id);
+        ->assertJsonPath('data.items.0.trip_id', $theirs->trip_id)
+        ->assertJsonPath('data.items.0.made_by', $colleague->companyProfile->name)
+        ->assertJsonPath('data.items.0.made_by_you', false);
+    $this->actingAs($colleague->fresh())->getJson('/api/staff/calendar/day?date=2026-10-15')
+        ->assertJsonPath('data.items.0.made_by_you', true);
     $this->actingAs($operator)->getJson('/api/staff/calendar/days?from=2026-10-01&to=2026-10-31')
         ->assertSuccessful()
         ->assertJsonPath('data.days.0.trips', 1);

@@ -202,7 +202,7 @@ class TripRepository
      */
     public function paginateForCalendarDay(string $role, int $companyUserId, string $date, int $page, int $perPage): LengthAwarePaginator
     {
-        return $this->calendarScope(Trip::with(['fleetRoute.route', 'fleetRoute.fleet']), $role, $companyUserId)
+        return $this->calendarScope(Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'companyUser:company_user_id,name']), $role, $companyUserId)
             ->whereDate('trip_date', $date)
             ->where('status', '!=', 'cancelled')
             ->orderBy('departure_time')

@@ -74,7 +74,7 @@ class CalendarSummaryService
 
         return [
             'date' => $date,
-            'items' => $paginator->getCollection()->map(fn ($trip) => $this->dayItem($trip, $role))->values()->all(),
+            'items' => $paginator->getCollection()->map(fn ($trip) => $this->dayItem($trip, $role, $companyUserId))->values()->all(),
             'page' => $paginator->currentPage(),
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
@@ -82,7 +82,7 @@ class CalendarSummaryService
         ];
     }
 
-    private function dayItem(object $trip, string $role): array
+    private function dayItem(object $trip, string $role, int $companyUserId): array
     {
         $route = $trip->fleetRoute?->route;
         $reverse = $trip->leg_direction === 'reverse';
@@ -100,6 +100,9 @@ class CalendarSummaryService
             'service_type' => ServiceType::normalize($trip->service_type),
             'plate_number' => $trip->fleetRoute?->fleet?->plate_number,
             'role' => $role,
+            // Batch 53 (user): who made the schedule, so a trip a colleague made is not a puzzle. Null when unknown.
+            'made_by' => $trip->companyUser?->name,
+            'made_by_you' => (int) $trip->company_user_id === $companyUserId,
         ];
     }
 
