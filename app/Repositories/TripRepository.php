@@ -4,6 +4,7 @@ namespace App\Repositories;
 
 use App\Models\Trip;
 use App\Support\CompanyScope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -188,7 +189,7 @@ class TripRepository
      */
     public function listForCalendar(string $role, int $companyUserId, string $fromDate, string $toDate): Collection
     {
-        return Trip::where($this->calendarScopeColumn($role), $companyUserId)
+        return $this->calendarScope(Trip::query(), $role, $companyUserId)
             ->whereDate('trip_date', '>=', $fromDate)
             ->whereDate('trip_date', '<=', $toDate)
             ->where('status', '!=', 'cancelled')
@@ -201,8 +202,7 @@ class TripRepository
      */
     public function paginateForCalendarDay(string $role, int $companyUserId, string $date, int $page, int $perPage): LengthAwarePaginator
     {
-        return Trip::with(['fleetRoute.route', 'fleetRoute.fleet'])
-            ->where($this->calendarScopeColumn($role), $companyUserId)
+        return $this->calendarScope(Trip::with(['fleetRoute.route', 'fleetRoute.fleet']), $role, $companyUserId)
             ->whereDate('trip_date', $date)
             ->where('status', '!=', 'cancelled')
             ->orderBy('departure_time')
@@ -213,14 +213,26 @@ class TripRepository
     /** C8: the next trip that is still to be run (not completed or cancelled). */
     public function findNextForCalendar(string $role, int $companyUserId, string $fromDate): ?Trip
     {
-        return Trip::with('fleetRoute.route')
-            ->where($this->calendarScopeColumn($role), $companyUserId)
+        return $this->calendarScope(Trip::with('fleetRoute.route'), $role, $companyUserId)
             ->whereIn('status', self::ACTIVE_STATUSES)
             ->whereDate('trip_date', '>=', $fromDate)
             ->orderBy('trip_date', 'asc')
             ->orderBy('departure_time', 'asc')
             ->orderBy('trip_id', 'asc')
             ->first();
+    }
+
+    /**
+     * Batch 53 (bug): crew see their own assignments; an Operator sees every trip of their company (CompanyScope, as
+     * the rest of the portal since Batch 46), so a trip another Operator of the company made is on the calendar too.
+     */
+    private function calendarScope(Builder $query, string $role, int $companyUserId): Builder
+    {
+        if ($role === 'operator') {
+            return CompanyScope::whereMadeByCompany($query, 'company_user_id', $companyUserId);
+        }
+
+        return $query->where($this->calendarScopeColumn($role), $companyUserId);
     }
 
     private function calendarScopeColumn(string $role): string

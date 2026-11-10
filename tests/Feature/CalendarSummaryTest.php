@@ -1,9 +1,10 @@
 <?php
 
+use App\Models\Company;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
-use App\Models\ShiftBlock;
 use App\Models\Route;
+use App\Models\ShiftBlock;
 use App\Models\StaffUser;
 use App\Models\Trip;
 use App\Models\TripAssignmentRequest;
@@ -176,6 +177,33 @@ test('operator summary covers their own trips and their For Approval count only'
         ->assertJsonPath('data.for_approval_count', 1);
 });
 
+// Batch 53 (bug): a trip another Operator of the same company made was missing from the calendar.
+test('operator calendar shows every trip of their company, not only the ones they made', function () {
+    $company = Company::create(['company_name' => 'Cal Bus Co']);
+    $operator = calSummaryStaff('operator');
+    $colleague = calSummaryStaff('operator');
+    $outsider = calSummaryStaff('operator');
+    foreach ([$operator, $colleague] as $staff) {
+        $staff->companyProfile->forceFill(['company_id' => $company->company_id])->save();
+    }
+    $fr = calSummaryFleetRoute($colleague);
+    $theirs = calSummaryTrip($fr, $colleague, null, null, '2026-10-15', '06:00', 'delayed', 7);
+    calSummaryTrip(calSummaryFleetRoute($outsider), $outsider, null, null, '2026-10-15', '07:00');
+
+    $operator = $operator->fresh();
+    $this->actingAs($operator)->getJson('/api/staff/calendar-summary')
+        ->assertSuccessful()
+        ->assertJsonPath('data.today.trips', 1)
+        ->assertJsonPath('data.today.shifts', 1);
+    $this->actingAs($operator)->getJson('/api/staff/calendar/day?date=2026-10-15')
+        ->assertSuccessful()
+        ->assertJsonPath('data.total', 1)
+        ->assertJsonPath('data.items.0.trip_id', $theirs->trip_id);
+    $this->actingAs($operator)->getJson('/api/staff/calendar/days?from=2026-10-01&to=2026-10-31')
+        ->assertSuccessful()
+        ->assertJsonPath('data.days.0.trips', 1);
+});
+
 test('week start day is configurable', function () {
     config(['calendar.week_start_day' => 1]);
     $driver = calSummaryStaff('driver');
@@ -196,7 +224,6 @@ test('calendar summary rejects passengers and unauthenticated callers', function
     ]);
     $this->actingAs($passenger)->getJson('/api/staff/calendar-summary')->assertForbidden();
 });
-
 
 test('calendar markers list only the days with the caller\'s own trips or shifts, by role', function () {
     $operator = calSummaryStaff('operator');
