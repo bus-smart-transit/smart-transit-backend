@@ -71,7 +71,9 @@ class TripResolverService
         // Batch 52 item 1: with an area (the stops of the passenger's town or province, nearest first), each trip is
         // listed from the first of its stops there that can still be booked.
         $area = isset($query['area_stop_ids']) ? array_values(array_map('intval', (array) $query['area_stop_ids'])) : null;
-        $found = $this->eligibleOnDate($date, $originId, $destinationId, $seatType, $now, $timezone, $area);
+        // Batch 54 (user): only buses of one class (the trips page's Ordinary / Aircon filter).
+        $vehicleClass = VehicleClass::normalize($query['vehicle_class'] ?? null);
+        $found = $this->eligibleOnDate($date, $originId, $destinationId, $seatType, $now, $timezone, $area, $vehicleClass);
         $total = count($found);
         $lastPage = max(1, (int) ceil($total / $perPage));
         $page = max(1, min($page, $lastPage));
@@ -93,7 +95,7 @@ class TripResolverService
             'per_page' => $perPage,
             'total' => $total,
             'last_page' => $lastPage,
-            'next_available_date' => $total === 0 ? $this->nextAvailableDate($date, $originId, $destinationId, $seatType, $now, $timezone) : null,
+            'next_available_date' => $total === 0 ? $this->nextAvailableDate($date, $originId, $destinationId, $seatType, $now, $timezone, $vehicleClass) : null,
             'message' => $total === 0 ? 'No departures match your journey on that date.' : null,
         ];
     }
@@ -103,13 +105,14 @@ class TripResolverService
      *
      * @return array<int, array>
      */
-    private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone, ?array $area = null): array
+    private function eligibleOnDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone, ?array $area = null, ?string $vehicleClass = null): array
     {
         $from = $date->isSameDay($now) ? $now->copy() : $date->copy()->startOfDay();
         // Batch 49 item 2: a trip on the road is listed too ("Departed", or bookable from a stop still ahead).
         $trips = Trip::with(['fleetRoute.fleet', 'fleetRoute.route'])
             ->whereIn('status', ['scheduled', 'delayed', 'boarding', ...TripProgressService::RUNNING])
             ->whereDate('trip_date', $date->toDateString())
+            ->when($vehicleClass, fn ($q) => $q->whereHas('fleetRoute.fleet', fn ($f) => $f->where('vehicle_class', $vehicleClass)))
             ->get();
 
         $found = [];
@@ -148,7 +151,7 @@ class TripResolverService
     }
 
     /** The first date after `$date`, inside the booking window, that has an eligible departure. */
-    private function nextAvailableDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone): ?string
+    private function nextAvailableDate(Carbon $date, ?int $originId, ?int $destinationId, string $seatType, Carbon $now, string $timezone, ?string $vehicleClass = null): ?string
     {
         $last = BookingWindow::lastDate($now) ?? $now->copy()->startOfDay();
         $first = $date->copy()->startOfDay()->addDay();
@@ -160,6 +163,7 @@ class TripResolverService
             ->whereIn('status', ['scheduled', 'delayed', 'boarding'])
             ->whereDate('trip_date', '>=', $first->toDateString())
             ->whereDate('trip_date', '<=', $last->toDateString())
+            ->when($vehicleClass, fn ($q) => $q->whereHas('fleetRoute.fleet', fn ($f) => $f->where('vehicle_class', $vehicleClass)))
             ->orderBy('trip_date')
             ->get();
 
@@ -311,6 +315,9 @@ class TripResolverService
             'destination' => $best['destination'] ?? null,
             'route_name' => $best['trip']->fleetRoute->route?->route_name,
             'bus_label' => BusLabel::for($best['trip']->fleetRoute->fleet),
+            // Batch 54 (user): the bus's class for the trips page filter and card; null when the bus has none.
+            'vehicle_class' => VehicleClass::normalize($best['trip']->fleetRoute->fleet?->vehicle_class),
+            'vehicle_class_label' => VehicleClass::label(VehicleClass::normalize($best['trip']->fleetRoute->fleet?->vehicle_class)),
             'leg_direction' => $best['trip']->leg_direction === 'reverse' ? 'reverse' : 'outbound',
             'service_type' => ServiceType::normalize($best['trip']->service_type),
             // Batch 28 Stage 3, item 8: how the bus runs (a block of several legs is a "Round-trip run"; deliberately not worded

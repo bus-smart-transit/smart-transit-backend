@@ -239,6 +239,8 @@ it('tells the date picker today in Manila and the booking window', function () u
         'last_bookable_date' => Carbon::parse('2026-10-04')->addDays((int) config('booking.max_advance_days'))->toDateString(),
         'home_preview_limit' => (int) config('booking.home_preview_limit'),
         'trips_per_page' => (int) config('booking.trips_per_page'),
+        // Batch 54: the trips page's bus type filter, from config/fares.php.
+        'bus_types' => collect(config('fares.vehicle_classes'))->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values()->all(),
     ]);
 });
 

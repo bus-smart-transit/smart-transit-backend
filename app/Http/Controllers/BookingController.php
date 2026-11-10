@@ -9,6 +9,7 @@ use App\Services\TripAreaService;
 use App\Services\TripResolverService;
 use App\Support\BookingFee;
 use App\Support\BookingWindow;
+use App\Support\VehicleClass;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -46,6 +47,8 @@ class BookingController extends Controller
         $result['meta'] = BookingWindow::describe() + [
             'home_preview_limit' => (int) config('booking.home_preview_limit'),
             'trips_per_page' => (int) config('booking.trips_per_page'),
+            // Batch 54 (user): the trips page's bus type filter (from config/fares.php, nothing named here).
+            'bus_types' => collect(VehicleClass::all())->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values()->all(),
         ];
 
         return $this->success($result, 'Booking stops retrieved successfully');
@@ -75,6 +78,8 @@ class BookingController extends Controller
             'to' => 'nullable|string|max:64',
             'date' => 'nullable|string|max:10',
             'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
+            // Batch 54 (user): the trips page's bus type filter (Ordinary or Aircon, the classes in config/fares.php).
+            'bus_type' => 'nullable|string|in:'.implode(',', VehicleClass::keys()),
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:'.(int) config('booking.trips_max_per_page'),
         ]);
@@ -91,6 +96,7 @@ class BookingController extends Controller
             'destination_stop_id' => $journey['to']['stop_id'] ?? null,
             'date' => $journey['date'],
             'seat_type' => $data['seat_type'] ?? null,
+            'vehicle_class' => $data['bus_type'] ?? null,
         ], (int) ($data['page'] ?? 1), isset($data['per_page']) ? (int) $data['per_page'] : null);
 
         $areaInfo = $area !== null ? ['level' => $area['level'], 'name' => $area['name'], 'stops' => count($area['stop_ids'])] : null;

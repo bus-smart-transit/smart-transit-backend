@@ -136,6 +136,8 @@ class TripTimelineService
             }
             $rows[] = [
                 'stop_id' => (int) $routeStop->stop_id,
+                // Batch 54 (user): the readable code, so choosing a drop-off in "View route stops" opens booking there.
+                'stop_code' => $routeStop->stop->stop_code,
                 'name' => $routeStop->stop->stop_name,
                 'municipality' => $routeStop->stop->municipality,
                 'type' => ServiceType::effectiveStopType($service, $routeStop),
