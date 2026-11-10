@@ -24,6 +24,13 @@ return [
     // many minutes after its departure time (running late), then neither. TripTiming::lateGraceMinutes() reads it.
     'late_departure_grace_minutes' => (int) env('BOOKING_LATE_DEPARTURE_GRACE_MINUTES', 30),
 
+    // Batch 54 (user, 2026-11-10): the nightly repair (shift:repair-stale, 00:30) completes a trip from an earlier day
+    // that left but was never ended, once its expected arrival plus this many minutes has passed (a late-night bus
+    // still on the road is left alone). The expected arrival is the route's last stop offset; without offsets the
+    // fallback length is used.
+    'stale_trip_close_after_minutes' => (int) env('BOOKING_STALE_TRIP_CLOSE_AFTER_MINUTES', 120),
+    'stale_trip_fallback_length_minutes' => (int) env('BOOKING_STALE_TRIP_FALLBACK_LENGTH_MINUTES', 240),
+
     'max_seats_per_purchase' => (int) env('BOOKING_MAX_SEATS_PER_PURCHASE', 20),
     // Batch 49 item 6: stops with the same name (ignoring case, spaces and accents) within this many metres are one
     // place for passengers (PlaceGroups). Production pairs are 0 to 9 m apart; two real places 300 m apart stay apart.

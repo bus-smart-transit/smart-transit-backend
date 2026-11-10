@@ -33,13 +33,13 @@ class UserService
 
         if (! $user || ! Hash::check($payload['password'], $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
+                'email' => ['Wrong email or password. Check them and try again.'],
             ]);
         }
 
         if ($user->role !== 'passenger') {
             throw ValidationException::withMessages([
-                'email' => ['Invalid email or password credentials provided.'],
+                'email' => ['Wrong email or password. Check them and try again.'],
             ]);
         }
 
@@ -216,13 +216,13 @@ class UserService
 
             if (! $user || ! Hash::check($credentials['password'], $user->password)) {
                 throw ValidationException::withMessages([
-                    'email' => ['Invalid email or password credentials provided.'],
+                    'email' => ['Wrong email or password. Check them and try again.'],
                 ]);
             }
 
             if (! in_array($user->role, ['operator', 'driver', 'conductor', 'admin'])) {
                 throw ValidationException::withMessages([
-                    'email' => ['Invalid email or password credentials provided.'],
+                    'email' => ['Wrong email or password. Check them and try again.'],
                 ]);
             }
 

@@ -380,18 +380,22 @@ it('repairs stale dev state by dry run first, and never touches started, complet
     Artisan::call('shift:repair-stale', ['--apply' => true]);
     expect($legs[0]->fresh()->status)->toBe('cancelled');
     expect($legs[1]->fresh()->status)->toBe('cancelled');
-    expect($legs[3]->fresh()->status)->toBe('delayed'); // valid ticket: left for the Operator
-    expect($block->fresh()->status)->toBe('scheduled'); // one live leg remains
-    expect($otherLegs[0]->fresh()->status)->toBe('departed');
-    expect($otherLegs[1]->fresh()->status)->toBe('delayed');
-    expect($other->fresh()->status)->toBe('scheduled');
-    expect(ConductorShiftLog::whereNull('ended_at')->count())->toBe(1); // the block is not finished (ticketed leg), so its shift stays
+    // Batch 54 (user, 2026-11-10): nothing is left live for ever any more. The ticketed leg never left, so it is
+    // cancelled the way an Operator would (its passengers are told and can rebook or ask for a refund), was: left alone.
+    expect($legs[3]->fresh()->status)->toBe('cancelled');
+    expect(Ticket::where('trip_id', $ticketed->trip_id)->value('status'))->not->toBe('valid');
+    expect($block->fresh()->status)->toBe('cancelled');
+    // The started block of 2026-10-02 is long past its arrival: the departed leg is completed, the rest cancelled
+    // (was: the whole block left alone).
+    expect($otherLegs[0]->fresh()->status)->toBe('completed');
+    expect($otherLegs[1]->fresh()->status)->toBe('cancelled');
+    expect($other->fresh()->status)->not->toBe('scheduled');
+    expect(ConductorShiftLog::whereNull('ended_at')->count())->toBe(0);
 
-    Ticket::where('trip_id', $ticketed->trip_id)->delete();
+    // A second run finds nothing to do.
     Artisan::call('shift:repair-stale', ['--apply' => true]);
     expect($legs[3]->fresh()->status)->toBe('cancelled');
-    expect($block->fresh()->status)->toBe('cancelled');
-    expect(ConductorShiftLog::whereNull('ended_at')->count())->toBe(0);
+    expect($otherLegs[0]->fresh()->status)->toBe('completed');
     expect(ConductorShiftLog::first()->end_source)->toBe('repair_stale');
 });
 
