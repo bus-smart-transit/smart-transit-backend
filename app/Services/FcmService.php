@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Repositories\UserNotificationRepository;
 use App\Support\FirebaseCredentials;
 use App\Support\HealthBeat;
+use App\Support\LiveUpdates;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Exception\MessagingException;
@@ -96,6 +97,8 @@ class FcmService
             $body,
             $data,
         );
+        // Batch 58: the person's open screens reload their bell at once (LiveUpdates; never fails this send).
+        LiveUpdates::notification((int) $user->user_id, (string) ($data['type'] ?? 'general'), $data);
 
         if (! $this->isEnabled()) {
             return false;

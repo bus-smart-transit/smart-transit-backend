@@ -4,6 +4,7 @@ namespace App\Repositories;
 
 use App\Models\Trip;
 use App\Support\CompanyScope;
+use App\Support\LiveUpdates;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
@@ -254,7 +255,13 @@ class TripRepository
             Trip::where('trip_id', $tripId)->whereNull($stamp)->update([$stamp => now()]);
         }
 
-        return Trip::where('trip_id', $tripId)->update($update) > 0;
+        $changed = Trip::where('trip_id', $tripId)->update($update) > 0;
+        // Batch 58: every status change of a trip passes here; screens hear it at once (LiveUpdates).
+        if ($changed) {
+            LiveUpdates::tripStatus($tripId, $status);
+        }
+
+        return $changed;
     }
 
     /**
@@ -693,9 +700,13 @@ class TripRepository
                 }
 
                 if ($scheduledAt->lte($now)) {
-                    $updated += Trip::where('trip_id', $trip->trip_id)
+                    $marked = Trip::where('trip_id', $trip->trip_id)
                         ->where('status', 'scheduled')
                         ->update(['status' => 'delayed']);
+                    if ($marked > 0) {
+                        LiveUpdates::tripStatus((int) $trip->trip_id, 'delayed'); // Batch 58
+                    }
+                    $updated += $marked;
                 }
             }
         }, 'trip_id', 'trip_id');

@@ -56,6 +56,19 @@ echo "[entrypoint] Starting scheduler (routes/console.php)..."
   done
 ) &
 
+# Batch 58: live updates (Laravel Reverb WebSocket server), only when broadcasting is set to Reverb. Screens fall back
+# to polling while it is down, so a crash here never stops the API; it restarts like the worker above.
+if [ "$BROADCAST_CONNECTION" = "reverb" ]; then
+  echo "[entrypoint] Starting live updates (Reverb) on 0.0.0.0:${REVERB_SERVER_PORT:-8080}..."
+  (
+    while true; do
+      php artisan reverb:start --host=0.0.0.0 --port="${REVERB_SERVER_PORT:-8080}"
+      echo "[entrypoint] Reverb stopped (exit $?), restarting in 3 seconds..."
+      sleep 3
+    done
+  ) &
+fi
+
 echo "[entrypoint] Starting Laravel on 0.0.0.0:8000..."
 # --no-reload lets PHP_CLI_SERVER_WORKERS serve several requests at once (Laravel ignores it otherwise).
 exec php artisan serve --host=0.0.0.0 --port=8000 --no-reload

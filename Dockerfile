@@ -46,5 +46,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8000
+# Batch 58: live updates (Reverb), started by the entrypoint when BROADCAST_CONNECTION=reverb
+EXPOSE 8080
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

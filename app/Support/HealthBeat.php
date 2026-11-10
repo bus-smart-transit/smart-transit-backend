@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Cache;
  */
 class HealthBeat
 {
-    public const PARTS = ['scheduler', 'queue', 'mail', 'push', 'routing', 'traffic', 'places', 'payments'];
+    public const PARTS = ['scheduler', 'queue', 'mail', 'push', 'routing', 'traffic', 'places', 'payments', 'reverb'];
 
     /** Outside services, found by a word in the host name. */
     private const HOSTS = [

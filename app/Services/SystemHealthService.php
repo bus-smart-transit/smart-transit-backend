@@ -27,6 +27,8 @@ class SystemHealthService
         'traffic' => 'Traffic (TomTom)',
         'places' => 'Place search (Photon / Nominatim)',
         'payments' => 'Online payments (PayMongo)',
+        // Batch 58: live updates over WebSocket (Laravel Reverb); screens fall back to polling when it fails.
+        'reverb' => 'Live updates (WebSocket)',
     ];
 
     public function summary(): array

@@ -20,6 +20,7 @@ use App\Http\Controllers\FleetDailyPinController;
 use App\Http\Controllers\FleetLocationController;
 use App\Http\Controllers\FleetPairingController;
 use App\Http\Controllers\GoogleSignInController;
+use App\Http\Controllers\LiveController;
 use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
@@ -39,6 +40,7 @@ use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketResolutionController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TrafficController;
+use App\Http\Controllers\TripAlertController;
 use App\Http\Controllers\TripAssignmentRequestController;
 use App\Http\Controllers\TripController;
 use App\Http\Controllers\TripNotificationController;
@@ -88,6 +90,24 @@ Route::get('staff/calendar/days', [CalendarSummaryController::class, 'days'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator', 'throttle:120,1,staff-calendar-days']);
 Route::get('staff/calendar/day', [CalendarSummaryController::class, 'day'])
     ->middleware(['auth:sanctum', 'role:driver,conductor,operator', 'throttle:120,1,staff-calendar-day']);
+
+// Batch 58: which live-update channels this visitor may listen to (guests: the public ones only).
+Route::get('live/channels', [LiveController::class, 'channels'])->middleware(['auth.optional', 'throttle:60,1,live-channels']);
+
+// Batch 58 (user, 2026-11-10): crew alerts ("Alert operator"). The trip's own Driver or Chauffeur sends one; every
+// Operator of the company sees it, marks it handled and may tell the passengers. TripAlertService owns the rules.
+Route::post('crew/trips/{tripId}/alerts', [TripAlertController::class, 'raise'])->whereNumber('tripId')
+    ->middleware(['auth:sanctum', 'role:driver,conductor', 'throttle:10,1,crew-alerts-post']);
+Route::get('crew/trips/{tripId}/alerts', [TripAlertController::class, 'forTrip'])->whereNumber('tripId')
+    ->middleware(['auth:sanctum', 'role:driver,conductor', 'throttle:120,1,crew-alerts-get']);
+Route::patch('crew/alerts/{alertId}/cancel', [TripAlertController::class, 'cancel'])->whereNumber('alertId')
+    ->middleware(['auth:sanctum', 'role:driver,conductor', 'throttle:20,1,crew-alerts-cancel']);
+Route::get('operator/alerts', [TripAlertController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:operator', 'throttle:120,1,operator-alerts-get']);
+Route::patch('operator/alerts/{alertId}/handle', [TripAlertController::class, 'handle'])->whereNumber('alertId')
+    ->middleware(['auth:sanctum', 'role:operator', 'throttle:30,1,operator-alerts-handle']);
+Route::post('operator/alerts/{alertId}/tell-passengers', [TripAlertController::class, 'tellPassengers'])->whereNumber('alertId')
+    ->middleware(['auth:sanctum', 'role:operator', 'throttle:10,1,operator-alerts-tell']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
 Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])

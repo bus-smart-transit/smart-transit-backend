@@ -2,14 +2,25 @@
 
 namespace App\Repositories;
 
+use App\Support\LiveUpdates;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class FleetLocationRepository
 {
-    // ⚠ ST_MakePoint(lng, lat) — longitude FIRST, then latitude. Always.
+    /**
+     * Saves a bus's position (phone or simulator) and, Batch 58, announces it live (LiveUpdates: every GPS writer passes
+     * here, so maps move at once; a failed announcement never fails the save).
+     */
     public function upsertLocation(array $payload): void
+    {
+        $this->writeLocation($payload);
+        LiveUpdates::busMoved($payload);
+    }
+
+    // ⚠ ST_MakePoint(lng, lat) — longitude FIRST, then latitude. Always.
+    private function writeLocation(array $payload): void
     {
         $driver = DB::getDriverName();
 

@@ -20,6 +20,12 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Batch 58: live updates (Laravel Reverb). Private channels are signed in with the API's Sanctum token at
+    // POST /api/broadcasting/auth; the rules are in routes/channels.php.
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum']],
+    )
     ->withMiddleware(function (Middleware $middleware): void {
         // 2026-10-30: behind a reverse proxy (Caddy on the VPS, ngrok on a laptop) every request arrives from the
         // proxy, so each client's own address (rate limits, audit log) is read from X-Forwarded-For. TRUSTED_PROXIES
