@@ -233,6 +233,8 @@ Route::prefix('operator')
         Route::get('routes', [RouteController::class, 'index']);
         Route::post('routes', [RouteController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-routes-post']);
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
+        // Batch 59: the Company Admin deletes a route that was never used (no stops, buses or fare rules).
+        Route::delete('routes/{routeId}', [RouteController::class, 'destroy'])->whereNumber('routeId')->middleware(['company.admin', 'throttle:10,1,mgmt-routes-delete']);
         Route::get('stops', [StopController::class, 'index']);
         // 2026-11-06 (Batch 47 part A): place search for Add stop (Photon while typing, Nominatim on Search); own limit.
         Route::get('places', [PlaceSearchController::class, 'search'])->middleware('throttle:60,1,mgmt-places');

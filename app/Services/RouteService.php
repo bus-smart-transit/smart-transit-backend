@@ -258,6 +258,27 @@ class RouteService
         return $routeStop;
     }
 
+    /**
+     * Batch 59 (user, 2026-11-11): the Company Admin deletes a route that was never used: no stops, no bus ever assigned
+     * (so no trips) and no fare rule for it. Its own settings (drop-off rules, alighting points, duration factors) go with
+     * it. A route in use is never deleted; the message says what still uses it.
+     *
+     * @throws ValidationException
+     */
+    public function deleteUnusedRoute(int $routeId): void
+    {
+        $usage = $this->routeRepository->usage($routeId);
+        $reasons = array_filter([
+            $usage['stops'] > 0 ? ($usage['stops'] === 1 ? '1 stop' : "{$usage['stops']} stops") : null,
+            $usage['buses'] > 0 ? ($usage['buses'] === 1 ? '1 bus assignment' : "{$usage['buses']} bus assignments") : null,
+            $usage['fare_rules'] > 0 ? ($usage['fare_rules'] === 1 ? '1 fare rule' : "{$usage['fare_rules']} fare rules") : null,
+        ]);
+        if ($reasons !== []) {
+            throw ValidationException::withMessages(['route' => ['This route is still in use ('.implode(', ', $reasons).'), so it cannot be deleted.']]);
+        }
+        $this->routeRepository->delete($routeId);
+    }
+
     public function removeStopFromRoute(int $routeId, int $routeStopId): bool
     {
         $deleted = $this->routeStopRepository->delete($routeStopId);

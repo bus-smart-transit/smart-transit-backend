@@ -4,6 +4,7 @@ namespace App\Repositories;
 
 use App\Models\Route;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class RouteRepository
 {
@@ -49,6 +50,21 @@ class RouteRepository
     public function delete(int $routeId): bool
     {
         return Route::where('route_id', $routeId)->delete() > 0;
+    }
+
+    /**
+     * Batch 59: what still uses a route (a route is deleted only when all are zero). Trips hang off the bus assignments
+     * (fleets_routes), so a route that ever had a bus is never deleted.
+     *
+     * @return array{stops: int, buses: int, fare_rules: int}
+     */
+    public function usage(int $routeId): array
+    {
+        return [
+            'stops' => DB::table('route_stop')->where('route_id', $routeId)->count(),
+            'buses' => DB::table('fleets_routes')->where('route_id', $routeId)->count(),
+            'fare_rules' => DB::table('fare_rules')->where('route_id', $routeId)->count(),
+        ];
     }
 
     public function allWithOrderedStops(): Collection

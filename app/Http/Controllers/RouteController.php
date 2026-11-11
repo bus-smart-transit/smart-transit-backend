@@ -155,6 +155,18 @@ class RouteController extends Controller
         );
     }
 
+    /** Batch 59: delete a route that was never used (RouteService::deleteUnusedRoute decides). */
+    public function destroy(Request $request, int $routeId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $this->routeService->deleteUnusedRoute($routeId);
+
+        return $this->success(null, 'Route deleted.');
+    }
+
     public function removeStop(Request $request, int $routeId, int $routeStopId)
     {
         if ($denied = $this->ownRouteOr404($request, $routeId)) {
