@@ -134,6 +134,28 @@ class TicketRepository
      * Two phones scanning the same ticket at the same instant both read it as valid, but only one update changes a row,
      * so only one scan wins. False means someone else boarded it first (or it is no longer valid).
      */
+    /** Batch 60: the tickets of a trip that were never scanned (TicketExpiryService). */
+    public function findValidForTrip(int $tripId): Collection
+    {
+        return Ticket::where('trip_id', $tripId)->where('status', 'valid')->get();
+    }
+
+    /** Batch 60: a trip ended, so its never-scanned tickets are expired. Returns how many. */
+    public function expireValidForTrip(int $tripId): int
+    {
+        return Ticket::where('trip_id', $tripId)->where('status', 'valid')->update(['status' => 'expired']);
+    }
+
+    /**
+     * Batch 60: expire these tickets, only while still unscanned (a scan in between wins).
+     *
+     * @param  array<int, int>  $ticketIds
+     */
+    public function expireValid(array $ticketIds): int
+    {
+        return $ticketIds === [] ? 0 : Ticket::whereIn('ticket_id', $ticketIds)->where('status', 'valid')->update(['status' => 'expired']);
+    }
+
     public function markBoarded(int $ticketId): bool
     {
         return Ticket::where('ticket_id', $ticketId)

@@ -21,6 +21,10 @@ Schedule::command('payments:release-expired-holds')->everyFiveMinutes();
 // so overlapping runs are safe.
 Schedule::command('trips:notify-delayed')->everyMinute()->withoutOverlapping();
 
+// Batch 60 item 1: an unscanned ticket expires once the running bus has reached or passed its destination
+// (TicketExpiryService). The scan checks the same rule at once; this sweep keeps the passenger's ticket honest.
+Schedule::command('tickets:expire-passed')->everyMinute()->withoutOverlapping();
+
 // Nightly fleet reports: generate daily_summary, financial, occupancy_trends, revenue_by_route for all fleets.
 // Runs at 01:00 AM every day, covering the previous calendar day.
 Schedule::command('reports:generate')->dailyAt('01:00')->withoutOverlapping();

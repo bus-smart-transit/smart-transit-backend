@@ -147,6 +147,19 @@ class TripRepository
         return $result;
     }
 
+    /**
+     * Batch 60: running trips (departed or in progress) that still have tickets never scanned, for the expiry sweep.
+     *
+     * @return Collection<int, Trip>
+     */
+    public function findRunningWithValidTickets(): Collection
+    {
+        return Trip::with('fleetRoute')
+            ->whereIn('status', ['departed', 'in-progress'])
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('tickets')->whereColumn('tickets.trip_id', 'trips.trip_id')->where('tickets.status', 'valid'))
+            ->get();
+    }
+
     public function findCurrentByDriver(int $driverCompanyUserId): ?Trip
     {
         return Trip::with(['fleetRoute.route', 'fleetRoute.fleet', 'driver.user', 'conductor.user', 'assignmentRequests'])

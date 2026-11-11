@@ -41,6 +41,7 @@ class TicketService
         private OnsiteDiscountService $onsiteDiscounts,
         private PlaceGroups $places,
         private TripProgressService $progress,
+        private TicketExpiryService $expiry,
     ) {}
 
     /**
@@ -696,6 +697,11 @@ class TicketService
                     'ticket' => ['This ticket is for a different trip and cannot be scanned on your current trip.'],
                 ]);
             }
+
+            // Batch 60 item 1: the bus has reached or passed the passenger's destination, so the ride cannot happen.
+            if ($this->expiry->expireIfPassed($ticket, $activeTrip)) {
+                throw ValidationException::withMessages(['ticket' => [TicketExpiryService::PASSED_MESSAGE]]);
+            }
         }
 
         // ── Date check (secondary guard, uses string comparison for reliability) ─
@@ -948,6 +954,13 @@ class TicketService
                 continue;
             }
 
+            // Batch 60 item 1: same as the single scan.
+            if ($activeTripId !== null && $this->expiry->expireIfPassed($ticket, $activeTrip)) {
+                $results[] = array_merge($base, ['status' => 'expired', 'skipped' => true, 'skip_reason' => TicketExpiryService::PASSED_MESSAGE]);
+
+                continue;
+            }
+
             // Date check — string comparison, avoids Carbon null/timezone issues.
             $tripDateStr = $ticket->trip?->trip_date?->toDateString();
 
@@ -1015,7 +1028,9 @@ class TicketService
             // Mark expired and persist BEFORE setting virtual attributes,
             // so that valid_from / expires_at (which are not real DB columns)
             // are never included in the UPDATE statement.
-            if ($ticket->status === 'valid' && now()->gt($expiresAt)) {
+            // Batch 60 item 1: a ticket of a trip that has ended is expired too (End Trip already does this; this
+            // catches a trip closed some other way).
+            if ($ticket->status === 'valid' && (now()->gt($expiresAt) || $ticket->trip?->status === 'completed')) {
                 $ticket->status = 'expired';
                 $ticket->save();
             }

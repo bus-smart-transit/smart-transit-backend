@@ -128,6 +128,47 @@ class TripProgressService
         return ['running' => true, 'known' => $snap['known'], 'passed_index' => $passed, 'at_index' => $at, 'arrived' => $arrived, 'eta_seconds' => $eta, 'simulated' => $snap['simulated']];
     }
 
+    /**
+     * Batch 60 item 1 (user, 2026-11-11): has the bus reached or gone past this ticket's destination? True when the
+     * Driver has tapped that stop (or a later one), or the bus has arrived at its final stop, or the fresh live position
+     * is past the destination by booking.ticket_expiry_passed_margin_m (GPS noise margin). A pinpoint drop-off (no stop)
+     * uses its stored distance along the route. Without a tap or a fresh on-route position nothing is known: false.
+     */
+    public function destinationReached(Trip $trip, object $ticket): bool
+    {
+        if (! self::isRunning($trip->status)) {
+            return false;
+        }
+        $snap = $this->snapshot($trip);
+        $index = ($ticket->destination_stop_id ?? null) !== null ? ($snap['index_of'][(int) $ticket->destination_stop_id] ?? null) : null;
+        if ($index !== null && $index <= $snap['ack_index']) {
+            return true;
+        }
+        if ($this->live($trip)['arrived']) {
+            return true;
+        }
+        if (! $snap['known']) {
+            return false;
+        }
+        $along = $index !== null ? ($snap['along'][$index] ?? null) : $this->alongFromOutboundM($trip, $ticket->alighting_distance_m ?? null);
+
+        return $along !== null && $snap['bus_along_m'] > $along + (float) config('booking.ticket_expiry_passed_margin_m');
+    }
+
+    /** A stored outbound distance (metres from the route's first stop) as metres along this trip's direction. */
+    private function alongFromOutboundM(Trip $trip, mixed $outboundM): ?float
+    {
+        if ($outboundM === null) {
+            return null;
+        }
+        if ($trip->leg_direction !== 'reverse') {
+            return (float) $outboundM;
+        }
+        $length = $this->restrictions->routeLengthM((int) $trip->fleetRoute->route_id);
+
+        return $length === null ? null : $length - (float) $outboundM;
+    }
+
     private function nextStopName(Trip $trip): ?string
     {
         $snapshot = $this->snapshot($trip);

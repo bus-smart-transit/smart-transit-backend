@@ -38,6 +38,9 @@ return [
     // Batch 49 item 2: a departed trip stays bookable from a stop the bus has not reached (TripProgressService). The bus
     // has left a stop once its live position is this many metres past it (or the Driver tapped it). GPS noise margin.
     'later_stop_passed_margin_m' => (float) env('BOOKING_LATER_STOP_PASSED_MARGIN_M', 30),
+    // Batch 60 item 1: an unscanned ticket expires once the live position is this many metres past its destination
+    // (or the Driver tapped that stop, or the trip ended). Wider than the booking margin: expiring is final.
+    'ticket_expiry_passed_margin_m' => (float) env('BOOKING_TICKET_EXPIRY_PASSED_MARGIN_M', 100),
 
     // Batch 27 Part 2, Task 6: when the Chauffeur sells a ticket to someone boarding between stops, the server
     // uses the bus's own latest accepted position. A fix older than this, or less accurate than this, is not

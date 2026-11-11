@@ -197,6 +197,8 @@ class TripService
     public function completeTrip(int $tripId): object
     {
         $this->tripRepository->updateStatus($tripId, 'completed');
+        // Batch 60 item 1: the leg ended, so its tickets that were never scanned are expired.
+        app(TicketExpiryService::class)->expireForEndedTrip($tripId);
 
         // Batch 17, Issue #4 prevention: a shift left open past trip
         // completion silently blocks every later shift start for that
@@ -272,6 +274,10 @@ class TripService
             // Passenger In: unpaid at completion (leakage list); closed without blame when the trip is cancelled.
             app(PendingBoardingService::class)->closeOpenForTrip($tripId, $newStatus === 'completed' ? PendingBoarding::UNPAID : PendingBoarding::CANCELLED);
             app(ShiftBlockLifecycleService::class)->legEnded($tripId);
+            if ($newStatus === 'completed') {
+                // Batch 60 item 1: same as End Trip. A cancelled trip's tickets go through TripCancellationService instead.
+                app(TicketExpiryService::class)->expireForEndedTrip($tripId);
+            }
         }
 
         // Batch 28 Stage 3, item 6: the paid, unused tickets of a cancelled trip are marked "awaiting choice"
