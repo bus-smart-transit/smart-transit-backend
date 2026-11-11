@@ -203,6 +203,8 @@ class TripAlertService
                 'departure_time' => $trip->departure_time ? substr((string) $trip->departure_time, 0, 5) : null,
                 'status' => $trip->status,
                 'route_name' => $trip->fleetRoute?->route?->route_name,
+                // Batch 60: the Operator's "Track bus" opens this bus on Fleets.
+                'fleet_id' => $fleet?->fleet_id,
                 'plate_number' => $fleet?->plate_number,
                 'body_no' => $fleet?->body_no,
                 'driver' => $person($trip->driver),

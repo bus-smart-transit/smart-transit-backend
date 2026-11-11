@@ -85,6 +85,7 @@ it('lets the Driver alert every Operator and the Company Admin, with where the b
         ->assertJsonPath('data.location_source', 'phone')
         ->assertJsonPath('data.can_cancel', true)
         ->assertJsonPath('data.trip.body_no', 'TA-01')
+        ->assertJsonPath('data.trip.fleet_id', $s['fleet']->fleet_id)
         ->json('data');
 
     foreach (['admin', 'operator'] as $who) {
