@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Mail\TripCancelledRefundMail;
 use App\Models\Ticket;
 use App\Models\TicketResolution;
+use App\Services\Sms\SmsNotifier;
 use App\Services\TicketResolutionService;
 use App\Services\TripCancellationService;
 use Illuminate\Bus\Queueable;
@@ -87,6 +88,10 @@ class RefundCancelledTripTickets implements ShouldQueue
                 accountEmail: (string) $buyer,
                 redirected: (bool) $intercept,
             ));
+            // Batch 64: a short text once the money is back (not while a refund waits for review).
+            if (! $review && $first->payment) {
+                app(SmsNotifier::class)->refundCompleted($first->payment, $amount);
+            }
         } catch (\Throwable $e) {
             Log::warning('Trip cancellation refund email could not be sent.', ['payment_id' => $pairs[0][0]->payment_id ?? null, 'error' => $e->getMessage()]);
         }

@@ -6,6 +6,7 @@ use App\Http\Requests\CreateStaffAccountRequest;
 use App\Mail\PassengerOtpMail;
 use App\Services\AuditLogger;
 use App\Services\FcmService;
+use App\Services\Sms\SmsNotifier;
 use App\Services\StaffService;
 use App\Services\StepUpService;
 use App\Services\UserService;
@@ -203,6 +204,7 @@ class StaffAuthController extends Controller
 
         $name = $user->username ?? explode('@', $user->email)[0];
         Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
+        app(SmsNotifier::class)->loginCode($user, $otp, UserService::loginCodeMinutes()); // Batch 64
 
         return $this->success([
             'email_masked' => $this->maskEmailLocal($user->email),

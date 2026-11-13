@@ -36,6 +36,8 @@ class OnsiteCheckoutRequest extends FormRequest
             'items.*.destination_label' => 'nullable|string|max:255',
             'items.*.passenger_id' => 'nullable|integer|exists:passenger_users,passenger_id',
             'idempotency_key' => 'nullable|string|min:16|max:128',
+            // Batch 64: an optional mobile number for the Ticket ID text.
+            'traveller_contact' => 'nullable|string|max:40',
         ];
     }
 

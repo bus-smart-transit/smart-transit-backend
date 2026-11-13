@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Mail\PassengerOtpMail;
+use App\Models\User;
 use App\Repositories\UserRepository;
+use App\Services\Sms\SmsNotifier;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -91,6 +93,10 @@ class UserService
             // In development/testing with Resend's free tier, sending to non-verified
             // recipients fails. Log the error but continue — OTP is still cached and usable.
             \Log::warning("OTP email send failed for {$recipientEmail}: {$e->getMessage()}");
+        }
+        // Batch 64: the same code by text too (when SMS and login-code texts are switched on).
+        if ($user instanceof User) {
+            app(SmsNotifier::class)->loginCode($user, $otp, self::loginCodeMinutes());
         }
 
         return [
@@ -262,6 +268,8 @@ class UserService
                 // recipients fails. Log the error but continue — OTP is still cached and usable.
                 \Log::warning("OTP email send failed for {$recipientEmail}: {$e->getMessage()}");
             }
+            // Batch 64: the same code by text too (when SMS and login-code texts are switched on).
+            app(SmsNotifier::class)->loginCode($user, $otp, self::loginCodeMinutes());
 
             return [
                 'otp_required' => true,

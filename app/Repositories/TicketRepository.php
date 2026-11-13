@@ -116,6 +116,31 @@ class TicketRepository
      * auto-delay. Guest-checkout tickets (passenger_id null) are excluded
      * since there's no account to push a notification to.
      */
+    /** Batch 64: a payment's tickets with what a text names (route, times, stops) and who bought them. */
+    public function findForPaymentWithTrip(int $paymentId): Collection
+    {
+        return Ticket::with(['trip.fleetRoute.route', 'originStop', 'destinationStop', 'passenger', 'payment'])
+            ->where('payment_id', $paymentId)
+            ->orderBy('ticket_id')
+            ->get();
+    }
+
+    /**
+     * Batch 64: the tickets of a trip in these statuses, with their payment and buyer (one text per purchase).
+     *
+     * @param  list<string>  $statuses
+     * @param  list<int>|null  $ticketIds  only these, when given
+     */
+    public function findForTripWithPayment(int $tripId, array $statuses, ?array $ticketIds = null): Collection
+    {
+        return Ticket::with(['payment', 'passenger'])
+            ->where('trip_id', $tripId)
+            ->whereIn('status', $statuses)
+            ->when($ticketIds !== null, fn ($q) => $q->whereIn('ticket_id', $ticketIds))
+            ->orderBy('ticket_id')
+            ->get();
+    }
+
     public function findActivePassengersForTrip(int $tripId): Collection
     {
         return Ticket::with('passenger.user')

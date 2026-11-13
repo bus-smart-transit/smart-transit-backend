@@ -10,6 +10,7 @@ use App\Repositories\FleetLocationRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripAlertRepository;
 use App\Repositories\TripRepository;
+use App\Services\Sms\SmsNotifier;
 use App\Support\CompanyScope;
 use App\Support\LiveUpdates;
 use Illuminate\Support\Carbon;
@@ -141,6 +142,8 @@ class TripAlertService
             $this->fcm->sendToUser($passenger->user, 'Your bus is delayed', $text, ['type' => 'trip_alert_notice', 'trip_id' => $alert->trip_id]);
             $told++;
         }
+        // Batch 64: by text as well, to every purchase still on the trip (cash buyers who gave a number included).
+        app(SmsNotifier::class)->tellPassengers((int) $alert->trip_id, $text);
 
         $alert = $this->alerts->update($alert, [
             'passengers_told_by_company_user_id' => $operator->companyProfile?->company_user_id,

@@ -10,6 +10,7 @@ use App\Models\TripCancellation;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
+use App\Services\Sms\SmsNotifier;
 use App\Support\LegDistance;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -92,6 +93,8 @@ class TripCancellationService
         ]);
 
         $this->notifyPassengers($trip, $cancellation);
+        // Batch 64: one text per purchase (when cancellation texts are switched on).
+        app(SmsNotifier::class)->tripCancelled($trip, null, self::autoRefundsOnline());
         // 2026-10-26: online tickets are refunded at once (cash tickets keep the choice). After the commit, in the queue,
         // so the Operator's cancel answers at once however many gateway refunds follow.
         if (self::autoRefundsOnline()) {
@@ -120,6 +123,7 @@ class TripCancellationService
             $trip = Trip::with('fleetRoute.route')->find($tripId);
             if ($trip) {
                 $this->notifyPassengers($trip, $cancellation, $group->pluck('ticket_id')->all());
+                app(SmsNotifier::class)->tripCancelled($trip, $group->pluck('ticket_id')->map(fn ($id) => (int) $id)->all(), self::autoRefundsOnline());
             }
             // A late online payment for a cancelled trip is refunded like the others.
             if (self::autoRefundsOnline()) {

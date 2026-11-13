@@ -12,6 +12,7 @@ use App\Repositories\OnsitePaymentRepository;
 use App\Repositories\PassengerRepository;
 use App\Repositories\PaymentRepository;
 use App\Repositories\TripRepository;
+use App\Services\Sms\SmsNotifier;
 use App\Support\BookingFee;
 use App\Support\Database\RlsContext;
 use App\Support\TravellerContact;
@@ -583,6 +584,9 @@ class PaymentService
                     'payment_method' => 'cash',
                     'payment_channel' => 'onsite',
                     'status' => 'paid',
+                    // Batch 64: a mobile number the passenger gave for the Ticket ID text (optional; never an email here).
+                    'traveller_contact' => TravellerContact::isPhone(TravellerContact::normalize($payload['traveller_contact'] ?? null))
+                        ? TravellerContact::normalize($payload['traveller_contact'] ?? null) : null,
                     'is_valid' => true,
                     'idempotency_scope_hash' => $identity['scope_hash'] ?? null,
                     'idempotency_key_hash' => $identity['key_hash'] ?? null,
@@ -643,6 +647,9 @@ class PaymentService
         if (isset($result['idempotency_replay'])) {
             return $this->replayOnsiteCheckout($result['idempotency_replay'], $identity);
         }
+
+        // Batch 64: the Ticket ID by text, when the passenger gave a mobile number.
+        app(SmsNotifier::class)->cashTicket($result['payment']);
 
         return $result;
     }
@@ -783,6 +790,8 @@ class PaymentService
             // The buyer gets the tracking link of each ticket by email (fail-soft and queued: it never delays or undoes
             // the payment, and it carries no QR code).
             $this->trackingMail->sendForPayment($payment);
+            // Batch 64: and a short text with the Ticket IDs (when payment texts are switched on).
+            app(SmsNotifier::class)->paymentConfirmed($payment);
             // Batch 28 Stage 3, item 6: a payment that was still pending when the operator cancelled the trip is confirmed
             // late; its tickets must not be valid for a trip that will not run, so they join those awaiting a choice.
             $this->tripCancellations->flagTicketsOfCancelledTrips($payment->fresh());

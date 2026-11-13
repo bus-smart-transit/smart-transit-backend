@@ -6,6 +6,7 @@ use App\Mail\RefundCompletedMail;
 use App\Models\PassengerUser;
 use App\Models\Payment;
 use App\Models\Ticket;
+use App\Services\Sms\SmsNotifier;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -43,6 +44,8 @@ class RefundCompletedMailer
                 accountEmail: (string) $buyer,
                 redirected: (bool) $intercept,
             ));
+            // Batch 64: and a short text (when refund texts are switched on).
+            app(SmsNotifier::class)->refundCompleted($payment, $amount);
         } catch (\Throwable $e) {
             Log::warning('Refund completed email could not be sent.', ['payment_id' => $payment->payment_id, 'error' => $e->getMessage()]);
         }
