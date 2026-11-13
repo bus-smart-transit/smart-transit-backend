@@ -35,16 +35,38 @@ class IprogSmsGateway
             return ['ok' => false, 'message_id' => null, 'error' => 'IPROG could not be reached: '.mb_substr($e->getMessage(), 0, 180)];
         }
 
-        $body = $response->json() ?? [];
-        $messageId = $body['message_id'] ?? null;
+        $body = $response->json();
+        $body = is_array($body) ? $body : [];
+        $messageId = is_scalar($body['message_id'] ?? null) ? (string) $body['message_id'] : null;
         $bodyStatus = $body['status'] ?? null;
-        $ok = $response->successful() && ($messageId !== null || (int) $bodyStatus === 200);
+        $ok = $response->successful() && ($messageId !== null || (is_numeric($bodyStatus) && (int) $bodyStatus === 200));
 
         return [
             'ok' => $ok,
-            'message_id' => $messageId !== null ? (string) $messageId : null,
-            'error' => $ok ? null : mb_substr('IPROG: '.($body['message'] ?? $response->body() ?: 'HTTP '.$response->status()), 0, 255),
+            'message_id' => $messageId,
+            'error' => $ok ? null : mb_substr('IPROG: '.self::answerText($body['message'] ?? null, $response->body(), $response->status()), 0, 255),
         ];
+    }
+
+    /**
+     * IPROG's refusal as one line of text. Its "message" can be a sentence or a list (for example field errors), so a
+     * list is flattened; with no message, the raw body or the HTTP status is used.
+     */
+    public static function answerText(mixed $message, string $rawBody, int $httpStatus): string
+    {
+        if (is_array($message)) {
+            $parts = [];
+            array_walk_recursive($message, function ($value, $key) use (&$parts) {
+                $parts[] = is_int($key) ? (string) $value : "{$key}: {$value}";
+            });
+
+            return $parts === [] ? 'HTTP '.$httpStatus : implode('; ', $parts);
+        }
+        if (is_scalar($message) && (string) $message !== '') {
+            return (string) $message;
+        }
+
+        return $rawBody !== '' ? $rawBody : 'HTTP '.$httpStatus;
     }
 
     /** The credits left, or null when IPROG cannot be asked. */

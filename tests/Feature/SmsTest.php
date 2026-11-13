@@ -99,6 +99,17 @@ it('records a number it cannot text as skipped, and an IPROG refusal as failed w
     expect($log)->status->toBe('failed')->error->toBe('IPROG: Invalid Token');
 });
 
+// 2026-11-13 (user's first real test): IPROG answered with a list of errors; the text stayed "queued" because the
+// list could not be written as text. Now the list is written out, and nothing unexpected leaves a text queued.
+it('records the IPROG refusal when its message is a list, and never leaves a text queued', function () {
+    smsReply(['status' => 422, 'message' => ['phone_number' => ['The phone number format is invalid.']]]);
+    $log = app(SmsService::class)->send('test', '09171234567', 'x')->refresh();
+    expect($log)->status->toBe('failed')->error->toBe('IPROG: The phone number format is invalid.');
+
+    smsReply(['status' => 200, 'message_id' => ['not', 'text']]);
+    expect(app(SmsService::class)->send('test', '09171234567', 'x')->refresh()->status)->not->toBe('queued');
+});
+
 it('sends every text to the test number when one is set, and never more than one credit', function () {
     config(['sms.intercept_to' => '09998887777']);
     $log = app(SmsService::class)->send('test', '09171234567', str_repeat('a', 300))->refresh();

@@ -29,7 +29,12 @@ class SendSms implements ShouldQueue
             return;
         }
 
-        $result = $gateway->send($log->phone, $log->message);
+        try {
+            $result = $gateway->send($log->phone, $log->message);
+        } catch (\Throwable $e) {
+            // Never leave a text "queued" for ever: whatever went wrong is recorded as the reason.
+            $result = ['ok' => false, 'message_id' => null, 'error' => mb_substr('Could not send: '.$e->getMessage(), 0, 255)];
+        }
         $logs->update($log, $result['ok']
             ? ['status' => SmsLog::SENT, 'provider_message_id' => $result['message_id'], 'sent_at' => now(), 'error' => null]
             : ['status' => SmsLog::FAILED, 'error' => $result['error']]);
