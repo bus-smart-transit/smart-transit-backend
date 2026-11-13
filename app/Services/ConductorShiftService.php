@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Repositories\ConductorShiftLogRepository;
 use App\Repositories\TripRepository;
+use App\Support\AssignmentAcceptance;
 use Illuminate\Validation\ValidationException;
 
 class ConductorShiftService
@@ -13,6 +14,7 @@ class ConductorShiftService
         private TripService $tripService,
         private TripRepository $tripRepository,
         private LegProgressionService $legs,
+        private FleetPairingService $pairing,
     ) {}
 
     public function getStatusForConductor(int $conductorCompanyUserId): array
@@ -43,7 +45,7 @@ class ConductorShiftService
     public function startShiftForConductor(int $conductorCompanyUserId, string $startSource = 'dashboard', float $openingCash = 0.0): object
     {
         $trip = $this->tripService->getTodayAssignedTripForConductor($conductorCompanyUserId);
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'shift' => ['No trip assigned for today. Cannot start shift.'],
             ]);
@@ -70,8 +72,13 @@ class ConductorShiftService
         }
 
         // Batch 29: the assignment must be accepted before a shift can start.
-        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'conductor')) {
+        if ($reason = AssignmentAcceptance::blockedReason($trip, 'conductor')) {
             throw ValidationException::withMessages(['shift' => [$reason]]);
+        }
+
+        // Production test D2 (2026-11-13): the server, not only the website, requires pairing first.
+        if (! $this->pairing->isTripPaired((int) $trip->trip_id)) {
+            throw ValidationException::withMessages(['shift' => [DriverShiftService::PAIR_FIRST_MESSAGE]]);
         }
 
         return $this->conductorShiftLogRepository->create([
@@ -89,7 +96,7 @@ class ConductorShiftService
     public function endShiftForConductor(int $conductorCompanyUserId, string $endSource = 'dashboard', ?float $closingCash = null): object
     {
         $openShift = $this->conductorShiftLogRepository->findOpenByConductor($conductorCompanyUserId);
-        if (!$openShift) {
+        if (! $openShift) {
             throw ValidationException::withMessages([
                 'shift' => ['No active shift found to end.'],
             ]);

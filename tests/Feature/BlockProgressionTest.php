@@ -121,9 +121,9 @@ afterEach(fn () => Carbon::setTestNow());
 
 it('makes one pairing and one PIN per block per day, valid for every leg', function () {
     [$block, $legs, $crew] = bpBlock($this);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     expect(FleetDailyPin::count())->toBe(1);
     $pin = FleetDailyPin::first();
@@ -137,9 +137,9 @@ it('makes one pairing and one PIN per block per day, valid for every leg', funct
 
 it('keeps the driver shift open across the legs and closes it at End Shift, not at each End Trip', function () {
     [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     bpRunLeg($this, $crew['driver'], $legs[0]);
 
@@ -162,9 +162,9 @@ it('keeps the driver shift open across the legs and closes it at End Shift, not 
 it('runs a four-leg block with even (reverse) legs in order on one shift and one pairing', function () {
     [, $legs, $crew] = bpBlock($this, 4);
     expect($legs->pluck('leg_direction')->all())->toBe(['outbound', 'reverse', 'outbound', 'reverse']);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     foreach ($legs as $leg) {
         bpRunLeg($this, $crew['driver'], $leg);
@@ -177,9 +177,9 @@ it('runs a four-leg block with even (reverse) legs in order on one shift and one
 
 it('refuses an out-of-order start: leg N+1 only after leg N is completed or cancelled', function () {
     [, $legs, $crew] = bpBlock($this, 4);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[2]->trip_id}/boarding")
         ->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Finish leg 1'));
@@ -196,9 +196,9 @@ it('refuses an out-of-order start: leg N+1 only after leg N is completed or canc
 
 it('requires the bus at the leg origin terminal from the second leg on, for the driver', function () {
     [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
     config(['shift_blocks.leg_location_rule_enabled' => true]);
 
     // Leg 1 starts wherever the day begins: the rule is for the legs after it.
@@ -221,9 +221,9 @@ it('requires the bus at the leg origin terminal from the second leg on, for the 
 
 it('lets the Operator, as dispatcher, start a leg without the location check but never out of order', function () {
     [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
     config(['shift_blocks.leg_location_rule_enabled' => true]);
 
     $this->actingAs($crew['operator'])->patchJson("/api/operator/trips/{$legs[1]->trip_id}/boarding")->assertStatus(422); // order
@@ -235,9 +235,9 @@ it('lets the Operator, as dispatcher, start a leg without the location check but
 it('does not let a client use another block\'s shift or pairing', function () {
     [, $legsA, $crew] = bpBlock($this, 2, '2026-10-04');
     [, $legsB] = bpBlock($this, 2, '2026-10-05', $crew, $legsA[0]->fleetRoute);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     // Block B's first leg: the driver's shift is on block A.
     $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legsB[0]->trip_id}/boarding")->assertStatus(422);
@@ -251,9 +251,9 @@ it('does not let a client use another block\'s shift or pairing', function () {
 
 it('blocks End Shift while a leg is unfinished, for the driver and the Chauffeur', function () {
     [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
     bpRunLeg($this, $crew['driver'], $legs[0]);
 
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/end')->assertStatus(422)->assertJsonValidationErrors('shift');
@@ -265,9 +265,9 @@ it('blocks End Shift while a leg is unfinished, for the driver and the Chauffeur
 
 it('gives a second day its own pairing and PIN', function () {
     [$blockA, $legsA, $crew] = bpBlock($this, 2, '2026-10-04');
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
     bpRunLeg($this, $crew['driver'], $legsA[0]);
     bpRunLeg($this, $crew['driver'], $legsA[1]);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/end')->assertSuccessful();
@@ -277,9 +277,9 @@ it('gives a second day its own pairing and PIN', function () {
     Carbon::setTestNow(Carbon::parse('2026-10-05 07:00:00', 'Asia/Manila'));
     // Rest Rule aside, day two starts clean: no pairing yet.
     expect(app(FleetPairingService::class)->getPairingStatus($legsB[0]->trip_id)['paired'])->toBeFalse();
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
 
     expect(FleetDailyPin::count())->toBe(2);
     expect(FleetDailyPin::pluck('shift_block_id')->sort()->values()->all())->toBe([$blockA->shift_block_id, $blockB->shift_block_id]);
@@ -302,9 +302,9 @@ it('keeps hand-off between blocks working: the incoming driver is paired for all
     expect($blockB->fresh()->status)->toBe('in_progress');
 
     Carbon::setTestNow(Carbon::parse('2026-10-05 07:00:00', 'Asia/Manila'));
+    bpPair($this, $crewB);
     $this->actingAs($crewB['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crewB['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crewB);
 
     foreach ($legsB as $leg) {
         expect(app(FleetPairingService::class)->getPairingStatus($leg->trip_id)['paired'])->toBeTrue();
@@ -314,9 +314,9 @@ it('keeps hand-off between blocks working: the incoming driver is paired for all
 
 it('resets pairing for the incoming driver when the Operator replaces the driver mid-block', function () {
     [$block, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
     $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, $crew);
     bpRunLeg($this, $crew['driver'], $legs[0]);
 
     $replacement = bpStaff('driver');
@@ -346,9 +346,9 @@ it('keeps a standalone trip as before: End Trip closes the driver shift, and a d
     $fr = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '05:00', 'end_time' => '22:00', 'status' => 'active']);
     $trip = Trip::create(['fleet_route_id' => $fr->fleet_route_id, 'company_user_id' => bpCid($operator), 'trip_date' => '2026-10-04', 'departure_time' => '08:00', 'trip_type' => 'one_way', 'leg_direction' => 'outbound', 'status' => 'scheduled', 'driver_id' => bpCid($driver), 'conductor_id' => bpCid($conductor), 'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), 'current_seated_capacity' => 0, 'current_standing_capacity' => 0, 'total_occupancy' => 0]);
 
+    bpPair($this, compact('driver', 'conductor'));
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
-    bpPair($this, compact('driver', 'conductor'));
     expect(FleetDailyPin::first()->shift_block_id)->toBeNull();
 
     $this->actingAs($driver)->postJson('/api/driver/shift/end')->assertForbidden();

@@ -61,7 +61,26 @@ function makeShiftFleetRoute(): FleetRoute
     ]);
 }
 
-function makeAssignedDriverTrip(User $driver, string $status = 'scheduled'): Trip
+function makeAssignedDriverTrip(User $driver, string $status = 'scheduled', bool $paired = true): Trip
+{
+    $trip = makeAssignedDriverTripUnpaired($driver, $status);
+    if ($paired) {
+        // Production test D2 (2026-11-13): Start Shift needs the crew paired for the trip first.
+        FleetDailyPin::create([
+            'trip_id' => $trip->trip_id,
+            'driver_id' => $driver->companyProfile->company_user_id,
+            'pin_code' => '123456',
+            'pin_date' => now()->toDateString(),
+            'paired_at' => now(),
+            'driver_verified_at' => now(),
+            'conductor_verified_at' => now(),
+        ]);
+    }
+
+    return $trip;
+}
+
+function makeAssignedDriverTripUnpaired(User $driver, string $status = 'scheduled'): Trip
 {
     $fleetRoute = makeShiftFleetRoute();
 
@@ -143,7 +162,7 @@ test('driver current trip prefers the open shift trip when another same-day trip
     // /trips/current is gated by the 'paired' middleware — establish a
     // completed pairing for tripA (the shift's actual trip) so the request
     // isn't rejected with 423 regardless of which trip gets resolved.
-    FleetDailyPin::create([
+    FleetDailyPin::updateOrCreate(['trip_id' => $tripA->trip_id], [
         'trip_id' => $tripA->trip_id,
         'driver_id' => $driver->companyProfile->company_user_id,
         'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: the assignment is accepted
@@ -256,4 +275,15 @@ test('completing a trip auto-closes any still-open shift for it', function () {
         'trip_id' => $trip->trip_id,
         'end_source' => 'trip_status_change',
     ]);
+});
+
+test('driver cannot start a shift before pairing with the crew partner', function () {
+    $driver = makeShiftStaffUser('driver');
+    makeAssignedDriverTripUnpaired($driver, 'scheduled');
+
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')
+        ->assertStatus(422)
+        ->assertJsonPath('errors.shift.0', 'Pair with your crew partner before starting your shift.');
+
+    $this->assertDatabaseCount('driver_shift_logs', 0);
 });

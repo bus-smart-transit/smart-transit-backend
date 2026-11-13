@@ -60,14 +60,14 @@ function ttFixture(): array
     return compact('operator', 'driver', 'conductor', 'trip', 'stops');
 }
 
-/** Both shifts open and the crew paired, at 07:00 (pairing is open from 07:00 for an 08:00 trip). */
+/** The crew paired and both shifts open, at 07:00 (pairing is open from 07:00 for an 08:00 trip). Pairing comes first (D2). */
 function ttReady($test, array $f): void
 {
     ttAt('07:00');
-    $test->actingAs($f['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
-    $test->actingAs($f['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
     $token = $test->actingAs($f['driver'])->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
     $test->actingAs($f['conductor'])->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
+    $test->actingAs($f['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    $test->actingAs($f['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
 }
 
 afterEach(fn () => Carbon::setTestNow());

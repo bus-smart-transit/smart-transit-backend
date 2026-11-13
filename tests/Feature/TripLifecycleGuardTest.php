@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Fleet;
+use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\RouteStop;
@@ -188,6 +189,8 @@ test('End Shift is refused until every leg of the shift block is completed or ca
         ]);
     }
 
+    // Production test D2 (2026-11-13): Start Shift needs the crew paired first.
+    FleetDailyPin::create(['trip_id' => $legs[0]->trip_id, 'shift_block_id' => $block->shift_block_id, 'pin_code' => '123456', 'pin_date' => now()->toDateString(), 'paired_at' => now(), 'driver_verified_at' => now(), 'conductor_verified_at' => now()]);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
 
     $this->actingAs($conductor)->postJson('/api/conductor/shift/end')
@@ -235,6 +238,8 @@ test('a Chauffeur shift on a shift-block leg stays open when a leg completes', f
         'driver_accepted_at' => now(), 'conductor_accepted_at' => now(), // Batch 29: accepted
     ]);
 
+    // Production test D2 (2026-11-13): Start Shift needs the crew paired first.
+    FleetDailyPin::create(['trip_id' => $leg->trip_id, 'shift_block_id' => $block->shift_block_id, 'pin_code' => '123456', 'pin_date' => now()->toDateString(), 'paired_at' => now(), 'driver_verified_at' => now(), 'conductor_verified_at' => now()]);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
     $this->actingAs($operator)->patchJson("/api/operator/trips/{$leg->trip_id}/complete")->assertSuccessful();
 

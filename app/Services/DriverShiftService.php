@@ -8,10 +8,14 @@ use Illuminate\Validation\ValidationException;
 
 class DriverShiftService
 {
+    /** Shown when Start Shift is pressed before the Driver and Chauffeur have paired for the trip. */
+    public const PAIR_FIRST_MESSAGE = 'Pair with your crew partner before starting your shift.';
+
     public function __construct(
         private DriverShiftLogRepository $driverShiftLogRepository,
         private TripService $tripService,
         private LegProgressionService $legs,
+        private FleetPairingService $pairing,
     ) {}
 
     public function getStatusForDriver(int $driverCompanyUserId): array
@@ -52,7 +56,7 @@ class DriverShiftService
     public function startShiftForDriver(int $driverCompanyUserId, string $startSource = 'dashboard'): object
     {
         $trip = $this->tripService->getTodayAssignedTripForDriver($driverCompanyUserId);
-        if (!$trip) {
+        if (! $trip) {
             throw ValidationException::withMessages([
                 'shift' => ['No trip assigned for today. Cannot start shift.'],
             ]);
@@ -82,6 +86,11 @@ class DriverShiftService
         // Batch 29: the assignment must be accepted before a shift can start.
         if ($reason = AssignmentAcceptance::blockedReason($trip, 'driver')) {
             throw ValidationException::withMessages(['shift' => [$reason]]);
+        }
+
+        // Production test D2 (2026-11-13): the server, not only the website, requires pairing first.
+        if (! $this->pairing->isTripPaired((int) $trip->trip_id)) {
+            throw ValidationException::withMessages(['shift' => [self::PAIR_FIRST_MESSAGE]]);
         }
 
         return $this->driverShiftLogRepository->create([

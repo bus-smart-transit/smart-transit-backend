@@ -91,13 +91,15 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     $this->actingAs($driver)->patchJson("/api/driver/assignments/block-$blockId/accept")->assertSuccessful();
     $this->actingAs($conductor)->patchJson("/api/conductor/assignments/block-$blockId/accept")->assertSuccessful();
 
-    // ------------------------------------------------------------------ 3. start with an opening cash, pair, board
+    // ------------------------------------------------------------------ 3. pair, start with an opening cash, board
+    // Production test D2 (2026-11-13): Start Shift needs the crew paired first.
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertUnprocessable()->assertJsonPath('errors.shift.0', 'Pair with your crew partner before starting your shift.');
+    $token = $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
+    $this->actingAs($conductor)->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start', ['opening_cash' => -1])->assertUnprocessable();
     $shift = $this->actingAs($conductor)->postJson('/api/conductor/shift/start', ['opening_cash' => 100])->assertSuccessful()->json('data.shift');
     expect($shift['opening_cash'])->toEqual(100);
     $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
-    $token = $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
-    $this->actingAs($conductor)->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
     // Phase A: Start Boarding opens 30 minutes before the 08:00 departure.
     Carbon::setTestNow(Carbon::parse('2026-10-05 07:30:00', 'Asia/Manila'));
     $this->actingAs($driver)->patchJson("/api/driver/trips/{$legs[0]->trip_id}/boarding")->assertSuccessful();

@@ -2,6 +2,7 @@
 
 use App\Models\FareRule;
 use App\Models\Fleet;
+use App\Models\FleetDailyPin;
 use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Models\ShiftBlock;
@@ -251,10 +252,14 @@ it('requires the assignment to be accepted before a shift starts, for the Driver
     expect($this->actingAs($driver)->postJson('/api/driver/shift/start')->json('errors.shift.0'))->toContain('Accept your assignment first');
 
     $this->actingAs($driver)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
-    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
     // The Chauffeur's acceptance is their own: the Driver's does not start the Chauffeur's shift.
-    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertUnprocessable();
+    expect($this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertUnprocessable()->json('errors.shift.0'))->toContain('Accept your assignment first');
     $this->actingAs($conductor)->patchJson("/api/conductor/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    // Production test D2 (2026-11-13): Start Shift needs the crew paired first.
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertUnprocessable()->assertJsonPath('errors.shift.0', 'Pair with your crew partner before starting your shift.');
+    $token = $this->actingAs($driver)->getJson('/api/driver/pairing-token')->assertSuccessful()->json('data.token');
+    $this->actingAs($conductor)->postJson('/api/conductor/pair', ['token' => $token])->assertSuccessful();
+    $this->actingAs($driver)->postJson('/api/driver/shift/start')->assertSuccessful();
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
 });
 
@@ -281,6 +286,8 @@ it('lets a replacement accept the legs still to run after earlier legs finished,
     $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertUnprocessable(); // not accepted yet
     expect(scCard($this, $replacement, $block, 'driver')['can_respond'])->toBeTrue();
     $this->actingAs($replacement)->patchJson("/api/driver/assignments/block-{$block->shift_block_id}/accept")->assertSuccessful();
+    // Production test D2 (2026-11-13): Start Shift needs the crew paired first.
+    FleetDailyPin::create(['trip_id' => Trip::where('shift_block_id', $block->shift_block_id)->orderBy('departure_time')->value('trip_id'), 'shift_block_id' => $block->shift_block_id, 'pin_code' => '123456', 'pin_date' => now()->toDateString(), 'paired_at' => now(), 'driver_verified_at' => now(), 'conductor_verified_at' => now()]);
     $this->actingAs($replacement)->postJson('/api/driver/shift/start')->assertSuccessful();
 
     // A leg under way: nobody can still accept (or decline) it.
