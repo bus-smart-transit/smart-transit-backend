@@ -23,6 +23,12 @@ class UserRepository
         ]);
     }
 
+    /** Batch 67: "Send me text messages" on or off. */
+    public function setSmsOptIn(User $user, bool $enabled): void
+    {
+        $user->forceFill(['sms_opt_in' => $enabled])->save();
+    }
+
     public function findByField(string $field, mixed $value): ?User
     {
         return User::where($field, $value)->first();

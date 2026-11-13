@@ -36,6 +36,7 @@ use App\Http\Controllers\SignInController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StaffDirectoryController;
 use App\Http\Controllers\StopController;
+use App\Http\Controllers\TextMessagesController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketResolutionController;
 use App\Http\Controllers\TrackingController;
@@ -108,6 +109,10 @@ Route::patch('operator/alerts/{alertId}/handle', [TripAlertController::class, 'h
     ->middleware(['auth:sanctum', 'role:operator', 'throttle:30,1,operator-alerts-handle']);
 Route::post('operator/alerts/{alertId}/tell-passengers', [TripAlertController::class, 'tellPassengers'])->whereNumber('alertId')
     ->middleware(['auth:sanctum', 'role:operator', 'throttle:10,1,operator-alerts-tell']);
+
+// Batch 67 (user, 2026-11-13): the signed-in person turns "Send me text messages" on or off (off until they do).
+Route::patch('account/text-messages', [TextMessagesController::class, 'update'])
+    ->middleware(['auth:sanctum', 'role:passenger,driver,conductor,operator', 'throttle:20,1,account-text-messages']);
 
 // Step-up re-auth (requires an active Sanctum session — any staff role)
 Route::post('step-up/initiate', [StaffAuthController::class, 'stepUpInitiate'])

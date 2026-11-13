@@ -40,9 +40,16 @@ function smsReply(array $body): void
     $GLOBALS['smsReply'] = $body;
 }
 
-function smsPassenger(string $phone = '+639171234567'): User
+/** Batch 67: a crew member (staff profile) whose account turned text messages on, or not. */
+function smsCrew(string $phone, bool $optIn = true): object
 {
-    $user = User::create(['username' => 'sms'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => 'passenger']);
+    return (object) ['phone_num' => $phone, 'user' => (object) ['sms_opt_in' => $optIn]];
+}
+
+/** Batch 67: a passenger who turned text messages on (pass false for one who did not). */
+function smsPassenger(string $phone = '+639171234567', bool $optIn = true): User
+{
+    $user = User::create(['username' => 'sms'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => 'passenger', 'sms_opt_in' => $optIn]);
     PassengerUser::create(['passenger_uuid' => (string) Str::uuid(), 'user_id' => $user->user_id, 'name' => 'Sam Sample', 'phone_num' => $phone, 'address' => 'x', 'birthdate' => '2000-01-01']);
 
     return $user->fresh();
@@ -131,6 +138,7 @@ it('texts the buyer the Ticket IDs when an online payment is confirmed', functio
 });
 
 it('texts a cash passenger who gave a mobile number, and nobody when none was given', function () {
+    config(['sms.events.cash_ticket' => true]); // Batch 67: off by default for now (no phone field on the cash form)
     $given = smsPurchase(null, ['payment_method' => 'cash', 'payment_channel' => 'onsite', 'traveller_contact' => '+639175550000']);
     $none = smsPurchase(null, ['payment_method' => 'cash', 'payment_channel' => 'onsite']);
     app(SmsNotifier::class)->cashTicket($given['pay']);
@@ -169,7 +177,7 @@ it('reads the credits left and writes the local number IPROG documents', functio
 it('texts the Driver a new trip assignment through the Operator\'s assign endpoint, and no passenger', function () {
     $company = Company::create(['company_name' => 'Sms Co '.Str::random(4)]);
     $staff = function (string $role, string $phone) use ($company) {
-        $user = User::create(['username' => 'sc'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
+        $user = User::create(['username' => 'sc'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role, 'sms_opt_in' => true]);
         StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' Sample', 'phone_num' => $phone, 'address' => 'x', 'company_id' => $company->company_id, 'is_company_admin' => $role === 'operator', 'is_available' => true]);
 
         return $user->fresh();
@@ -192,10 +200,10 @@ it('texts the Driver a new trip assignment through the Operator\'s assign endpoi
 // Batch 66 (user, 2026-11-13): sent at once, but one text per crew member per Manila day; the next day texts again.
 it('texts a crew member at once, then skips more assignments that day at no cost, and texts again the next day', function () {
     Carbon::setTestNow(Carbon::parse('2026-11-13 09:00', 'Asia/Manila'));
-    $crew = (object) ['phone_num' => '+639176662222'];
+    $crew = smsCrew('+639176662222');
     app(SmsNotifier::class)->crewBlockAssigned($crew, 8);
     app(SmsNotifier::class)->crewBlockAssigned($crew, 9);
-    app(SmsNotifier::class)->crewBlockAssigned((object) ['phone_num' => '+639170001234'], 9); // another crew member
+    app(SmsNotifier::class)->crewBlockAssigned(smsCrew('+639170001234'), 9); // another crew member
 
     expect(SmsLog::where('status', 'sent')->pluck('phone')->all())->toBe(['+639176662222', '+639170001234'])
         ->and(SmsLog::where('status', 'skipped')->sole()->error)->toBe('Already texted today.');
@@ -213,8 +221,42 @@ it('texts a crew member at once, then skips more assignments that day at no cost
 
 it('sends one text per assignment when the once-a-day limit is turned off', function () {
     config(['sms.once_per_day' => []]);
-    $crew = (object) ['phone_num' => '+639176662222'];
+    $crew = smsCrew('+639176662222');
     app(SmsNotifier::class)->crewBlockAssigned($crew, 8);
     app(SmsNotifier::class)->crewBlockAssigned($crew, 9);
     expect(SmsLog::where('status', 'sent')->count())->toBe(2);
+});
+
+// Batch 67 (user, 2026-11-13): nobody is texted until they turn "Send me text messages" on (off for every account).
+it('texts nobody who has not turned text messages on: login codes, purchases, crew assignments', function () {
+    $passenger = smsPassenger('+639171112222', false);
+    app(SmsNotifier::class)->loginCode($passenger, '123456', 3);
+    $p = smsPurchase($passenger);
+    app(SmsNotifier::class)->paymentConfirmed($p['pay']);
+    app(SmsNotifier::class)->refundCompleted($p['pay'], 30);
+    expect(app(SmsNotifier::class)->tellPassengers((int) $p['trip']->trip_id, 'Late'))->toBe(0);
+    app(SmsNotifier::class)->crewBlockAssigned(smsCrew('+639173334444', false), 5);
+
+    expect(SmsLog::count())->toBe(0);
+    Http::assertNothingSent();
+});
+
+it('never texts a number typed at checkout without an account that said yes', function () {
+    $p = smsPurchase(null, ['traveller_contact' => '+639175556666']);
+    app(SmsNotifier::class)->paymentConfirmed($p['pay']);
+    expect(SmsLog::count())->toBe(0);
+});
+
+it('lets each person turn text messages on and off, and shows it on their profile', function () {
+    $passenger = smsPassenger('+639171112222', false);
+    expect($passenger->sms_opt_in)->toBeFalse();
+
+    $this->actingAs($passenger)->patchJson('/api/account/text-messages', ['enabled' => true])
+        ->assertOk()->assertJsonPath('data.sms_opt_in', true);
+    expect($passenger->fresh()->sms_opt_in)->toBeTrue();
+    $this->actingAs($passenger)->getJson('/api/passengers/profile')->assertJsonPath('data.sms_opt_in', true);
+
+    app('auth')->forgetGuards();
+    $this->actingAs($passenger->fresh())->patchJson('/api/account/text-messages', ['enabled' => false])->assertOk()->assertJsonPath('data.sms_opt_in', false);
+    $this->actingAs($passenger->fresh())->patchJson('/api/account/text-messages', ['enabled' => 'maybe'])->assertUnprocessable();
 });

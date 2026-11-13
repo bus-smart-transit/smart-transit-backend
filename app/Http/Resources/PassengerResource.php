@@ -23,10 +23,12 @@ class PassengerResource extends JsonResource
             'email' => $this->user?->email,
             'username' => $this->user?->username,
             'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
+            'sms_opt_in' => (bool) ($this->user?->sms_opt_in ?? false), // Batch 67
             'user' => [
                 'email' => $this->user?->email,
                 'username' => $this->user?->username,
                 'two_factor_enabled' => (bool) ($this->user?->two_factor_enabled ?? false),
+                'sms_opt_in' => (bool) ($this->user?->sms_opt_in ?? false),
             ],
             'created_at' => $this->created_at,
         ];

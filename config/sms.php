@@ -34,7 +34,8 @@ return [
         'refund_completed' => (bool) env('SMS_REFUND_COMPLETED', true),
         'trip_cancelled' => (bool) env('SMS_TRIP_CANCELLED', true),
         'tell_passengers' => (bool) env('SMS_TELL_PASSENGERS', true),
-        'cash_ticket' => (bool) env('SMS_CASH_TICKET', true),
+        // Batch 67 (user): off for now (a thermal printer may give the Ticket ID instead); the form has no phone field.
+        'cash_ticket' => (bool) env('SMS_CASH_TICKET', false),
         // Batch 66: a Driver or Chauffeur is given a trip or a shift block (one text per block, not per leg).
         'crew_assigned' => (bool) env('SMS_CREW_ASSIGNED', true),
         // php artisan sms test <phone>, for checking the setup by hand.

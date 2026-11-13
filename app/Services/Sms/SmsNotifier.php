@@ -29,6 +29,9 @@ class SmsNotifier
     public function loginCode(User $user, string $code, int $minutes): void
     {
         $this->safely(function () use ($user, $code, $minutes) {
+            if (! TextMessagePreference::allows($user)) {
+                return;
+            }
             $phone = $user->passengerProfile?->phone_num ?? $user->companyProfile?->phone_num;
             $this->sms->send('login_code', $phone, "Your login code is {$code}. It works for {$minutes} minutes. Do not share it with anyone.", 'User', (int) $user->user_id);
         });
@@ -45,10 +48,14 @@ class SmsNotifier
             if ($tickets->isEmpty()) {
                 return;
             }
+            $phone = $this->buyerPhone($payment, $tickets);
+            if ($phone === null) {
+                return;
+            }
             $count = $tickets->count();
             $this->sms->send(
                 'payment_confirmed',
-                $this->buyerPhone($payment, $tickets),
+                $phone,
                 "Paid. {$count} ".($count === 1 ? 'ticket' : 'tickets').' '.$this->tripLine($tickets->first()).'. Ticket ID: '.$this->ids($tickets).'. Show the QR when boarding.',
                 'Payment',
                 (int) $payment->payment_id,
@@ -85,10 +92,13 @@ class SmsNotifier
                 return;
             }
             $wallet = ['gcash' => 'GCash', 'maya' => 'Maya'][$payment->payment_channel] ?? 'e-wallet';
-            $tickets = $this->tickets->findForPaymentWithTrip((int) $payment->payment_id);
+            $phone = $this->buyerPhone($payment, $this->tickets->findForPaymentWithTrip((int) $payment->payment_id));
+            if ($phone === null) {
+                return;
+            }
             $this->sms->send(
                 'refund_completed',
-                $this->buyerPhone($payment, $tickets),
+                $phone,
                 'PHP '.number_format($amount, 2)." was refunded to your {$wallet}. Ref ".($payment->transaction_reference ?? '').'.',
                 'Payment',
                 (int) $payment->payment_id,
@@ -118,7 +128,10 @@ class SmsNotifier
                 $next = $payment->payment_method === 'online' && $onlineRefundedAutomatically
                     ? 'Your fare will be refunded to your e-wallet.'
                     : 'Open the app or ask at the terminal to rebook or get a refund.';
-                $this->sms->send('trip_cancelled', $this->buyerPhone($payment, $group), "Your trip {$line} was cancelled. {$next}", 'Trip', (int) $trip->trip_id);
+                $phone = $this->buyerPhone($payment, $group);
+                if ($phone !== null) {
+                    $this->sms->send('trip_cancelled', $phone, "Your trip {$line} was cancelled. {$next}", 'Trip', (int) $trip->trip_id);
+                }
             }
         });
     }
@@ -133,7 +146,8 @@ class SmsNotifier
             }
             foreach ($this->tickets->findForTripWithPayment($tripId, ['valid', 'boarded'])->groupBy('payment_id') as $group) {
                 $payment = $group->first()->payment;
-                if ($payment && $this->sms->send('tell_passengers', $this->buyerPhone($payment, $group), $notice, 'Trip', $tripId)?->phone) {
+                $phone = $payment ? $this->buyerPhone($payment, $group) : null;
+                if ($phone !== null && $this->sms->send('tell_passengers', $phone, $notice, 'Trip', $tripId)?->phone) {
                     $sent++;
                 }
             }
@@ -142,15 +156,15 @@ class SmsNotifier
         return $sent;
     }
 
-    /** The buyer's mobile: the passenger account's phone, else the checkout contact when it is a mobile number. */
+    /**
+     * The buyer's mobile: the passenger account's phone, and only when that person turned text messages on (Batch 67).
+     * A purchase without an account, or a contact typed at checkout, is never texted.
+     */
     private function buyerPhone(Payment $payment, Collection $tickets): ?string
     {
-        $accountPhone = $tickets->first()?->passenger?->phone_num;
-        if ($accountPhone) {
-            return $accountPhone;
-        }
+        $passenger = $tickets->first()?->passenger;
 
-        return TravellerContact::isPhone($payment->traveller_contact) ? $payment->traveller_contact : null;
+        return TextMessagePreference::allows($passenger?->user) ? $passenger?->phone_num : null;
     }
 
     private function tripLine(object $ticket): string
@@ -177,8 +191,12 @@ class SmsNotifier
                 return;
             }
             $relation = $role === 'driver' ? 'driver' : 'conductor';
-            $trip->loadMissing($relation);
-            $this->sms->send('crew_assigned', $trip->{$relation}?->phone_num, self::CREW_ASSIGNED_MESSAGE, 'Trip', (int) $trip->trip_id);
+            $trip->loadMissing($relation.'.user');
+            $crew = $trip->{$relation};
+            if (! TextMessagePreference::allows($crew?->user)) {
+                return;
+            }
+            $this->sms->send('crew_assigned', $crew->phone_num, self::CREW_ASSIGNED_MESSAGE, 'Trip', (int) $trip->trip_id);
         });
     }
 
@@ -186,10 +204,10 @@ class SmsNotifier
     public function crewBlockAssigned(?object $staff, int $blockId): void
     {
         $this->safely(function () use ($staff, $blockId) {
-            if (! SmsService::enabledFor('crew_assigned')) {
+            if (! SmsService::enabledFor('crew_assigned') || ! TextMessagePreference::allows($staff?->user)) {
                 return;
             }
-            $this->sms->send('crew_assigned', $staff?->phone_num, self::CREW_ASSIGNED_MESSAGE, 'ShiftBlock', $blockId);
+            $this->sms->send('crew_assigned', $staff->phone_num, self::CREW_ASSIGNED_MESSAGE, 'ShiftBlock', $blockId);
         });
     }
 

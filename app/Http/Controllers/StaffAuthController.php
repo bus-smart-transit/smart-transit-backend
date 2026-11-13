@@ -70,6 +70,8 @@ class StaffAuthController extends Controller
         $profile = $this->staffService->getStaffProfile($request->user());
         // Batch 46: whether to offer the one-time "change the password your Operator gave you" step.
         $profile?->setAttribute('offer_password_change', StaffService::offersPasswordChange($request->user()));
+        // Batch 67: whether this person said yes to text messages (Account page switch).
+        $profile?->setAttribute('sms_opt_in', (bool) $request->user()->sms_opt_in);
 
         return $this->success($profile, 'Profile retrieved successfully');
     }

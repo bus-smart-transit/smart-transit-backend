@@ -62,6 +62,7 @@ class User extends Authenticatable
         'password',
         'role',
         'two_factor_enabled',
+        'sms_opt_in', // Batch 67: the person said yes to text messages (TextMessagePreference)
         'fcm_token',
         // Batch 46: an Operator turned this crew member off (null = active); the first-sign-in password offer was answered.
         'deactivated_at',
@@ -82,6 +83,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_enabled' => 'boolean',
+            'sms_opt_in' => 'boolean',
             // 2026-11-05: passenger account deletion (AccountDeletionService), stored in UTC.
             'deletion_requested_at' => UtcDateTime::class,
             'anonymized_at' => UtcDateTime::class,

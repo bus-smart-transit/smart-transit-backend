@@ -119,7 +119,7 @@ class TicketRepository
     /** Batch 64: a payment's tickets with what a text names (route, times, stops) and who bought them. */
     public function findForPaymentWithTrip(int $paymentId): Collection
     {
-        return Ticket::with(['trip.fleetRoute.route', 'originStop', 'destinationStop', 'passenger', 'payment'])
+        return Ticket::with(['trip.fleetRoute.route', 'originStop', 'destinationStop', 'passenger.user', 'payment'])
             ->where('payment_id', $paymentId)
             ->orderBy('ticket_id')
             ->get();
@@ -133,7 +133,7 @@ class TicketRepository
      */
     public function findForTripWithPayment(int $tripId, array $statuses, ?array $ticketIds = null): Collection
     {
-        return Ticket::with(['payment', 'passenger'])
+        return Ticket::with(['payment', 'passenger.user'])
             ->where('trip_id', $tripId)
             ->whereIn('status', $statuses)
             ->when($ticketIds !== null, fn ($q) => $q->whereIn('ticket_id', $ticketIds))
