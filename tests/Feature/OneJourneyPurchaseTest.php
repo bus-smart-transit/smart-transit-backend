@@ -209,7 +209,7 @@ it('moves a trip to another bus before it starts, updates its tickets and tells 
     expect(Ticket::where('trip_id', $f['backTrip']->trip_id)->first()->fleet_route_id)->toBe($spareRoute->fleet_route_id);
     // Read live: the passenger now sees the unlabelled state for the moved bus, and the other bus is untouched.
     $tickets = collect($this->actingAs($pax->user)->getJson('/api/passengers/tickets')->json('data.data'))->keyBy('trip_id');
-    expect($tickets[$f['backTrip']->trip_id]['bus_label'])->toBeNull()->and($tickets[$f['outTrip']->trip_id]['bus_label'])->toBe('Co A - 101');
+    expect($tickets[$f['backTrip']->trip_id]['bus_label'])->toBeNull()->and($tickets[$f['outTrip']->trip_id]['bus_label'])->toBe('Co A / 101');
 
     // Only before the trip starts, and only onto a bus of the same route.
     $f['backTrip']->update(['status' => 'boarding']);

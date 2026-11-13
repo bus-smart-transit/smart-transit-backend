@@ -223,7 +223,7 @@ it('breaks revenue down by route, bus, trip and hour from the stored amounts', f
 
     expect(collect($data['by_route'])->mapWithKeys(fn ($r) => [$r['route_name'] => $r['gross']])->all())->toEqual(['Route B' => 200.0, 'Route A' => 150.0]);
     expect(collect($data['by_bus'])->mapWithKeys(fn ($r) => [$r['plate_number'] => $r['gross']])->all())->toEqual(['BB-1' => 200.0, 'AA-1' => 150.0]);
-    expect(collect($data['by_bus'])->firstWhere('plate_number', 'AA-1')['bus_label'])->toStartWith('Test Lines - B-');
+    expect(collect($data['by_bus'])->firstWhere('plate_number', 'AA-1')['bus_label'])->toStartWith('Test Lines / B-'); // Batch 62: "company / body no"
     expect($data['by_trip'])->toHaveCount(2);
     expect($data['by_hour'])->toHaveCount(24);
     expect($data['by_hour'][8])->toMatchArray(['hour' => 8, 'tickets' => 2, 'gross' => 150.0]);

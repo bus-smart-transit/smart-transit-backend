@@ -56,8 +56,8 @@ class FleetLocationController extends Controller
 
     private function presentBus(object $row, Request $request): object
     {
-        $row->bus_label = BusLabel::compose($row->bus_company_name ?? null, $row->body_no ?? null);
-        unset($row->bus_company_name, $row->body_no);
+        $row->bus_label = BusLabel::compose($row->bus_company_name ?? null, $row->body_no ?? null, $row->owner_company_name ?? null);
+        unset($row->bus_company_name, $row->body_no, $row->owner_company_name);
         // Batch 49 item 4: a position from the Super Admin's GPS simulator; every map labels it "Simulated".
         $row->is_simulated = (bool) ($row->is_simulated ?? false);
 

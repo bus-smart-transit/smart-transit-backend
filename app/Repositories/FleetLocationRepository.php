@@ -262,6 +262,7 @@ class FleetLocationRepository
                 f.plate_number,
                 f.bus_company_name,
                 f.body_no,
+                c.company_name AS owner_company_name,
                 f.fleet_type,
                 t.status AS trip_status,
                 t.leg_direction,
@@ -273,6 +274,7 @@ class FleetLocationRepository
                 r.destination
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id
+            LEFT JOIN companies c ON c.company_id = f.company_id
             LEFT JOIN trips t ON t.trip_id = fl.trip_id
             LEFT JOIN fleets_routes fr ON fr.fleet_route_id = t.fleet_route_id
             LEFT JOIN routes r ON r.route_id = fr.route_id
@@ -294,9 +296,11 @@ class FleetLocationRepository
                 ) AS distance_meters,
                 f.plate_number,
                 f.bus_company_name,
-                f.body_no
+                f.body_no,
+                c.company_name AS owner_company_name
             FROM fleet_locations fl
             JOIN fleets f ON f.fleet_id = fl.fleet_id
+            LEFT JOIN companies c ON c.company_id = f.company_id
             LEFT JOIN trips t ON t.trip_id = fl.trip_id
             WHERE ST_DWithin(
                 fl.location,

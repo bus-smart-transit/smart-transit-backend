@@ -63,20 +63,28 @@ function blFixture(array $fleetLabel = []): array
 beforeEach(fn () => Carbon::setTestNow(Carbon::parse('2026-10-04 07:00:00', 'Asia/Manila')));
 afterEach(fn () => Carbon::setTestNow());
 
-it('builds the label only when both parts exist, and never from the plate', function () {
-    expect(BusLabel::compose('Davao Bus', 'B-014'))->toBe('Davao Bus - B-014');
-    expect(BusLabel::compose('  Davao Bus ', ' 14 '))->toBe('Davao Bus - 14');
+// Batch 62 (user, 2026-11-13): "Bus company / Body no", e.g. "Davao Metro Shuttle / DMS - 000001". The company is the
+// bus's own company name, else the company that owns the bus; without a body number there is no label; never the plate.
+it('builds "company / body no", falls back to the owning company, needs the body number, and never uses the plate', function () {
+    expect(BusLabel::compose('Davao Bus', 'B-014'))->toBe('Davao Bus / B-014');
+    expect(BusLabel::compose('  Davao Bus ', ' 14 '))->toBe('Davao Bus / 14');
+    expect(BusLabel::compose(null, 'DMS - 000001', 'Davao Metro Shuttle'))->toBe('Davao Metro Shuttle / DMS - 000001');
+    expect(BusLabel::compose('Own Name', 'B-1', 'Owner Co'))->toBe('Own Name / B-1');
+    expect(BusLabel::compose(null, 'B-014'))->toBe('B-014');
     expect(BusLabel::compose('Davao Bus', null))->toBeNull();
-    expect(BusLabel::compose(null, 'B-014'))->toBeNull();
-    expect(BusLabel::compose('', '  '))->toBeNull();
+    expect(BusLabel::compose('', '  ', 'Owner Co'))->toBeNull();
     expect(BusLabel::for(null))->toBeNull();
+
+    $company = Company::create(['company_name' => 'Davao Metro Shuttle']);
+    $fleet = new Fleet(['plate_number' => 'SECRET-PLATE', 'body_no' => 'DMS - 000001', 'company_id' => $company->company_id]);
+    expect(BusLabel::for($fleet))->toBe('Davao Metro Shuttle / DMS - 000001');
 });
 
 it('puts the label, not the plate, on the timeline', function () {
     [$trip] = blFixture(['bus_company_name' => 'Davao Bus', 'body_no' => 'B-014']);
     $res = $this->getJson("/api/trips/{$trip->trip_id}/timeline")->assertSuccessful();
 
-    expect($res->json('data.bus.label'))->toBe('Davao Bus - B-014');
+    expect($res->json('data.bus.label'))->toBe('Davao Bus / B-014');
     expect($res->getContent())->not->toContain('SECRET-PLATE');
 });
 
@@ -94,7 +102,7 @@ it('puts the label, not the plate, on booking results', function () {
         'mode' => 'now', 'origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id,
     ]))->assertSuccessful();
 
-    expect($res->json('data.trip.bus_label'))->toBe('Davao Bus - B-014');
+    expect($res->json('data.trip.bus_label'))->toBe('Davao Bus / B-014');
     expect($res->getContent())->not->toContain('SECRET-PLATE');
 });
 
@@ -117,7 +125,7 @@ it('puts the label on the passenger ticket list and the guest lookup, with no pl
     ], $pax->passenger_id, $payment->payment_id);
 
     $mine = $this->actingAs($pax->user)->getJson('/api/passengers/tickets')->assertSuccessful();
-    expect($mine->json('data.data.0.bus_label'))->toBe('Davao Bus - B-014');
+    expect($mine->json('data.data.0.bus_label'))->toBe('Davao Bus / B-014');
     expect($mine->getContent())->not->toContain('SECRET-PLATE');
 
     app(TicketService::class)->finalizeTicket([
@@ -126,7 +134,7 @@ it('puts the label on the passenger ticket list and the guest lookup, with no pl
         'origin_stop_id' => $stops['Stop A']->stop_id, 'destination_stop_id' => $stops['Stop B']->stop_id,
     ], null, $payment->payment_id);
     $guest = $this->getJson('/api/tickets/lookup?'.http_build_query(['transaction_reference' => $payment->transaction_reference, 'email' => 'g@example.com']))->assertSuccessful();
-    expect($guest->json('data.0.bus_label'))->toBe('Davao Bus - B-014');
+    expect($guest->json('data.0.bus_label'))->toBe('Davao Bus / B-014');
     expect($guest->getContent())->not->toContain('SECRET-PLATE');
 });
 

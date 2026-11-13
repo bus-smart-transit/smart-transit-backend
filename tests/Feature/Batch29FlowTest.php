@@ -163,7 +163,7 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     expect([$f['kpis']['gross'], $f['kpis']['refunds'], $f['kpis']['net'], $f['kpis']['tickets']])->toEqual([$fare, $refund, 0, 1]);
     expect($f['kpis']['cash']['percent'])->toEqual(100);
     expect(collect($f['channels'])->pluck('label')->all())->toBe(['Cash']);
-    expect($f['by_bus'][0]['bus_label'])->toBe('Flow Lines - F-1');
+    expect($f['by_bus'][0]['bus_label'])->toBe('Flow Lines / F-1');
 
     $log = $this->actingAs($operator)->getJson('/api/operator/financials/transactions?from=2026-10-05&to=2026-10-05')->json('data.data');
     expect([$log[0]['status'], $log[0]['amount'], $log[0]['refunded']])->toEqual(['refunded', $fare, $refund]);
