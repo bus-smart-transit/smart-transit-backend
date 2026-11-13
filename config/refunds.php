@@ -24,6 +24,11 @@ return [
         'max_gps_age_seconds' => (int) env('REFUND_LAST_POINT_MAX_GPS_AGE_SECONDS', 300),
     ],
 
+    // 2026-11-13 (user): when the travelled part of a boarded ticket cannot be priced (no usable point, boarding point or
+    // fare rule), this percent of the fare is kept and the rest is refunded at once, with no Operator review. The booking
+    // fee is still refunded in full. Empty (REFUND_UNPRICED_DEDUCTION_PERCENT=) sends such tickets to Operator review.
+    'unpriced_deduction_percent' => env('REFUND_UNPRICED_DEDUCTION_PERCENT', 10),
+
     // Rebook: how many days ahead (Manila calendar) a replacement departure is searched, and how many are offered.
     'rebook' => [
         'search_days' => (int) env('REFUND_REBOOK_SEARCH_DAYS', 14),

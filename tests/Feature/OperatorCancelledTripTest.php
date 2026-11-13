@@ -294,6 +294,7 @@ it('prices a snapped boarding point (no origin stop) from the stored boarding di
 });
 
 it('does not guess the travelled part when the last point is unknown: it is flagged for operator review and then set by a person', function () {
+    config(['refunds.unpriced_deduction_percent' => null]); // review mode (the setting emptied)
     $f = rfFixture();
     $pax = rfPassenger();
     $trip = $f['mk']('2026-10-04', '06:00', 'outbound', 'departed'); // no acknowledged stop, no GPS
@@ -312,6 +313,40 @@ it('does not guess the travelled part when the last point is unknown: it is flag
     expect($resolution->fresh()->amount)->toBe(69.0)->and($resolution->fresh()->status)->toBe('pending')->and($resolution->fresh()->actor_role)->toBe('operator');
     expect(rfRefundCalls()[0]['amount'])->toBe(6900);
     $this->actingAs($f['operator'])->postJson("/api/operator/ticket-resolutions/{$resolution->id}/review", ['amount' => 10, 'note' => 'again'])->assertStatus(422);
+});
+
+it('keeps 10 percent and refunds the rest at once when the travelled part cannot be priced (2026-11-13, user)', function () {
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $trip = $f['mk']('2026-10-04', '06:00', 'outbound', 'departed'); // no acknowledged stop, no GPS
+    $ticket = rfTicket($f, $trip, ['status' => 'boarded', 'boarded_at' => now(), 'amount' => 69.0, 'destination_stop_id' => $f['stops']['E']->stop_id, 'alighting_distance_m' => 40000], 'gcash', $pax);
+    rfCancel($this, $f, $trip)->assertSuccessful();
+
+    rfFakeGateway('ref_flat_1');
+    rfChoose($this, $pax, $ticket, ['choice' => 'refund'])->assertSuccessful();
+    $resolution = TicketResolution::firstOrFail();
+    // 69 x 90% = 62.10 -> 62 (whole pesos); 7 is kept for the travelled part. No Operator step.
+    expect($resolution->status)->not->toBe('needs_review')->and($resolution->amount)->toBe(62.0)->and($resolution->ridden_fare)->toBe(7.0);
+    expect($resolution->basis)->toMatchArray(['type' => 'flat_deduction', 'deduction_percent' => 10]);
+    expect($ticket->fresh()->status)->not->toBe('refund_review');
+    expect(rfRefundCalls()[0]['amount'])->toBe(6200);
+});
+
+it('refunds a running trip\'s online ticket at once, less 10 percent, when the last point is unknown (2026-11-13, user)', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    Mail::fake();
+    rfFakeGatewayEachRefund();
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $ticket = rfTicket($f, $f['trip'], ['status' => 'boarded', 'boarded_at' => now(), 'amount' => 100.0], 'gcash', $pax);
+    $f['trip']->update(['status' => 'departed']); // no GPS and no acknowledged stop
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+
+    $resolution = TicketResolution::where('ticket_id', $ticket->ticket_id)->firstOrFail();
+    expect($resolution->status)->not->toBe(TicketResolution::NEEDS_REVIEW)->and($resolution->amount)->toBe(90.0);
+    expect(rfRefundCalls())->not->toBe([]);
+    Mail::assertQueued(TripCancelledRefundMail::class, fn ($mail) => $mail->needsReview === false);
 });
 
 it('uses the later of the last stop and the last usable GPS position, and ignores one that is off the route or too old', function () {
@@ -600,7 +635,7 @@ it('refunds the online tickets at once when the operator cancels before departur
 });
 
 it('sends a running trip\'s refund to operator review when the last point is unknown, and says so in the email', function () {
-    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null]);
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null, 'refunds.unpriced_deduction_percent' => null]);
     Mail::fake();
     rfFakeGatewayEachRefund();
     $f = rfFixture();

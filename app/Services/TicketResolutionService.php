@@ -33,7 +33,9 @@ use Illuminate\Validation\ValidationException;
  *      cancelled mid-route, boarded ........ fare paid minus the fare of the ridden portion, priced by the ticket's own
  *        fare rule from its boarding point (stored boarding distance, so a snapped boarding works) to the last point the
  *        bus reached (TripCancellationService::resolveLastPoint), never beyond the ticket's own destination. If the
- *        last point or the boarding point is unknown the amount is NOT guessed: the ticket is flagged for operator review.
+ *        last point, the boarding point or the fare rule is unknown, a fixed share of the fare is kept
+ *        (config refunds.unpriced_deduction_percent, default 10) and the rest is refunded at once; with that setting
+ *        empty the ticket is flagged for operator review instead (2026-11-13, user).
  *    A digital ticket is refunded to its original payment method by a gateway reversal; its final state comes from the
  *    signed refund webhook. A cash ticket is refunded by a recorded entry (who, when, how much); a terminal action never
  *    pays out cash for a digital ticket.
@@ -474,7 +476,22 @@ class TicketResolutionService
         }
 
         // Boarded on a trip cancelled mid-route: the fare for the part already travelled stays with the operator.
-        $review = fn (string $reason) => array_merge($base, ['amount' => null, 'basis' => ['type' => 'partial', 'stage' => $cancellation->stage, 'boarded' => true], 'needs_review' => true, 'review_reason' => $reason]);
+        // 2026-11-13 (user): when the travelled part cannot be priced, a fixed share of the fare
+        // (config refunds.unpriced_deduction_percent, default 10) is kept and the rest is refunded at once, so no
+        // Operator has to step in. With the setting empty, the ticket goes to Operator review as before.
+        $review = function (string $reason) use ($base, $paid, $cancellation): array {
+            $percent = self::unpricedDeductionPercent();
+            if ($percent === null) {
+                return array_merge($base, ['amount' => null, 'basis' => ['type' => 'partial', 'stage' => $cancellation->stage, 'boarded' => true], 'needs_review' => true, 'review_reason' => $reason]);
+            }
+            $amount = min($paid, max(0.0, $this->fares->roundAmount($paid * (100 - $percent) / 100)));
+
+            return array_merge($base, [
+                'amount' => $amount,
+                'ridden_fare' => round($paid - $amount, 2),
+                'basis' => ['type' => 'flat_deduction', 'stage' => $cancellation->stage, 'boarded' => true, 'deduction_percent' => $percent, 'reason' => $reason],
+            ]);
+        };
 
         if ($cancellation->last_point_distance_m === null) {
             return $review('The point the bus had reached is not known (no stop acknowledged and no usable GPS position), so the travelled part cannot be priced.');
@@ -521,6 +538,17 @@ class TicketResolutionService
                 'fare_rule_id' => (int) $rule->fare_rule_id,
             ],
         ]);
+    }
+
+    /** config refunds.unpriced_deduction_percent: the share kept when the travelled part cannot be priced; null = Operator review. */
+    public static function unpricedDeductionPercent(): ?float
+    {
+        $value = config('refunds.unpriced_deduction_percent');
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return max(0.0, min(100.0, (float) $value));
     }
 
     /** The share of the payment this ticket accounts for: its fare, scaled down if reward points lowered the payment. */
