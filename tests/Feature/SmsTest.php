@@ -155,7 +155,7 @@ it('texts the refund and the Operator\'s "Tell passengers" notice', function () 
     expect(SmsLog::sole()->message)->toContain('PHP 45.50 was refunded to your GCash');
 
     expect(app(SmsNotifier::class)->tellPassengers((int) $p['trip']->trip_id, 'Sample Route: your bus has a breakdown and will be late.'))->toBe(1);
-    expect(SmsLog::latest('id')->first()->message)->toStartWith('SmartTransit: Sample Route: your bus has a breakdown');
+    expect(SmsLog::latest('id')->first()->message)->toStartWith('Sample Route: your bus has a breakdown');
 });
 
 it('reads the credits left and writes the local number IPROG documents', function () {
@@ -185,7 +185,7 @@ it('texts the Driver a new trip assignment through the Operator\'s assign endpoi
 
     $log = SmsLog::where('event', 'crew_assigned')->sole();
     expect($log->phone)->toBe('+639175551111')
-        ->and($log->message)->toBe('SmartTransit: You have new schedules assigned. Please check your portal to view and accept them.');
+        ->and($log->message)->toBe('You have new schedules assigned. Please check your portal to view and accept them.');
     expect(SmsLog::where('phone', '+639179990000')->count())->toBe(0);
 });
 

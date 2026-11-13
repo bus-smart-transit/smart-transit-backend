@@ -13,7 +13,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Batch 64 (user, 2026-11-13): what SmartTransit says by text, and to whom. Each method builds one short message
+ * Batch 64 (user, 2026-11-13): what SmartTransit says by text, and to whom. No message starts with "SmartTransit":
+ * the sender name the user set on IPROG already heads every text (2026-11-13). Each method builds one short message
  * (one credit, 160 characters) and hands it to SmsService, which decides whether it is sent. Never throws: a text is
  * extra news, so a problem here is logged and the payment, login or cancellation carries on.
  *
@@ -29,7 +30,7 @@ class SmsNotifier
     {
         $this->safely(function () use ($user, $code, $minutes) {
             $phone = $user->passengerProfile?->phone_num ?? $user->companyProfile?->phone_num;
-            $this->sms->send('login_code', $phone, "SmartTransit login code: {$code}. It works for {$minutes} minutes. Do not share it with anyone.", 'User', (int) $user->user_id);
+            $this->sms->send('login_code', $phone, "Your login code is {$code}. It works for {$minutes} minutes. Do not share it with anyone.", 'User', (int) $user->user_id);
         });
     }
 
@@ -48,7 +49,7 @@ class SmsNotifier
             $this->sms->send(
                 'payment_confirmed',
                 $this->buyerPhone($payment, $tickets),
-                "SmartTransit: paid. {$count} ".($count === 1 ? 'ticket' : 'tickets').' '.$this->tripLine($tickets->first()).'. Ticket ID: '.$this->ids($tickets).'. Show the QR when boarding.',
+                "Paid. {$count} ".($count === 1 ? 'ticket' : 'tickets').' '.$this->tripLine($tickets->first()).'. Ticket ID: '.$this->ids($tickets).'. Show the QR when boarding.',
                 'Payment',
                 (int) $payment->payment_id,
             );
@@ -69,7 +70,7 @@ class SmsNotifier
             $this->sms->send(
                 'cash_ticket',
                 $payment->traveller_contact,
-                'SmartTransit: your cash ticket '.$this->tripLine($tickets->first()).'. Ticket ID: '.$this->ids($tickets).'. Keep this text.',
+                'Your cash ticket '.$this->tripLine($tickets->first()).'. Ticket ID: '.$this->ids($tickets).'. Keep this text.',
                 'Payment',
                 (int) $payment->payment_id,
             );
@@ -88,7 +89,7 @@ class SmsNotifier
             $this->sms->send(
                 'refund_completed',
                 $this->buyerPhone($payment, $tickets),
-                'SmartTransit: PHP '.number_format($amount, 2)." was refunded to your {$wallet}. Ref ".($payment->transaction_reference ?? '').'.',
+                'PHP '.number_format($amount, 2)." was refunded to your {$wallet}. Ref ".($payment->transaction_reference ?? '').'.',
                 'Payment',
                 (int) $payment->payment_id,
             );
@@ -117,7 +118,7 @@ class SmsNotifier
                 $next = $payment->payment_method === 'online' && $onlineRefundedAutomatically
                     ? 'Your fare will be refunded to your e-wallet.'
                     : 'Open the app or ask at the terminal to rebook or get a refund.';
-                $this->sms->send('trip_cancelled', $this->buyerPhone($payment, $group), "SmartTransit: your trip {$line} was cancelled. {$next}", 'Trip', (int) $trip->trip_id);
+                $this->sms->send('trip_cancelled', $this->buyerPhone($payment, $group), "Your trip {$line} was cancelled. {$next}", 'Trip', (int) $trip->trip_id);
             }
         });
     }
@@ -132,7 +133,7 @@ class SmsNotifier
             }
             foreach ($this->tickets->findForTripWithPayment($tripId, ['valid', 'boarded'])->groupBy('payment_id') as $group) {
                 $payment = $group->first()->payment;
-                if ($payment && $this->sms->send('tell_passengers', $this->buyerPhone($payment, $group), 'SmartTransit: '.$notice, 'Trip', $tripId)?->phone) {
+                if ($payment && $this->sms->send('tell_passengers', $this->buyerPhone($payment, $group), $notice, 'Trip', $tripId)?->phone) {
                     $sent++;
                 }
             }
@@ -166,7 +167,7 @@ class SmsNotifier
      * names no trip, so it is the same for every assignment; sms.once_per_day keeps it to one text per crew member per
      * day (an Operator usually assigns several trips in one sitting). The push notification still goes for each one.
      */
-    public const CREW_ASSIGNED_MESSAGE = 'SmartTransit: You have new schedules assigned. Please check your portal to view and accept them.';
+    public const CREW_ASSIGNED_MESSAGE = 'You have new schedules assigned. Please check your portal to view and accept them.';
 
     /** A single trip (scheduled with its crew, or the crew assigned later). Passengers are never texted here. */
     public function crewTripAssigned(Trip $trip, string $role): void

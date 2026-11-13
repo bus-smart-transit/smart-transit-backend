@@ -44,7 +44,7 @@ class SmsTools extends Command
 
             return self::FAILURE;
         }
-        $log = $sms->send('test', (string) $this->argument('phone'), (string) ($this->option('message') ?: 'SmartTransit test message. If you got this, texts work.'));
+        $log = $sms->send('test', (string) $this->argument('phone'), (string) ($this->option('message') ?: 'Test message. If you got this, texts work.'));
         $log?->refresh();
         $this->line('Status: '.($log?->status ?? 'not sent').($log?->error ? ' - '.$log->error : ''));
         $this->line('To: '.PhoneNumber::mask($log?->phone));
