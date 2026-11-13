@@ -9,6 +9,7 @@ use App\Repositories\TicketRepository;
 use App\Services\TripCancellationService;
 use App\Support\TicketBoarding;
 use App\Support\TravellerContact;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
@@ -159,6 +160,52 @@ class SmsNotifier
         $where = $from && $to ? "{$from} to {$to}" : ($ticket->trip?->fleetRoute?->route?->route_name ?? 'your trip');
 
         return trim($where.' '.$this->when($ticket->trip));
+    }
+
+    /**
+     * Batch 66 (user, 2026-11-13): the Operator gave a Driver or Chauffeur a single trip (scheduled with its crew, or the
+     * crew assigned later). The crew member gets a text to open the app and accept it. Passengers are never texted here.
+     */
+    public function crewTripAssigned(Trip $trip, string $role): void
+    {
+        $this->safely(function () use ($trip, $role) {
+            if (! SmsService::enabledFor('crew_assigned')) {
+                return;
+            }
+            $relation = $role === 'driver' ? 'driver' : 'conductor';
+            $trip->loadMissing(['fleetRoute.route', 'fleetRoute.fleet', $relation]);
+            $fleet = $trip->fleetRoute?->fleet;
+            $bus = $fleet?->body_no ?: $fleet?->plate_number;
+            $this->sms->send(
+                'crew_assigned',
+                $trip->{$relation}?->phone_num,
+                'SmartTransit: new trip for you: '.$this->tripLineFor($trip).($bus ? ", bus {$bus}" : '').'. Open the app to accept it.',
+                'Trip',
+                (int) $trip->trip_id,
+            );
+        });
+    }
+
+    /**
+     * Batch 66: the Operator gave a Driver or Chauffeur a shift block. ONE text for the whole block (not one per leg),
+     * so a 4-leg shift costs one credit per crew member.
+     */
+    public function crewBlockAssigned(?object $staff, int $blockId, string $blockType, string $routeName, ?string $date): void
+    {
+        $this->safely(function () use ($staff, $blockId, $blockType, $routeName, $date) {
+            if (! SmsService::enabledFor('crew_assigned')) {
+                return;
+            }
+            $day = $date ? Carbon::parse($date)->format('M j') : null;
+            $shift = trim(ucfirst(strtolower($blockType)).' shift');
+            $this->sms->send(
+                'crew_assigned',
+                $staff?->phone_num,
+                "SmartTransit: new {$shift} for you: {$routeName}".($day ? " on {$day}" : '').'. Open the app to accept it.',
+                'ShiftBlock',
+                $blockId,
+            );
+        });
     }
 
     private function tripLineFor(Trip $trip): string

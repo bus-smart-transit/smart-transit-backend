@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Company;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\PassengerUser;
@@ -160,4 +161,39 @@ it('reads the credits left and writes the local number IPROG documents', functio
     smsReply(['status' => 200, 'load_balance' => 4]);
     expect(app(IprogSmsGateway::class)->credits())->toBe(4.0)
         ->and(IprogSmsGateway::localNumber('+639171234567'))->toBe('09171234567');
+});
+
+// Batch 66 (user, 2026-11-13): the crew get a text when the Operator gives them a trip or a shift block; passengers on
+// the trip get nothing; a shift block is one text per crew member, not one per leg.
+it('texts the Driver a new trip assignment through the Operator\'s assign endpoint, and no passenger', function () {
+    $company = Company::create(['company_name' => 'Sms Co '.Str::random(4)]);
+    $staff = function (string $role, string $phone) use ($company) {
+        $user = User::create(['username' => 'sc'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => $role]);
+        StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => ucfirst($role).' Sample', 'phone_num' => $phone, 'address' => 'x', 'company_id' => $company->company_id, 'is_company_admin' => $role === 'operator', 'is_available' => true]);
+
+        return $user->fresh();
+    };
+    $operator = $staff('operator', '+639170000001');
+    $driver = $staff('driver', '+639175551111');
+    $p = smsPurchase(smsPassenger('+639179990000'));
+    $p['trip']->update(['company_user_id' => $operator->companyProfile->company_user_id]);
+    $p['trip']->fleetRoute->fleet->update(['company_id' => $company->company_id, 'body_no' => 'DMS-01']);
+
+    $res = $this->actingAs($operator)->patchJson("/api/operator/trips/{$p['trip']->trip_id}/driver", ['driver_id' => $driver->companyProfile->company_user_id]);
+    expect($res->status(), $res->getContent())->toBeLessThan(300);
+
+    $log = SmsLog::where('event', 'crew_assigned')->sole();
+    expect($log->phone)->toBe('+639175551111')
+        ->and($log->message)->toBe('SmartTransit: new trip for you: Sample Route on Nov 20 08:30, bus DMS-01. Open the app to accept it.');
+    expect(SmsLog::where('phone', '+639179990000')->count())->toBe(0);
+});
+
+it('texts each crew member once for a whole shift block, and can be switched off', function () {
+    $crew = (object) ['phone_num' => '+639176662222'];
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 8, 'morning', 'Tagum - Panabo', '2026-11-20');
+    expect(SmsLog::sole())->message->toBe('SmartTransit: new Morning shift for you: Tagum - Panabo on Nov 20. Open the app to accept it.');
+
+    config(['sms.events.crew_assigned' => false]);
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 9, 'afternoon', 'Tagum - Panabo', '2026-11-21');
+    expect(SmsLog::count())->toBe(1);
 });

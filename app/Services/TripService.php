@@ -13,6 +13,7 @@ use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Services\Sms\SmsNotifier;
 use App\Support\BusLabel;
 use App\Support\Notifications\NotificationLink;
 use App\Support\ScheduleStatus;
@@ -146,6 +147,7 @@ class TripService
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
                 NotificationLink::tripAssignedData('driver', (int) $trip->trip_id),
             );
+            app(SmsNotifier::class)->crewTripAssigned($trip, 'driver'); // Batch 66: and by text
         }
         if (! empty($trip->conductor_id) && isset($conductor)) {
             $this->fcmService->sendToUser(
@@ -154,6 +156,7 @@ class TripService
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
                 NotificationLink::tripAssignedData('conductor', (int) $trip->trip_id),
             );
+            app(SmsNotifier::class)->crewTripAssigned($trip, 'conductor'); // Batch 66: and by text
         }
 
         return $trip;
@@ -563,6 +566,7 @@ class TripService
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
                 NotificationLink::tripAssignedData('driver', (int) $trip->trip_id),
             );
+            app(SmsNotifier::class)->crewTripAssigned($trip, 'driver'); // Batch 66: and by text
         }
     }
 
@@ -603,6 +607,7 @@ class TripService
                 "You've been assigned to {$routeName} on {$trip->trip_date}.",
                 NotificationLink::tripAssignedData('conductor', (int) $trip->trip_id),
             );
+            app(SmsNotifier::class)->crewTripAssigned($trip, 'conductor'); // Batch 66: and by text
         }
     }
 

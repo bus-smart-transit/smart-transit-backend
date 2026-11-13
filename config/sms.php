@@ -31,6 +31,8 @@ return [
         'trip_cancelled' => (bool) env('SMS_TRIP_CANCELLED', true),
         'tell_passengers' => (bool) env('SMS_TELL_PASSENGERS', true),
         'cash_ticket' => (bool) env('SMS_CASH_TICKET', true),
+        // Batch 66: a Driver or Chauffeur is given a trip or a shift block (one text per block, not per leg).
+        'crew_assigned' => (bool) env('SMS_CREW_ASSIGNED', true),
         // php artisan sms test <phone>, for checking the setup by hand.
         'test' => true,
     ],

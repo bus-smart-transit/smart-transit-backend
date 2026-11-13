@@ -11,6 +11,7 @@ use App\Repositories\FleetRouteRepository;
 use App\Repositories\ShiftBlockRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
+use App\Services\Sms\SmsNotifier;
 use App\Support\Notifications\NotificationLink;
 use App\Support\ServiceType;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -345,6 +346,10 @@ class ShiftBlockService
                 NotificationLink::blockAssignedData('conductor', (int) $block->shift_block_id),
             );
         }
+        // Batch 66: and by text, one per crew member for the whole block (not one per leg).
+        foreach ([$driver, $conductor] as $crew) {
+            app(SmsNotifier::class)->crewBlockAssigned($crew, (int) $block->shift_block_id, (string) $payload['block_type'], $routeName, (string) $scheduledDate);
+        }
     }
 
     /**
@@ -550,6 +555,8 @@ class ShiftBlockService
                         NotificationLink::blockAssignedData($role, $blockId),
                     );
                 }
+                // Batch 66: and by text, once for the block.
+                app(SmsNotifier::class)->crewBlockAssigned($assignee, $blockId, (string) $block->block_type, $routeName, $block->scheduled_date?->format('Y-m-d'));
             }
         }
 
