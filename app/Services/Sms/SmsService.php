@@ -39,6 +39,12 @@ class SmsService
             return $this->logs->create($base + ['phone' => null, 'status' => SmsLog::SKIPPED, 'error' => 'No Philippine mobile number on record.']);
         }
 
+        // Batch 66: some texts say the same thing every time, so one a day per phone is enough (sms.once_per_day).
+        $startOfDay = now('Asia/Manila')->startOfDay()->setTimezone(config('app.timezone'));
+        if (in_array($event, (array) config('sms.once_per_day', []), true) && $this->logs->sentSince($event, $to, $startOfDay)) {
+            return $this->logs->create($base + ['phone' => $to, 'status' => SmsLog::SKIPPED, 'error' => 'Already texted today.']);
+        }
+
         $log = $this->logs->create($base + ['phone' => $to, 'status' => SmsLog::QUEUED]);
         SendSms::dispatch($log->id)->afterCommit();
 

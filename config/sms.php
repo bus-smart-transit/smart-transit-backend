@@ -24,6 +24,10 @@ return [
     // One text is up to 160 characters; longer messages are cut so a text never costs two credits.
     'max_length' => 160,
 
+    // Batch 66: these kinds of text go at most once per phone per Manila day (later ones that day are recorded as skipped,
+    // costing nothing). Empty this list (SMS_CREW_ONCE_PER_DAY=false) to send one text per assignment.
+    'once_per_day' => (bool) env('SMS_CREW_ONCE_PER_DAY', true) ? ['crew_assigned'] : [],
+
     'events' => [
         'login_code' => (bool) env('SMS_LOGIN_CODE', true),
         'payment_confirmed' => (bool) env('SMS_PAYMENT_CONFIRMED', true),

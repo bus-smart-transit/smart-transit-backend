@@ -18,6 +18,7 @@ use App\Services\Sms\SmsNotifier;
 use App\Services\Sms\SmsService;
 use App\Services\TripCancellationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -184,16 +185,36 @@ it('texts the Driver a new trip assignment through the Operator\'s assign endpoi
 
     $log = SmsLog::where('event', 'crew_assigned')->sole();
     expect($log->phone)->toBe('+639175551111')
-        ->and($log->message)->toBe('SmartTransit: new trip for you: Sample Route on Nov 20 08:30, bus DMS-01. Open the app to accept it.');
+        ->and($log->message)->toBe('SmartTransit: You have new schedules assigned. Please check your portal to view and accept them.');
     expect(SmsLog::where('phone', '+639179990000')->count())->toBe(0);
 });
 
-it('texts each crew member once for a whole shift block, and can be switched off', function () {
+// Batch 66 (user, 2026-11-13): sent at once, but one text per crew member per Manila day; the next day texts again.
+it('texts a crew member at once, then skips more assignments that day at no cost, and texts again the next day', function () {
+    Carbon::setTestNow(Carbon::parse('2026-11-13 09:00', 'Asia/Manila'));
     $crew = (object) ['phone_num' => '+639176662222'];
-    app(SmsNotifier::class)->crewBlockAssigned($crew, 8, 'morning', 'Tagum - Panabo', '2026-11-20');
-    expect(SmsLog::sole())->message->toBe('SmartTransit: new Morning shift for you: Tagum - Panabo on Nov 20. Open the app to accept it.');
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 8);
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 9);
+    app(SmsNotifier::class)->crewBlockAssigned((object) ['phone_num' => '+639170001234'], 9); // another crew member
+
+    expect(SmsLog::where('status', 'sent')->pluck('phone')->all())->toBe(['+639176662222', '+639170001234'])
+        ->and(SmsLog::where('status', 'skipped')->sole()->error)->toBe('Already texted today.');
+    Http::assertSentCount(2);
+
+    Carbon::setTestNow(Carbon::parse('2026-11-14 07:00', 'Asia/Manila'));
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 10);
+    expect(SmsLog::where('status', 'sent')->count())->toBe(3);
 
     config(['sms.events.crew_assigned' => false]);
-    app(SmsNotifier::class)->crewBlockAssigned($crew, 9, 'afternoon', 'Tagum - Panabo', '2026-11-21');
-    expect(SmsLog::count())->toBe(1);
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 11);
+    expect(SmsLog::count())->toBe(4);
+    Carbon::setTestNow();
+});
+
+it('sends one text per assignment when the once-a-day limit is turned off', function () {
+    config(['sms.once_per_day' => []]);
+    $crew = (object) ['phone_num' => '+639176662222'];
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 8);
+    app(SmsNotifier::class)->crewBlockAssigned($crew, 9);
+    expect(SmsLog::where('status', 'sent')->count())->toBe(2);
 });
