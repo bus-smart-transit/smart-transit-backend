@@ -111,7 +111,45 @@ it('lists destinations from data, grouped by municipality, with no code that kno
 
     $fromE2 = collect($this->getJson('/api/booking/stops?origin_stop_id='.Stop::where('stop_name', 'E2')->value('stop_id'))->json('data.groups'))
         ->flatMap(fn ($g) => collect($g['stops'])->pluck('name'))->sort()->values()->all();
-    expect($fromE2)->toBe(['E1', 'E4', 'E5']); // only stops on routes that serve the origin, never the origin itself
+    // Only stops after the origin on routes that serve it, never the origin itself. No trips yet: the route's own
+    // (outbound) direction, so E1 (behind E2) is not offered (2026-11-13, user).
+    expect($fromE2)->toBe(['E4', 'E5']);
+});
+
+/** The destination names offered for a boarding stop. */
+function bkDestinations($test, int $originStopId): array
+{
+    return collect($test->getJson('/api/booking/stops?origin_stop_id='.$originStopId)->assertSuccessful()->json('data.groups'))
+        ->flatMap(fn ($g) => collect($g['stops'])->pluck('name'))->sort()->values()->all();
+}
+
+it('offers only the stops after the boarding stop in the directions the bus runs (2026-11-13, user)', function () use ($eastWest) {
+    [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
+
+    // Outbound trips only: from E2 the bus goes on to E4 and E5, never back to E1.
+    bkTrip($fleetRoute, $operator, '2026-10-05', '08:00');
+    expect(bkDestinations($this, $stops['E2']->stop_id))->toBe(['E4', 'E5']);
+    // From the last stop an outbound bus goes nowhere.
+    expect(bkDestinations($this, $stops['E5']->stop_id))->toBe([]);
+
+    // A return (reverse) trip in the booking window: from E2 the bus also goes back to E1.
+    bkTrip($fleetRoute, $operator, '2026-10-05', '12:00', 'reverse');
+    expect(bkDestinations($this, $stops['E2']->stop_id))->toBe(['E1', 'E4', 'E5']);
+    expect(bkDestinations($this, $stops['E5']->stop_id))->toBe(['E1', 'E2', 'E4']);
+});
+
+it('ignores cancelled, finished and out-of-window trips when deciding the directions', function () use ($eastWest) {
+    [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
+
+    // Reverse trips that do not count: cancelled, completed, before today, beyond the booking window.
+    bkTrip($fleetRoute, $operator, '2026-10-05', '12:00', 'reverse')->update(['status' => 'cancelled']);
+    bkTrip($fleetRoute, $operator, '2026-10-04', '06:00', 'reverse')->update(['status' => 'completed']);
+    bkTrip($fleetRoute, $operator, '2026-10-03', '12:00', 'reverse');
+    bkTrip($fleetRoute, $operator, Carbon::parse('2026-10-04')->addDays((int) config('booking.max_advance_days') + 1)->toDateString(), '12:00', 'reverse');
+
+    // Only a reverse trip runs: from E4 the bus goes back to E2 and E1, not on to E5.
+    bkTrip($fleetRoute, $operator, '2026-10-06', '12:00', 'reverse');
+    expect(bkDestinations($this, $stops['E4']->stop_id))->toBe(['E1', 'E2']);
 });
 
 it('resolves Book Now to the next eligible departure from the Manila time now', function () use ($eastWest) {

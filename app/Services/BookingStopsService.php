@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\FleetRoute;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TripRepository;
+use App\Support\BookingWindow;
 use App\Support\PlaceGroups;
 
 /**
@@ -11,11 +13,16 @@ use App\Support\PlaceGroups;
  * the database: stops of a stopping type on any route that has an active fleet,
  * inside the configured region, grouped by municipality. The code does not
  * know any place; a new route appears here as soon as it exists.
+ *
+ * 2026-11-13 (user): with an origin, the destinations are only the stops the bus reaches AFTER the origin: further
+ * along the route for outbound trips, back toward the start for return (reverse) trips. A direction counts when the
+ * route has a trip in it inside the booking window; a route with no such trip offers its own (outbound) direction.
  */
 class BookingStopsService
 {
     public function __construct(
         private RouteStopRepository $routeStopRepository,
+        private TripRepository $tripRepository,
         private RegionService $regionService,
         private PlaceGroups $places,
     ) {}
@@ -30,16 +37,24 @@ class BookingStopsService
 
         $byStop = [];
         $originPlace = $originStopId !== null ? $this->places->membersOf($originStopId) : [];
-        $routesWithOrigin = [];
+        $runs = $originStopId !== null
+            ? $this->tripRepository->directionsByRoute($routeIds->all(), BookingWindow::today()->toDateString(), BookingWindow::lastDateString())
+            : [];
         foreach ($routeIds as $routeId) {
-            $routeStops = $this->routeStopRepository->getOrderedStops($routeId);
+            $routeStops = $this->routeStopRepository->getOrderedStops($routeId)->values();
             // Batch 49 item 6: the origin is a place; a route serves it when it has any stop of that place.
-            if ($originStopId !== null && $routeStops->whereIn('stop_id', $originPlace)->isEmpty()) {
+            $originPositions = $originStopId !== null
+                ? $routeStops->keys()->filter(fn ($i) => in_array((int) $routeStops[$i]->stop_id, $originPlace, true))->values()
+                : collect();
+            if ($originStopId !== null && $originPositions->isEmpty()) {
                 continue;
             }
-            $routesWithOrigin[] = $routeId;
+            $directions = $runs[$routeId] ?? ['outbound'];
 
-            foreach ($routeStops as $routeStop) {
+            foreach ($routeStops as $position => $routeStop) {
+                if ($originStopId !== null && ! $this->isAhead($position, $originPositions->min(), $originPositions->max(), $directions)) {
+                    continue;
+                }
                 $stop = $routeStop->stop;
                 if (! $stop || ! in_array($routeStop->stop_type ?? 'stop', $stopping, true)) {
                     continue;
@@ -86,6 +101,18 @@ class BookingStopsService
         unset($group);
 
         return ['groups' => array_values($groups)];
+    }
+
+    /**
+     * Is the stop at this position reached after the origin in one of the directions the route runs? Outbound goes up
+     * the stop order, reverse goes down it.
+     *
+     * @param  array<int, string>  $directions
+     */
+    private function isAhead(int $position, int $originFirst, int $originLast, array $directions): bool
+    {
+        return (in_array('outbound', $directions, true) && $position > $originFirst)
+            || (in_array('reverse', $directions, true) && $position < $originLast);
     }
 
     /** @return array<int, string> a municipality can appear under more than one province */

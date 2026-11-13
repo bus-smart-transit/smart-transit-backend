@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Models\FleetRoute;
 use App\Models\Trip;
 use App\Support\CompanyScope;
 use App\Support\LiveUpdates;
@@ -302,6 +303,39 @@ class TripRepository
     {
         return Trip::where('trip_id', $tripId)
             ->update(['conductor_id' => $conductorCompanyUserId, 'conductor_accepted_at' => null]) > 0;
+    }
+
+    /**
+     * 2026-11-13 (user): the directions ('outbound', 'reverse') each route actually runs between two Manila dates, from
+     * its trips that are not finished or cancelled, on fleets that serve the route. A trip with no direction is outbound.
+     *
+     * @param  array<int, int>  $routeIds
+     * @return array<int, array<int, string>> route_id => directions
+     */
+    public function directionsByRoute(array $routeIds, string $fromDate, ?string $toDate): array
+    {
+        if ($routeIds === []) {
+            return [];
+        }
+
+        $fr = (new FleetRoute)->getTable();
+        $rows = Trip::query()
+            ->join($fr, "{$fr}.fleet_route_id", '=', 'trips.fleet_route_id')
+            ->whereIn("{$fr}.route_id", $routeIds)
+            ->where("{$fr}.status", 'active')
+            ->whereNotIn('trips.status', ['completed', 'cancelled'])
+            ->whereDate('trips.trip_date', '>=', $fromDate)
+            ->when($toDate !== null, fn (Builder $q) => $q->whereDate('trips.trip_date', '<=', $toDate))
+            ->distinct()
+            ->get(["{$fr}.route_id", 'trips.leg_direction']);
+
+        $directions = [];
+        foreach ($rows as $row) {
+            $direction = $row->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+            $directions[(int) $row->route_id][$direction] = $direction;
+        }
+
+        return array_map('array_values', $directions);
     }
 
     /** 2026-11-06 (Batch 47 part A): is a trip on one of these routes boarding or on the road right now? */
