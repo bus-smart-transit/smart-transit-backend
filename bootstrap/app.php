@@ -3,6 +3,7 @@
 use App\Http\Middleware\ApiRequestMetricsMiddleware;
 use App\Http\Middleware\AuditAdminWrites;
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\EnsureBoardingOpen;
 use App\Http\Middleware\EnsureCompanyAdmin;
 use App\Http\Middleware\OptionalSanctumAuth;
 use App\Http\Middleware\RequirePairedSession;
@@ -42,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => CheckRole::class,
             'auth.optional' => OptionalSanctumAuth::class,
             'paired' => RequirePairedSession::class,
+            'boarding.open' => EnsureBoardingOpen::class,
             'step-up' => RequireStepUp::class,
             'company.admin' => EnsureCompanyAdmin::class,
             'admin.audit' => AuditAdminWrites::class,

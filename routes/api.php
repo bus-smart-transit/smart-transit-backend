@@ -458,9 +458,9 @@ Route::prefix('conductor')
 
         Route::middleware('paired:conductor')->group(function () {
             Route::get('trips/current', [TripController::class, 'currentTripConductor']);
-            Route::post('tickets/scan', [TicketController::class, 'scan'])->middleware('throttle:30,1,conductor-tickets-scan-post');
-            Route::post('tickets/scan-group', [TicketController::class, 'scanGroup'])->middleware('throttle:20,1,conductor-tickets-scan-group-post');
-            Route::post('checkout', [PaymentController::class, 'checkoutOnsite'])->middleware('throttle:20,1,conductor-checkout-post');
+            Route::post('tickets/scan', [TicketController::class, 'scan'])->middleware(['throttle:30,1,conductor-tickets-scan-post', 'boarding.open']);
+            Route::post('tickets/scan-group', [TicketController::class, 'scanGroup'])->middleware(['throttle:20,1,conductor-tickets-scan-group-post', 'boarding.open']);
+            Route::post('checkout', [PaymentController::class, 'checkoutOnsite'])->middleware(['throttle:20,1,conductor-checkout-post', 'boarding.open']);
             Route::post('checkout/quote', [PaymentController::class, 'quoteOnsite'])->middleware('throttle:120,1,conductor-checkout-quote-post');
 
             // Occupancy monitoring dashboard
@@ -470,7 +470,7 @@ Route::prefix('conductor')
             Route::get('trips/current/earnings', [TicketController::class, 'currentTripEarnings']);
             Route::get('trips/current/boarding-point', [TicketController::class, 'boardingPoint'])->middleware('throttle:30,1,conductor-trips-current-boarding-point');
             // 2026-10-26: Passenger In (check-in snapped back to the last stop passed) and the check-ins waiting for their fare.
-            Route::post('trips/current/check-ins', [TicketController::class, 'checkIn'])->middleware('throttle:60,1,conductor-trips-current-check-ins-post');
+            Route::post('trips/current/check-ins', [TicketController::class, 'checkIn'])->middleware(['throttle:60,1,conductor-trips-current-check-ins-post', 'boarding.open']);
             Route::get('trips/current/check-ins', [TicketController::class, 'checkIns'])->middleware('throttle:120,1,conductor-trips-current-check-ins');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
             // 2026-10-27 (§7): a destination group gets off in one action (the single-ticket drop-off above stays as the exception path).

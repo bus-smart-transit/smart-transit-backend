@@ -1018,7 +1018,8 @@ class TicketService
             // valid_from — use the fleet route's scheduled departure time so
             // passengers see the actual boarding time, not midnight UTC which
             // renders incorrectly when the browser converts to local time.
-            $startTime = $ticket->trip?->fleetRoute?->start_time ?? '00:00:00';
+            // Batch 74: this trip's own departure (a bus runs several trips a day), the bus's day start only as a fallback.
+            $startTime = $ticket->trip?->departure_time ?: ($ticket->trip?->fleetRoute?->start_time ?? '00:00:00');
             $validFrom = Carbon::parse($dateStr.' '.$startTime, $tz);
 
             // expires_at — end of the trip day in the app's local timezone.
