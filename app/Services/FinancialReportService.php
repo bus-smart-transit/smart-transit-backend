@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Support\BusLabel;
 use App\Support\CompanyScope;
 use App\Support\FinancialClock;
+use App\Support\RefundStatus;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
@@ -427,12 +428,7 @@ class FinancialReportService
         $cents = (int) round(((float) $r->amount) * 100);
 
         $refundCents = ($r->resolution === 'refund' && $r->res_status === 'succeeded' && $r->res_amount !== null) ? (int) round(((float) $r->res_amount) * 100) : 0;
-        $status = 'paid';
-        if ($refundCents > 0) {
-            $status = $refundCents >= $cents ? 'refunded' : 'partially_refunded';
-        } elseif ($r->resolution === 'refund' && in_array($r->res_status, ['pending', 'needs_review'], true)) {
-            $status = 'refund_pending';
-        }
+        $status = RefundStatus::of($cents, $refundCents, $r->resolution === 'refund' && in_array($r->res_status, RefundStatus::IN_PROGRESS, true));
 
         return $this->dims($r) + [
             'transaction_id' => (string) $r->transaction_reference,

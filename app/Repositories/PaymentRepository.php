@@ -1,11 +1,13 @@
 <?php
+
 namespace App\Repositories;
-use App\Models\Stop;
+
 use App\Models\Payment;
-use App\Models\Ticket;
 use App\Models\RewardTransaction;
+use App\Models\Stop;
+use App\Support\RefundStatus;
+use App\Support\TicketBoarding;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -15,6 +17,7 @@ class PaymentRepository
     {
         $payload['payment_uuid'] = $payload['payment_uuid'] ?? (string) Str::uuid();
         $payload['payment_created'] = $payload['payment_created'] ?? now();
+
         return Payment::create($payload);
     }
 
@@ -91,6 +94,14 @@ class PaymentRepository
             ->get()
             ->groupBy('payment_id');
 
+        // 2026-11-14 (user): the refunds of each purchase (cancelled trips), so the passenger's history shows them.
+        $refundsByPayment = DB::table('ticket_resolutions as res')
+            ->join('tickets', 'tickets.ticket_id', '=', 'res.ticket_id')
+            ->whereIn('tickets.payment_id', $paymentIds)
+            ->where('res.resolution', 'refund')
+            ->get(['tickets.payment_id', 'res.status', 'res.amount', 'res.fee_amount'])
+            ->groupBy('payment_id');
+
         $stopIds = [];
         foreach ($paymentRows as $payment) {
             foreach (($payment->items_payload ?? []) as $item) {
@@ -107,7 +118,7 @@ class PaymentRepository
             ->whereIn('stop_id', array_values(array_unique(array_filter($stopIds))))
             ->pluck('stop_name', 'stop_id');
 
-        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment) {
+        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment, $refundsByPayment) {
             $matchedItems = collect($payment->items_payload ?? [])
                 ->filter(function ($item) use ($passengerId) {
                     return (int) ($item['passenger_id'] ?? 0) === $passengerId;
@@ -136,19 +147,19 @@ class PaymentRepository
                 $originName = $originId ? ($stopNames[$originId] ?? "Stop {$originId}") : null;
                 $destinationName = $destinationId ? ($stopNames[$destinationId] ?? "Stop {$destinationId}") : null;
 
-                if (!$originName && isset($item['origin_label'])) {
+                if (! $originName && isset($item['origin_label'])) {
                     $originName = trim((string) $item['origin_label']) ?: null;
                 }
 
-                if (!$destinationName && isset($item['destination_label'])) {
+                if (! $destinationName && isset($item['destination_label'])) {
                     $destinationName = trim((string) $item['destination_label']) ?: null;
                 }
 
-                if (!$originName && isset($item['origin_lat'], $item['origin_lng'])) {
-                    $originName = \App\Support\TicketBoarding::BETWEEN_STOPS;
+                if (! $originName && isset($item['origin_lat'], $item['origin_lng'])) {
+                    $originName = TicketBoarding::BETWEEN_STOPS;
                 }
 
-                if (!$destinationName && isset($item['destination_lat'], $item['destination_lng'])) {
+                if (! $destinationName && isset($item['destination_lat'], $item['destination_lng'])) {
                     $destinationName = 'Custom drop-off point';
                 }
 
@@ -160,7 +171,7 @@ class PaymentRepository
                     'destination_stop_id' => $destinationId,
                     'origin_stop_name' => $originName,
                     'destination_stop_name' => $destinationName,
-                    'route_label' => ($originName && $destinationName) ? ($originName . ' to ' . $destinationName) : 'Route unavailable',
+                    'route_label' => ($originName && $destinationName) ? ($originName.' to '.$destinationName) : 'Route unavailable',
                 ];
             })->values();
 
@@ -170,6 +181,14 @@ class PaymentRepository
             $rewardDiscount = (float) $redeemedPoints;
             $grossAmount = (float) $payment->amount + $rewardDiscount;
 
+            $refunds = $refundsByPayment->get($payment->payment_id, collect());
+            $refundedCents = (int) round($refunds->where('status', 'succeeded')->sum(fn ($r) => (float) $r->amount + (float) $r->fee_amount) * 100);
+            $refundStatus = $refunds->isEmpty() ? null : RefundStatus::of(
+                (int) round((float) $payment->amount * 100),
+                $refundedCents,
+                $refunds->contains(fn ($r) => in_array($r->status, RefundStatus::IN_PROGRESS, true)),
+            );
+
             return [
                 'payment_id' => $payment->payment_id,
                 'payment_uuid' => $payment->payment_uuid,
@@ -177,6 +196,10 @@ class PaymentRepository
                 'payment_method' => $payment->payment_method,
                 'payment_channel' => $payment->payment_channel,
                 'status' => $payment->status,
+                // null = no refund was ever asked for this purchase; otherwise RefundStatus (refund_pending, refunded,
+                // partially_refunded, or paid when nothing came back). refunded_amount = what was actually returned.
+                'refund_status' => $refundStatus,
+                'refunded_amount' => $refundedCents / 100,
                 'is_valid' => (bool) $payment->is_valid,
                 'amount' => (float) $payment->amount,
                 'gross_amount' => $grossAmount,

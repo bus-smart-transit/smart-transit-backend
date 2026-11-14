@@ -252,6 +252,24 @@ it('refunds the full ticket fare, whole pesos, when the trip is cancelled before
     $this->assertDatabaseHas('user_notifications', ['user_id' => $pax->user_id, 'type' => 'ticket_refunded']);
 });
 
+it('shows the refund in the passenger\'s transaction history: pending, then refunded with the amount (2026-11-14, user)', function () {
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $ticket = rfTicket($f, $f['trip'], [], 'gcash', $pax);
+    $history = fn () => collect($this->actingAs($pax->user)->getJson('/api/passengers/payments')->assertSuccessful()->json('data.data'))
+        ->firstWhere('payment_id', $ticket->payment_id);
+
+    expect($history()['refund_status'])->toBeNull(); // nothing asked yet: the history reads "paid" as before
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    rfFakeGateway('ref_hist_1');
+    rfChoose($this, $pax, $ticket, ['choice' => 'refund'])->assertSuccessful();
+    expect($history()['refund_status'])->toBe('refund_pending')->and($history()['refunded_amount'])->toEqual(0);
+
+    rfRefundWebhook($this, 'ref_hist_1', 'succeeded')->assertOk();
+    expect($history()['refund_status'])->toBe('refunded')->and($history()['refunded_amount'])->toEqual(47.0);
+});
+
 it('prices a mid-route cancellation as fare paid minus the fare of the ridden part, to the last acknowledged stop', function () {
     $f = rfFixture();
     $pax = rfPassenger();
