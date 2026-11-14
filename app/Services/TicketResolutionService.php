@@ -481,10 +481,10 @@ class TicketResolutionService
         // Operator has to step in. With the setting empty, the ticket goes to Operator review as before.
         $review = function (string $reason) use ($base, $paid, $cancellation): array {
             $percent = self::unpricedDeductionPercent();
-            if ($percent === null) {
+            $amount = $this->flatDeductionAmount($paid);
+            if ($percent === null || $amount === null) {
                 return array_merge($base, ['amount' => null, 'basis' => ['type' => 'partial', 'stage' => $cancellation->stage, 'boarded' => true], 'needs_review' => true, 'review_reason' => $reason]);
             }
-            $amount = min($paid, max(0.0, $this->fares->roundAmount($paid * (100 - $percent) / 100)));
 
             return array_merge($base, [
                 'amount' => $amount,
@@ -538,6 +538,20 @@ class TicketResolutionService
                 'fare_rule_id' => (int) $rule->fare_rule_id,
             ],
         ]);
+    }
+
+    /**
+     * The refund when the travelled part cannot be priced: the fare paid less config refunds.unpriced_deduction_percent,
+     * whole pesos, or null when that setting is empty. Used by quote() and as the suggested amount on a review.
+     */
+    public function flatDeductionAmount(float $paid): ?float
+    {
+        $percent = self::unpricedDeductionPercent();
+        if ($percent === null) {
+            return null;
+        }
+
+        return min($paid, max(0.0, $this->fares->roundAmount($paid * (100 - $percent) / 100)));
     }
 
     /** config refunds.unpriced_deduction_percent: the share kept when the travelled part cannot be priced; null = Operator review. */
@@ -645,6 +659,12 @@ class TicketResolutionService
             'status' => $resolution->status,
             'method' => $resolution->method,
             'amount' => $resolution->amount,
+            // 2026-11-14 (user): the fare paid, and for a refund waiting for review the amount the 90 percent rule gives,
+            // so the Operator's Set amount form opens filled in (they can still change it).
+            'fare_paid' => $resolution->fare_paid !== null ? (float) $resolution->fare_paid : null,
+            'suggested_amount' => $resolution->status === TicketResolution::NEEDS_REVIEW && $resolution->fare_paid !== null
+                ? $this->flatDeductionAmount((float) $resolution->fare_paid)
+                : null,
             // Batch 45 Feature A: the booking fee given back with this refund (0 when this ticket did not carry it).
             'fee_amount' => (float) $resolution->fee_amount,
             'on_behalf' => (bool) $resolution->on_behalf,

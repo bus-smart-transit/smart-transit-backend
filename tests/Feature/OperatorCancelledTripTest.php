@@ -326,6 +326,13 @@ it('does not guess the travelled part when the last point is unknown: it is flag
     expect($resolution->status)->toBe('needs_review')->and($resolution->amount)->toBeNull()->and($ticket->fresh()->status)->toBe('refund_review');
     expect(rfRefundCalls())->toBe([]); // nothing was sent anywhere
 
+    // 2026-11-14 (user): a review made before the 90 percent rule shows the fare paid and the rule's amount, so the
+    // Operator's form opens filled in (69 x 90% = 62.10 -> 62).
+    config(['refunds.unpriced_deduction_percent' => 10]);
+    $detail = collect($this->actingAs($f['operator'])->getJson('/api/operator/refunds?status=all')->assertSuccessful()->json('data.data'))
+        ->firstWhere('key', 'ticket-'.$resolution->id)['detail'] ?? null;
+    expect($detail)->not->toBeNull()->and($detail['fare_paid'])->toEqual(69.0)->and($detail['suggested_amount'])->toEqual(62.0);
+
     // The operator sets it, within what was paid, with a recorded reason; a larger amount is capped at the fare paid.
     $this->actingAs($f['operator'])->postJson("/api/operator/ticket-resolutions/{$resolution->id}/review", ['amount' => 500, 'note' => 'Driver confirmed the bus broke down near stop D'])->assertSuccessful();
     expect($resolution->fresh()->amount)->toBe(69.0)->and($resolution->fresh()->status)->toBe('pending')->and($resolution->fresh()->actor_role)->toBe('operator');
