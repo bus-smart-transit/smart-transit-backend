@@ -185,6 +185,26 @@ it('stops by itself after the time limit, and when the trip ends', function () {
     expect(gsTick($second))->toBeFalse()->and($second->fresh()->stop_reason)->toBe('trip_ended');
 });
 
+it('ends a paused simulation once its trip is completed or its time is up, and no longer lists it', function () {
+    $f = gsTrip();
+    $first = gsStart($this, $f)->assertCreated()->json('data.id');
+    $this->patchJson("/api/admin/gps-simulations/{$first}", ['action' => 'pause'])->assertOk();
+    $g = gsTrip();
+    $second = gsStart($this, $g)->assertCreated()->json('data.id');
+    $this->patchJson("/api/admin/gps-simulations/{$second}", ['action' => 'pause'])->assertOk();
+
+    $f['trip']->update(['status' => 'completed']);
+    $this->getJson('/api/admin/gps-simulations')->assertOk()
+        ->assertJsonCount(1, 'data.simulations')
+        ->assertJsonPath('data.simulations.0.id', $second);
+    expect(GpsSimulation::findOrFail($first)->status)->toBe('stopped')
+        ->and(GpsSimulation::findOrFail($first)->stop_reason)->toBe('trip_ended');
+
+    Carbon::setTestNow(now()->addMinutes((int) config('route_geometry.gps.simulator_max_minutes') + 1));
+    $this->getJson('/api/admin/gps-simulations')->assertOk()->assertJsonCount(0, 'data.simulations');
+    expect(GpsSimulation::findOrFail($second)->stop_reason)->toBe('time_limit');
+});
+
 it('shows the tracking page bus as simulated', function () {
     $f = gsTrip();
     gsStart($this, $f)->assertCreated();

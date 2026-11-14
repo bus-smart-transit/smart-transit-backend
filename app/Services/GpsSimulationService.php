@@ -48,7 +48,15 @@ class GpsSimulationService
     /** @return array<string, mixed> what the screen needs: the switch, the choices, the simulations and the trips */
     public function overview(): array
     {
-        $active = $this->simulations->active();
+        // A paused simulation never ticks, so it could outlive its trip or its time limit. End those here instead.
+        $active = $this->simulations->active()->reject(function (GpsSimulation $sim): bool {
+            $reason = $this->endReason($sim);
+            if ($reason !== null) {
+                $this->finish($sim, $reason);
+            }
+
+            return $reason !== null;
+        })->values();
         $controlled = $active->pluck('trip_id')->map(fn ($id) => (int) $id)->all();
 
         return [
@@ -160,17 +168,13 @@ class GpsSimulationService
             if (! $simulation || $simulation->status !== GpsSimulation::RUNNING) {
                 return false;
             }
+            $reason = $this->endReason($simulation);
+            if ($reason !== null) {
+                $this->finish($simulation, $reason);
+
+                return false;
+            }
             $trip = $simulation->trip;
-            if (! $trip || ! TripProgressService::isRunning($trip->status)) {
-                $this->finish($simulation, 'trip_ended');
-
-                return false;
-            }
-            if (now()->gte($simulation->expires_at)) {
-                $this->finish($simulation, 'time_limit');
-
-                return false;
-            }
             $line = $this->line($trip);
             if ($line === null) {
                 $this->finish($simulation, 'no_route_line');
@@ -220,6 +224,20 @@ class GpsSimulationService
             'expires_at' => $simulation->expires_at?->toIso8601String(),
             'stop_reason' => $simulation->stop_reason,
         ];
+    }
+
+    /** Why a running or paused simulation must end now ('trip_ended' or 'time_limit'), or null while it may go on. */
+    private function endReason(GpsSimulation $simulation): ?string
+    {
+        $trip = $simulation->trip;
+        if (! $trip || ! TripProgressService::isRunning($trip->status)) {
+            return 'trip_ended';
+        }
+        if ($simulation->expires_at !== null && now()->gte($simulation->expires_at)) {
+            return 'time_limit';
+        }
+
+        return null;
     }
 
     private function finish(GpsSimulation $simulation, string $reason): void
