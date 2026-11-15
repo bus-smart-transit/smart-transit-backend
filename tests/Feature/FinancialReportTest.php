@@ -479,7 +479,7 @@ it('shows the online booking fee apart from the fares, once per purchase (Featur
 
     $text = $this->actingAs($w['operator'])->get('/api/operator/financials/export?type=transactions&from=2026-10-05&to=2026-10-05')->assertSuccessful()->getContent();
     $rows = array_map('str_getcsv', array_values(array_filter(preg_split('/\r?\n/', fnCsvTable($text)))));
-    expect(end($rows[0]))->toBe('Booking fee (PHP)')
+    expect(end($rows[0]))->toBe('Transaction fee (PHP)')
         ->and(collect(array_slice($rows, 1))->map(fn ($r) => end($r))->sort()->values()->all())->toBe(['0.00', '10.00']);
 });
 

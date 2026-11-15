@@ -208,6 +208,7 @@ class PaymentService
                             'origin_lng' => isset($item['origin_lng']) ? (float) $item['origin_lng'] : null,
                             'destination_lat' => isset($item['destination_lat']) ? (float) $item['destination_lat'] : null,
                             'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
+                            'discount_claim_key' => isset($item['discount_claim_key']) && $item['discount_claim_key'] !== '' ? (string) $item['discount_claim_key'] : null,
                         ]);
 
                         if (! isset($groupedItems[$itemKey])) {
@@ -224,6 +225,12 @@ class PaymentService
                         // Batch 49 item 1: price once per unique item and check the seats are free now; nothing is
                         // taken until the payment is confirmed (finalizeOnlinePayment).
                         $template = $this->ticketService->priceForCheckout($group['item'], (int) $group['count']);
+                        // Batch 75: a discount claimed online (checked against the bus's offered types); the full fare
+                        // is charged and the Chauffeur reviews the claim on the bus (DiscountClaimService).
+                        $claim = app(DiscountClaimService::class)->claimFor((int) ($group['item']['trip_id'] ?? 0), $group['item']['discount_claim_key'] ?? null);
+                        if ($claim !== null) {
+                            $template['discount_claim'] = $claim;
+                        }
 
                         for ($i = 0; $i < (int) $group['count']; $i++) {
                             $reserved = $template;
@@ -282,12 +289,13 @@ class PaymentService
                         'quantity' => 1,
                     ]];
 
-                    // Batch 45 Feature A: the booking fee is its own line on PayMongo's page and its own column here;
+                    // Batch 45 Feature A: the fee is its own line on PayMongo's page and its own column here;
                     // payments.amount stays the fares (after reward points), so revenue and rewards never include it.
-                    $bookingFee = BookingFee::online();
+                    // Batch 75: a transaction fee at PayMongo's rate for the chosen e-wallet, on the fares charged.
+                    $bookingFee = BookingFee::forChannel((string) $payload['payment_channel'], $targetCentavos / 100);
                     if ($bookingFee > 0) {
                         $lineItems[] = [
-                            'name' => 'Booking fee',
+                            'name' => 'Transaction fee',
                             'amount' => (int) round($bookingFee * 100),
                             'currency' => 'PHP',
                             'quantity' => 1,
@@ -754,7 +762,10 @@ class PaymentService
 
                 foreach ($locked->items_payload ?? [] as $reservedItem) {
                     $passengerId = $reservedItem['passenger_id'] ?? null;
-                    $this->ticketService->finalizeTicket($reservedItem, $passengerId, $locked->payment_id);
+                    $ticket = $this->ticketService->finalizeTicket($reservedItem, $passengerId, $locked->payment_id);
+                    if (! empty($reservedItem['discount_claim'])) {
+                        app(DiscountClaimService::class)->recordForTicket($ticket, $reservedItem['discount_claim']);
+                    }
                 }
 
                 return 'issued';

@@ -759,6 +759,8 @@ class TicketService
             'amount' => (float) $boardedTicket->amount,
             'status' => $boardedTicket->status,
             'boarded_at' => $boardedTicket->boarded_at,
+            // Batch 75: a discount claimed online that the Chauffeur should check now (null when none was claimed).
+            'discount_claim' => app(DiscountClaimService::class)->presentForTickets([(int) $boardedTicket->ticket_id])[(int) $boardedTicket->ticket_id] ?? null,
         ];
     }
 
@@ -1080,6 +1082,10 @@ class TicketService
             $ticket->setAttribute('run_info', $ticket->trip->getAttribute('run_info') ?? TripRunInfo::forTrip($ticket->trip));
         }
         $fleet?->makeHidden(['plate_number']);
+
+        // Batch 75: what happened to a discount claimed online (claimed, approved and refunded, rejected, lapsed). A
+        // virtual attribute, set after the save above like the others.
+        $ticket->setAttribute('discount_claim', app(DiscountClaimService::class)->presentForTickets([(int) $ticket->ticket_id])[(int) $ticket->ticket_id] ?? null);
 
         // Sync so these virtual attributes are never treated as dirty
         // if something calls save() again downstream.

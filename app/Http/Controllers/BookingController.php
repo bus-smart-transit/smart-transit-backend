@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\BookingDiscountTypesRequest;
 use App\Services\AddressSearchService;
 use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
+use App\Services\DiscountClaimService;
 use App\Services\TripAreaService;
 use App\Services\TripResolverService;
 use App\Support\BookingFee;
@@ -61,7 +63,13 @@ class BookingController extends Controller
     public function window()
     {
         // Batch 45 Feature A: the booking page shows the online booking fee before the passenger pays (BookingFee owns it).
-        return $this->success(BookingWindow::describe() + ['online_booking_fee' => BookingFee::online(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase')], 'Booking window retrieved successfully');
+        return $this->success(BookingWindow::describe() + ['transaction_fee_rates' => BookingFee::ratesPercent(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase')], 'Booking window retrieved successfully');
+    }
+
+    /** Batch 75: GET booking/discount-types?trip_id= - the discounts that may be claimed online for this trip. */
+    public function discountTypes(BookingDiscountTypesRequest $request, DiscountClaimService $claims)
+    {
+        return $this->success($claims->offeredFor((int) $request->validated('trip_id')), 'Discount types retrieved successfully');
     }
 
     // Available trips for a Manila date (default today), optionally for one journey, paginated.

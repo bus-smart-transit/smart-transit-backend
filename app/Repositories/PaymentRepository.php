@@ -102,6 +102,14 @@ class PaymentRepository
             ->get(['tickets.payment_id', 'res.status', 'res.amount', 'res.fee_amount'])
             ->groupBy('payment_id');
 
+        // Batch 75: discounts approved on the bus send part of the fare back too.
+        $discountRefundsByPayment = DB::table('discount_claims as dc')
+            ->join('tickets', 'tickets.ticket_id', '=', 'dc.ticket_id')
+            ->whereIn('tickets.payment_id', $paymentIds)
+            ->whereNotNull('dc.refund_status')
+            ->get(['tickets.payment_id', 'dc.refund_status', 'dc.refund_amount'])
+            ->groupBy('payment_id');
+
         $stopIds = [];
         foreach ($paymentRows as $payment) {
             foreach (($payment->items_payload ?? []) as $item) {
@@ -118,7 +126,7 @@ class PaymentRepository
             ->whereIn('stop_id', array_values(array_unique(array_filter($stopIds))))
             ->pluck('stop_name', 'stop_id');
 
-        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment, $refundsByPayment) {
+        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment, $refundsByPayment, $discountRefundsByPayment) {
             $matchedItems = collect($payment->items_payload ?? [])
                 ->filter(function ($item) use ($passengerId) {
                     return (int) ($item['passenger_id'] ?? 0) === $passengerId;
@@ -182,11 +190,14 @@ class PaymentRepository
             $grossAmount = (float) $payment->amount + $rewardDiscount;
 
             $refunds = $refundsByPayment->get($payment->payment_id, collect());
-            $refundedCents = (int) round($refunds->where('status', 'succeeded')->sum(fn ($r) => (float) $r->amount + (float) $r->fee_amount) * 100);
-            $refundStatus = $refunds->isEmpty() ? null : RefundStatus::of(
+            $discountRefunds = $discountRefundsByPayment->get($payment->payment_id, collect());
+            $refundedCents = (int) round($refunds->where('status', 'succeeded')->sum(fn ($r) => (float) $r->amount + (float) $r->fee_amount) * 100)
+                + (int) round($discountRefunds->where('refund_status', 'succeeded')->sum(fn ($r) => (float) $r->refund_amount) * 100);
+            $refundStatus = $refunds->isEmpty() && $discountRefunds->isEmpty() ? null : RefundStatus::of(
                 (int) round((float) $payment->amount * 100),
                 $refundedCents,
-                $refunds->contains(fn ($r) => in_array($r->status, RefundStatus::IN_PROGRESS, true)),
+                $refunds->contains(fn ($r) => in_array($r->status, RefundStatus::IN_PROGRESS, true))
+                    || $discountRefunds->contains(fn ($r) => $r->refund_status === 'pending'),
             );
 
             return [

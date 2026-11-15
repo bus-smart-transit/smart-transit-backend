@@ -3,10 +3,12 @@
 namespace App\Services;
 
 use App\Models\Ticket;
+use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Support\DropOffGroups;
+use App\Support\ServiceType;
 use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -19,6 +21,7 @@ class OccupancyService
         private TripRepository $tripRepository,
         private StopRepository $stopRepository,
         private RequestedStopPlacementService $placementService,
+        private RouteStopRepository $routeStopRepository,
     ) {}
 
     /**
@@ -123,6 +126,11 @@ class OccupancyService
             }
         }
 
+        // Batch 75: paid tickets still to board, per stop, and the next stop the bus will stop at (the first stopping point
+        // after the Driver's last acknowledged stop, in this leg's direction; the first stop before the bus leaves).
+        $waitingByStop = $this->ticketRepository->countWaitingByOriginStop($tripId);
+        $nextStop = $this->nextStopFor($trip);
+
         // Compute cumulative on-bus count in PHP — no additional DB calls
         $cumulativeOnBus = 0;
         $stopBreakdown = [];
@@ -141,6 +149,7 @@ class OccupancyService
                 'boarding_count' => $boarding,
                 'alighting_count' => $alighting,
                 'passengers_on_bus_after' => max(0, $cumulativeOnBus),
+                'waiting_count' => (int) ($waitingByStop[$stopId] ?? 0),
             ];
         }
 
@@ -148,7 +157,28 @@ class OccupancyService
             'trip_id' => $tripId,
             'route_name' => $route->route_name,
             'stops' => $stopBreakdown,
+            'next_stop' => $nextStop ? [
+                'stop_id' => (int) $nextStop->stop_id,
+                'stop_name' => $nextStop->stop?->stop_name,
+                'waiting_count' => (int) ($waitingByStop[(int) $nextStop->stop_id] ?? 0),
+            ] : null,
+            'waiting_total' => array_sum($waitingByStop),
         ];
+    }
+
+    /** The next stopping point of this leg after the Driver's last acknowledged stop, or null once the last one is done. */
+    private function nextStopFor(object $trip): ?object
+    {
+        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $service = ServiceType::normalize($trip->service_type);
+        $stops = $this->routeStopRepository->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $direction)
+            ->filter(fn ($rs) => ServiceType::isServed($service, $rs))
+            ->values();
+        $ackIndex = $trip->last_acknowledged_stop_id === null
+            ? -1
+            : $stops->search(fn ($rs) => (int) $rs->stop_id === (int) $trip->last_acknowledged_stop_id);
+
+        return $stops->get($ackIndex === false ? 0 : $ackIndex + 1);
     }
 
     /**
@@ -183,7 +213,10 @@ class OccupancyService
         $payloadStopNames = $this->stopRepository->getNamesByIds($payloadStopIds);
         $legContext = $trip->fleetRoute ? $this->placementService->contextFor($trip) : null;
 
-        $rows = $passengers->map(function ($ticket) use ($payloadStopNames, $legContext) {
+        // Batch 75: each passenger's discount claimed online, for the Chauffeur's "Review discount" button.
+        $claims = app(DiscountClaimService::class)->presentForTickets($passengers->pluck('ticket_id')->map(fn ($id) => (int) $id)->all());
+
+        $rows = $passengers->map(function ($ticket) use ($payloadStopNames, $legContext, $claims) {
             $matchedItem = $this->matchPaymentItemForTicket($ticket);
             $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
             $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
@@ -231,6 +264,7 @@ class OccupancyService
                 'requested_stop_kind' => $requestedStop ? $ticket->alightingPoint?->kind : null,
                 'drop_off_order' => $dropOffOrder,
                 'boarded_at' => $ticket->boarded_at,
+                'discount_claim' => $claims[(int) $ticket->ticket_id] ?? null,
                 // 2026-10-27 (§7): which destination group this passenger gets off with.
                 'destination_stop_id' => $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
                 'destination_key' => DropOffGroups::key(

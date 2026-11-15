@@ -198,7 +198,7 @@ class FinancialReportService
         $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
 
         return $this->csv(
-            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Booking fee (PHP)'],
+            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Transaction fee (PHP)'],
             $rows->map(fn ($t) => [
                 $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
                 $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
@@ -217,7 +217,7 @@ class FinancialReportService
         $refunds = $this->applyFilters($allRefunds, $filters)->sortBy(fn ($r) => $r['refunded_at']->getTimestamp())->values();
 
         return $this->csv(
-            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date', 'Booking fee refunded (PHP)'],
+            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date', 'Transaction fee refunded (PHP)'],
             $refunds->map(fn ($r) => [
                 $r['refunded_at']->format('Y-m-d H:i:s'), number_format($r['cents'] / 100, 2, '.', ''), $r['refund_method'] === 'cash' ? 'Cash' : 'Back to the original payment',
                 $r['transaction_id'], $r['ticket_id'], $r['sold_at']?->format('Y-m-d H:i:s') ?? '', $this->channelLabel($r['channel'], $r['method']),

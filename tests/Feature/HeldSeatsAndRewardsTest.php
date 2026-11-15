@@ -15,6 +15,7 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\ReportingRepository;
 use App\Services\RewardService;
+use App\Support\BookingFee;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
@@ -521,27 +522,36 @@ it('lets the replay window be changed, and switched off with 0', function () {
     hlPaid($this, $payment, time() - 30 * 86400)->assertOk();
 });
 
-it('adds the PHP 10 booking fee as its own line and column, apart from the fare and the reward points (Feature A)', function () {
+it('adds the transaction fee at the PayMongo GCash rate as its own line and column, apart from the fare and the reward points (Batch 75)', function () {
     $f = hlFixture();
     $passenger = hlPassenger(0);
 
     $response = hlCheckout($this, $passenger, $f)->assertSuccessful();
     $payment = Payment::where('transaction_reference', $response->json('data.payment.transaction_reference'))->firstOrFail();
     $fare = (float) $payment->amount;
+    $fee = round($fare * 0.0223 * 1.12, 2); // GCash 2.23% with 12% VAT on the fee
 
-    expect((float) $payment->fee_amount)->toBe(10.0)
-        ->and((float) $response->json('data.booking_fee'))->toBe(10.0)
-        ->and((float) $response->json('data.total_due'))->toBe(round($fare + 10, 2))
+    expect($fee)->toBeGreaterThan(0.0)
+        ->and((float) $payment->fee_amount)->toBe($fee)
+        ->and((float) $response->json('data.booking_fee'))->toBe($fee)
+        ->and((float) $response->json('data.total_due'))->toBe(round($fare + $fee, 2))
         ->and((float) $response->json('data.net_amount'))->toBe($fare);
 
     $sent = Http::recorded(fn ($request) => str_contains($request->url(), '/v1/checkout_sessions'))->last()[0]->data()['data']['attributes']['line_items'];
     expect($sent)->toHaveCount(2)
         ->and($sent[0]['amount'])->toBe((int) round($fare * 100))
-        ->and($sent[1])->toMatchArray(['name' => 'Booking fee', 'amount' => 1000, 'quantity' => 1]);
+        ->and($sent[1])->toMatchArray(['name' => 'Transaction fee', 'amount' => (int) round($fee * 100), 'quantity' => 1]);
+});
+
+it('works the transaction fee out per e-wallet and once per payment (Batch 75)', function () {
+    expect(BookingFee::forChannel('gcash', 100))->toBe(2.5)   // 2.23% + VAT = 2.4976
+        ->and(BookingFee::forChannel('maya', 100))->toBe(2.0)    // 1.79% + VAT = 2.0048
+        ->and(BookingFee::forChannel('onsite', 100))->toBe(0.0)  // cash on the bus: no fee
+        ->and(BookingFee::ratesPercent())->toBe(['gcash' => 2.4976, 'maya' => 2.0048]);
 });
 
 it('sends no fee line when the fee is set to 0 (Feature A)', function () {
-    config(['fares.online_booking_fee' => 0]);
+    config(['fares.transaction_fee.rates_percent' => ['gcash' => 0, 'maya' => 0]]);
     $f = hlFixture();
 
     $response = hlCheckout($this, hlPassenger(0), $f)->assertSuccessful();

@@ -4,9 +4,11 @@ namespace App\Services;
 
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\GpsSimulationRepository;
+use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Support\TripCapacity;
+use App\Support\TripRunInfo;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -21,6 +23,7 @@ class FleetLocationService
         private TicketRepository $ticketRepository,
         private GpsSimulationRepository $simulations,
         private WaitingBusService $waitingBuses,
+        private ?RouteStopRepository $routeStops = null,
     ) {}
 
     /**
@@ -148,6 +151,10 @@ class FleetLocationService
             // map), and whether it has arrived at its final stop.
             'departed_at' => $departedAt ? Carbon::parse($departedAt)->setTimezone(config('app.timezone'))->format('H:i') : null,
             'destination' => $final['name'] ?? null,
+            // Batch 75 (panel, 2026-11-15): where the trip starts and how it runs, so the map card reads
+            // "{first stop} -> {last stop}" and says "Non-stop" for an express that serves only its terminals.
+            'origin' => $stops->first()['name'] ?? null,
+            'service' => $this->serviceFor($trip),
             'destination_eta_time' => $arrived ? null : ($finalLive ? ($final['eta_time'] ?? null) : ($final['scheduled_time'] ?? null)),
             'destination_eta_basis' => $arrived || $final === null ? null : ($finalLive ? 'live' : 'scheduled'),
             'arrived' => $arrived,
@@ -168,6 +175,18 @@ class FleetLocationService
             'passengers' => $this->ticketRepository->countBoardedByType($tripId, 'seated')
                 + $this->ticketRepository->countBoardedByType($tripId, 'standing'),
         ];
+    }
+
+    /** @return array{type: string, label: string, non_stop: bool, served_stops: array}|null */
+    private function serviceFor(?object $trip): ?array
+    {
+        if (! $trip?->fleetRoute) {
+            return null;
+        }
+        $routeStops = ($this->routeStops ??= app(RouteStopRepository::class))
+            ->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound');
+
+        return TripRunInfo::service($trip->service_type, $routeStops);
     }
 
     // $payload = ['latitude','longitude']

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\DiscountClaimService;
 use App\Services\TicketResolutionService;
 use Illuminate\Console\Command;
 
@@ -15,9 +16,10 @@ class ReleaseDeferredRefunds extends Command
 
     protected $description = 'Sends refunds that were waiting for the payment provider\'s same-day rule to pass.';
 
-    public function handle(TicketResolutionService $resolutions): int
+    public function handle(TicketResolutionService $resolutions, DiscountClaimService $discountClaims): int
     {
-        $count = $resolutions->releaseDeferred();
+        // Batch 75: approved online discounts paid with Maya wait the same way.
+        $count = $resolutions->releaseDeferred() + $discountClaims->releaseDeferred();
         $this->info("Released {$count} deferred refund(s).");
 
         return self::SUCCESS;

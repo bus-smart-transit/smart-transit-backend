@@ -155,6 +155,8 @@ Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->
 Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:public-read');
 Route::get('booking/stops', [BookingController::class, 'stops'])->middleware('throttle:public-read');
 Route::get('booking/window', [BookingController::class, 'window'])->middleware('throttle:public-read');
+// Batch 75: the discounts a passenger may claim online for a trip (checked by the Chauffeur on the bus).
+Route::get('booking/discount-types', [BookingController::class, 'discountTypes'])->middleware('throttle:public-read');
 Route::get('booking/link', [BookingController::class, 'link'])->middleware('throttle:public-read');
 Route::get('booking/departures', [BookingController::class, 'departures'])->middleware('throttle:public-read');
 Route::get('booking/trips', [BookingController::class, 'trips'])->middleware('throttle:public-read');
@@ -238,6 +240,8 @@ Route::prefix('operator')
         Route::get('routes', [RouteController::class, 'index']);
         Route::post('routes', [RouteController::class, 'store'])->middleware(['company.admin', 'throttle:10,1,mgmt-routes-post']);
         Route::get('routes/{routeId}', [RouteController::class, 'show']);
+        // Batch 75: the fares a route's stops produce for one bus, read-only (the same quote passengers are charged).
+        Route::get('routes/{routeId}/fares', [RouteController::class, 'fareTable'])->whereNumber('routeId')->middleware('throttle:60,1,mgmt-routes-fares');
         // Batch 59: the Company Admin deletes a route that was never used (no stops, buses or fare rules).
         Route::delete('routes/{routeId}', [RouteController::class, 'destroy'])->whereNumber('routeId')->middleware(['company.admin', 'throttle:10,1,mgmt-routes-delete']);
         Route::get('stops', [StopController::class, 'index']);
@@ -473,6 +477,8 @@ Route::prefix('conductor')
             Route::post('trips/current/check-ins', [TicketController::class, 'checkIn'])->middleware(['throttle:60,1,conductor-trips-current-check-ins-post', 'boarding.open']);
             Route::get('trips/current/check-ins', [TicketController::class, 'checkIns'])->middleware('throttle:120,1,conductor-trips-current-check-ins');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
+            // Batch 75: a discount claimed online, approved or rejected after the Chauffeur checks the ID.
+            Route::post('tickets/{ticketId}/discount-claim', [TicketController::class, 'reviewDiscountClaim'])->whereNumber('ticketId')->middleware(['throttle:60,1,conductor-discount-claim', 'boarding.open']);
             // 2026-10-27 (§7): a destination group gets off in one action (the single-ticket drop-off above stays as the exception path).
             Route::post('trips/current/drop-off-groups/confirm', [TicketController::class, 'confirmDropOffGroup'])->middleware('throttle:60,1,conductor-trips-current-drop-off-groups-confirm-post');
         });

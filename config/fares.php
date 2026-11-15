@@ -11,13 +11,17 @@ return [
 
     // Allowed fleets.vehicle_class values (key => label shown on screens). Edit this list to add a class.
     'vehicle_classes' => [
-        'ordinary' => 'Ordinary',
+        // Batch 75 (panel, 2026-11-15): shown as "Non-aircon"; the stored key stays 'ordinary'.
+        'ordinary' => 'Non-aircon',
         'aircon' => 'Aircon',
     ],
 
     // Names that are accepted on input and stored as another class ("Deluxe is part of aircon").
     'vehicle_class_aliases' => [
         'deluxe' => 'aircon',
+        'non-aircon' => 'ordinary',
+        'non aircon' => 'ordinary',
+        'nonaircon' => 'ordinary',
     ],
 
     // fare_rules.rounding_mode values: nearest = half up, ceiling = always up, to the rounding increment.
@@ -30,7 +34,15 @@ return [
     // the amount they were sold at.
     'rounding_increment' => env('FARE_ROUNDING_INCREMENT', '1.00'),
 
-    // Batch 45 Feature A (decided 2026-11-04): a fixed booking fee per ONLINE payment, whatever the number of tickets
-    // (App\Support\BookingFee owns the rules). Cash sales pay none. 0 turns it off. Test-mode capstone only (L-65).
-    'online_booking_fee' => (float) env('ONLINE_BOOKING_FEE', 10),
+    // Batch 75 (user, 2026-11-15): the online transaction fee follows PayMongo's published e-wallet rates
+    // (paymongo.com/pricing, read 2026-11-15: GCash 2.23%, Maya 1.79%, no fixed part, 12% VAT charged on the fee),
+    // a percentage of the fares, once per payment (App\Support\BookingFee owns the rules). Cash sales pay none.
+    // A capstone mock-up of PayMongo's charge in test mode, not a live reading. 0 turns a channel's fee off (L-65).
+    'transaction_fee' => [
+        'rates_percent' => [
+            'gcash' => (float) env('TRANSACTION_FEE_GCASH_PERCENT', 2.23),
+            'maya' => (float) env('TRANSACTION_FEE_MAYA_PERCENT', 1.79),
+        ],
+        'vat_percent' => (float) env('TRANSACTION_FEE_VAT_PERCENT', 12),
+    ],
 ];

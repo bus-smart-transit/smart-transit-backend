@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ConfirmDropOffGroupRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
+use App\Http\Requests\ReviewDiscountClaimRequest;
 use App\Http\Requests\ScanGroupRequest;
 use App\Http\Requests\ScanTicketRequest;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TicketRepository;
 use App\Services\AuditLogger;
 use App\Services\ConductorShiftService;
+use App\Services\DiscountClaimService;
 use App\Services\DropOffGroupService;
 use App\Services\LegProgressionService;
 use App\Services\MidTripBoardingService;
@@ -80,6 +83,31 @@ class TicketController extends Controller
         );
 
         return $this->success($ticket, 'Ticket validated and boarded successfully');
+    }
+
+    /**
+     * Batch 75: POST conductor/tickets/{ticketId}/discount-claim - the Chauffeur approves (the difference goes back
+     * through PayMongo) or rejects a discount the passenger claimed online, after checking their valid ID.
+     */
+    public function reviewDiscountClaim(ReviewDiscountClaimRequest $request, int $ticketId, TicketRepository $tickets, DiscountClaimService $claims)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+        $guard = $this->assertConductorShiftForCurrentTrip($request);
+        if ($guard !== null) {
+            return $guard;
+        }
+        $trip = $this->tripService->getCurrentTripForConductor((int) $companyUser->company_user_id);
+        $ticket = $tickets->findById($ticketId);
+        if (! $trip || ! $ticket) {
+            return $this->error('Ticket not found on this trip.', 404);
+        }
+
+        $claim = $claims->review($ticket, $request->validated('decision') === 'approve', $trip, $request->user());
+
+        return $this->success($claims->present($claim), $claim->status === 'approved' ? 'Discount approved' : 'Discount rejected');
     }
 
     // Conductor: scan a group QR to board all tickets under one transaction at once

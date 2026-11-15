@@ -325,6 +325,24 @@ class TicketRepository
     }
 
     /**
+     * Batch 75: paid tickets not scanned yet, per boarding stop: the passengers the Chauffeur should expect there.
+     *
+     * @return array<int, int> stop_id => count
+     */
+    public function countWaitingByOriginStop(int $tripId): array
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->where('status', 'valid')
+            ->whereNotNull('origin_stop_id')
+            ->whereHas('payment', fn ($q) => $q->where('status', 'paid')->where('is_valid', true))
+            ->selectRaw('origin_stop_id AS stop_id, COUNT(*) AS cnt')
+            ->groupBy('origin_stop_id')
+            ->pluck('cnt', 'stop_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+    }
+
+    /**
      * Boarding distances (metres along the route) of tickets that boarded between stops: they have no origin stop.
      *
      * @return array<int, int>

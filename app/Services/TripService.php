@@ -210,6 +210,8 @@ class TripService
         $this->closeShiftLogsForTrip($tripId);
         // Passenger In: check-ins still waiting at End Trip were never paid (the leakage list).
         app(PendingBoardingService::class)->closeOpenForTrip($tripId, PendingBoarding::UNPAID);
+        // Batch 75: discounts claimed online that nobody reviewed on the bus lapse (the full fare stays).
+        app(DiscountClaimService::class)->lapseForTrip($tripId);
         // A shift block finishes with its last leg (pending the Operator's review).
         app(ShiftBlockLifecycleService::class)->legEnded($tripId);
 
@@ -276,6 +278,7 @@ class TripService
             $this->closeShiftLogsForTrip($tripId);
             // Passenger In: unpaid at completion (leakage list); closed without blame when the trip is cancelled.
             app(PendingBoardingService::class)->closeOpenForTrip($tripId, $newStatus === 'completed' ? PendingBoarding::UNPAID : PendingBoarding::CANCELLED);
+            app(DiscountClaimService::class)->lapseForTrip($tripId);
             app(ShiftBlockLifecycleService::class)->legEnded($tripId);
             if ($newStatus === 'completed') {
                 // Batch 60 item 1: same as End Trip. A cancelled trip's tickets go through TripCancellationService instead.

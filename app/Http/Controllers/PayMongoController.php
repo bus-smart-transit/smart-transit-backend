@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\DiscountClaimService;
 use App\Services\PaymentService;
 use App\Services\PayMongoService;
 use App\Services\TicketResolutionService;
@@ -194,7 +195,8 @@ class PayMongoController extends Controller
     /** A ticket refund (trip cancelled), else (Batch 49 item 1) the automatic refund of a payment that made no ticket. */
     private function settleRefund(array $refund): void
     {
-        if (! $this->ticketResolutions->handleGatewayRefund($refund)) {
+        if (! $this->ticketResolutions->handleGatewayRefund($refund)
+            && ! app(DiscountClaimService::class)->handleGatewayRefund($refund)) {
             $this->unfulfilledPayments->handleGatewayRefund($refund);
         }
     }

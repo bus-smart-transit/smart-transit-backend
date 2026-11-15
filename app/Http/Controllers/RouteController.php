@@ -3,11 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\AddRouteStopRequest;
+use App\Http\Requests\RouteFareTableRequest;
 use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\UpdateRouteCustomDropoffRequest;
 use App\Http\Requests\UpdateRouteStopExpressRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
 use App\Models\Route;
+use App\Repositories\FleetRouteRepository;
+use App\Services\FleetService;
+use App\Services\RouteFareTableService;
 use App\Services\RouteGeometryGenerator;
 use App\Services\RouteService;
 use App\Traits\ApiResponse;
@@ -31,6 +35,29 @@ class RouteController extends Controller
         $route = $this->routeService->getRouteWithStops($routeId, $request->user());
 
         return $route ? $this->success($route, 'Route retrieved successfully') : $this->error('Route not found.', 404);
+    }
+
+    /**
+     * Batch 75 (panel, 2026-11-15): GET operator/routes/{routeId}/fares - the fares from one stop to every later stop
+     * for one of the company's buses on this route, as passengers are charged them.
+     */
+    public function fareTable(RouteFareTableRequest $request, int $routeId, FleetService $fleets, FleetRouteRepository $fleetRoutes, RouteFareTableService $table)
+    {
+        if (! $this->routeService->getRouteWithStops($routeId, $request->user())) {
+            return $this->error('Route not found.', 404);
+        }
+        $fleetRouteId = (int) $request->validated('fleet_route_id');
+        $fleets->assertFleetRouteOfCompany((int) $request->user()?->companyProfile?->company_user_id, $fleetRouteId);
+        $fleetRoute = $fleetRoutes->findWithRoute($fleetRouteId);
+        if (! $fleetRoute || (int) $fleetRoute->route_id !== $routeId) {
+            return $this->error('That bus does not run this route.', 422);
+        }
+        $origin = $request->validated('origin_stop_id');
+
+        return $this->success(
+            $table->forFleetRoute($fleetRoute, $request->validated('direction'), $request->validated('service_type'), $origin === null ? null : (int) $origin),
+            'Fare table retrieved successfully'
+        );
     }
 
     public function store(StoreRouteRequest $request)

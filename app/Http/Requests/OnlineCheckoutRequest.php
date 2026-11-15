@@ -28,8 +28,10 @@ class OnlineCheckoutRequest extends FormRequest
             'items' => 'required|array|min:1|max:'.(int) config('booking.max_seats_per_purchase'),
             'items.*.booking_date' => ['nullable', 'date', 'after_or_equal:today', 'before_or_equal:'.(BookingWindow::lastDateString() ?? '9999-12-31')],
             'items.*.journey_leg' => 'prohibited',
-            // 2026-10-27: discounts are given on the bus only; online fares earn reward points.
+            // 2026-10-27: a cash discount is applied on the bus only; online fares earn reward points.
             'items.*.discount_type_key' => 'prohibited',
+            // Batch 75: online, a discount is CLAIMED (full fare paid) and checked by the Chauffeur on the bus.
+            'items.*.discount_claim_key' => 'nullable|string|max:32',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             // Online tickets are for seats; standing places are sold only on the bus (TicketService::priceItem).
             'items.*.seat_type' => 'required|string|in:seated',
