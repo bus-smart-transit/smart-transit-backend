@@ -29,6 +29,27 @@ class TripRepository
         return Trip::create($payload);
     }
 
+    /**
+     * Batch 77: today's legs that can still reach one of these stops: not started yet, boarding or on the road, on a
+     * route that has one of the stops.
+     *
+     * @param  array<int, int>  $stopIds
+     * @return Collection<int, Trip>
+     */
+    public function findOpenOnDateAtStops(array $stopIds, string $date): Collection
+    {
+        if ($stopIds === []) {
+            return new Collection;
+        }
+
+        return Trip::with(['fleetRoute.fleet'])
+            ->where('trip_date', $date)
+            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
+            ->whereHas('fleetRoute.route.routeStops', fn ($q) => $q->whereIn('stop_id', $stopIds))
+            ->orderBy('departure_time')
+            ->get();
+    }
+
     public function findById(int $tripId): ?Trip
     {
         return Trip::with('fleetRoute.fleet')->find($tripId);

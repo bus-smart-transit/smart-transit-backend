@@ -35,6 +35,7 @@ use App\Http\Controllers\ShiftBlockController;
 use App\Http\Controllers\SignInController;
 use App\Http\Controllers\StaffAuthController;
 use App\Http\Controllers\StaffDirectoryController;
+use App\Http\Controllers\StopArrivalsController;
 use App\Http\Controllers\StopController;
 use App\Http\Controllers\TextMessagesController;
 use App\Http\Controllers\TicketController;
@@ -150,6 +151,8 @@ Route::get('/region/place', [RegionController::class, 'place'])->middleware('thr
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:public-read');
 Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:public-read');
+// Batch 77: the buses coming to a stop (Track Bus stop pin card).
+Route::get('stops/{code}/arrivals', [StopArrivalsController::class, 'show'])->where('code', '[A-Za-z0-9_-]+')->middleware('throttle:public-read');
 Route::get('trips/{tripId}/timeline', [TripTimelineController::class, 'show'])->middleware('throttle:public-read');
 // Batch 28 Stage 3, item 10: restricted areas and designated drop-off points for a trip (feedback only; the server re-checks).
 Route::get('trips/{tripId}/dropoff-options', [DropoffOptionsController::class, 'show'])->middleware('throttle:public-read');

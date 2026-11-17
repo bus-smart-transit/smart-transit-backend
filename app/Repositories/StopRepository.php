@@ -30,6 +30,12 @@ class StopRepository
         return Stop::query()->whereIn('municipality', $towns)->pluck('stop_id')->map(fn ($id) => (int) $id)->all();
     }
 
+    /** Batch 77: a stop by its readable code (the code in booking links and on the Track Bus pins). */
+    public function findByCode(string $code): ?Stop
+    {
+        return Stop::where('stop_code', $code)->first();
+    }
+
     public function findById(int $stopId): ?Stop
     {
         return Stop::find($stopId);

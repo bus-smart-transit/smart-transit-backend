@@ -38,4 +38,15 @@ return [
     // Misses (unknown or malformed links) allowed per client in `miss_window_minutes`.
     'miss_limit' => (int) env('TRACKING_MISS_LIMIT', 20),
     'miss_window_minutes' => (int) env('TRACKING_MISS_WINDOW_MIN', 10),
+
+    // Batch 77 (user, 2026-11-17): the "Next arrivals" card of a stop pin on Track Bus (StopArrivalsService).
+    'arrivals' => [
+        // A bus this many minutes or more behind its timetable at the stop is shown as Delayed.
+        'delayed_after_minutes' => (int) env('ARRIVALS_DELAYED_AFTER_MINUTES', 5),
+        // How many buses the card shows first, and the most "View all arrivals" lists.
+        'default_limit' => (int) env('ARRIVALS_DEFAULT_LIMIT', 3),
+        'max_limit' => (int) env('ARRIVALS_MAX_LIMIT', 20),
+        // Only buses due at the stop within this many hours.
+        'window_hours' => (int) env('ARRIVALS_WINDOW_HOURS', 3),
+    ],
 ];
