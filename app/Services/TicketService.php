@@ -690,6 +690,11 @@ class TicketService
             throw ValidationException::withMessages(['ticket' => ['Ticket not found.']]);
         }
 
+        // Batch 77: a missed ticket gets the plain reason and what to do (a new ticket), not "already missed".
+        if ($ticket->status === 'missed') {
+            throw ValidationException::withMessages(['ticket' => [TicketExpiryService::MISSED_MESSAGE]]);
+        }
+
         if ($ticket->status !== 'valid') {
             throw ValidationException::withMessages([
                 'ticket' => ["Ticket is already {$ticket->status}."],

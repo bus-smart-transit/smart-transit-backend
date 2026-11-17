@@ -290,3 +290,13 @@ it('gives the Chauffeur and the Operator the same count, from paid tickets only'
         expect($mine['passenger_count'])->toBe($count);
     }
 });
+
+it('gives the plain missed message when an already missed ticket is scanned again', function () {
+    $f = b76Fixture('departed');
+    $atA = b76Unscanned($f, 'A', 'C');
+    app(TicketExpiryService::class)->markMissedForTrip($f['trip']->fresh());
+    $this->mock(TripService::class, fn ($mock) => $mock->shouldReceive('getCurrentTripForConductor')->andReturn($f['trip']->fresh()));
+
+    expect(fn () => app(TicketService::class)->validateScan(['ticket_uuid' => $atA->ticket_uuid], 999))
+        ->toThrow(ValidationException::class, TicketExpiryService::MISSED_MESSAGE);
+});
