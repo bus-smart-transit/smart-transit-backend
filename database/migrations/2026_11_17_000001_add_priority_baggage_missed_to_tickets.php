@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Batch 76 (user, 2026-11-17): a ticket can ask for a priority seat (senior, PWD, pregnant), can carry baggage in the
- * compartment (its own fee, kept apart from the fare so a discount never touches it), and is marked "missed" when the
- * bus leaves the passenger's boarding stop before the ticket was scanned (the seat goes back on sale).
+ * compartment (the baggage fee is added to the ticket's fare; only the yes/no is kept, so the Chauffeur knows to load
+ * it), and is marked "missed" when the bus leaves the passenger's boarding stop before the ticket was scanned.
  */
 return new class extends Migration
 {
@@ -15,15 +15,15 @@ return new class extends Migration
     {
         Schema::table('tickets', function (Blueprint $table) {
             $table->string('priority_type', 16)->nullable()->after('discount_id_checked_at');
-            $table->decimal('baggage_fee', 10, 2)->default(0)->after('priority_type');
-            $table->timestamp('missed_at')->nullable()->after('baggage_fee');
+            $table->boolean('has_baggage')->default(false)->after('priority_type');
+            $table->timestamp('missed_at')->nullable()->after('has_baggage');
         });
     }
 
     public function down(): void
     {
         Schema::table('tickets', function (Blueprint $table) {
-            $table->dropColumn(['priority_type', 'baggage_fee', 'missed_at']);
+            $table->dropColumn(['priority_type', 'has_baggage', 'missed_at']);
         });
     }
 };

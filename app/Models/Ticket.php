@@ -97,9 +97,9 @@ class Ticket extends Model
         'original_amount',
         'discount_amount',
         'discount_id_checked_at',
-        // Batch 76: priority seat, baggage compartment fee, missed at the boarding stop.
+        // Batch 76: priority seat, baggage in the compartment (its fee is in the amount), missed at the boarding stop.
         'priority_type',
-        'baggage_fee',
+        'has_baggage',
         'missed_at',
     ];
 
@@ -131,7 +131,7 @@ class Ticket extends Model
             'original_amount' => 'float',
             'discount_amount' => 'float',
             'discount_id_checked_at' => 'datetime',
-            'baggage_fee' => 'float',
+            'has_baggage' => 'boolean',
             'missed_at' => 'datetime',
         ];
     }

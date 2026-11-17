@@ -277,6 +277,30 @@ class TicketRepository
      * @param  list<int>  $tripIds
      * @return array<int, int> trip_id => count (trips with nobody on board are left out)
      */
+    /**
+     * Batch 76: paid tickets per status for these trips (the passenger count an inspector checks; TripPassengerCount).
+     *
+     * @param  array<int, int>  $tripIds
+     * @return array<int, array<string, int>> trip id => [status => count]
+     */
+    public function countPaidByStatusForTrips(array $tripIds): array
+    {
+        if ($tripIds === []) {
+            return [];
+        }
+        $out = [];
+        Ticket::whereIn('trip_id', $tripIds)
+            ->whereHas('payment', fn ($q) => $q->where('status', 'paid')->where('is_valid', true))
+            ->groupBy('trip_id', 'status')
+            ->selectRaw('trip_id, status, count(*) as n')
+            ->get()
+            ->each(function ($row) use (&$out) {
+                $out[(int) $row->trip_id][(string) $row->status] = (int) $row->n;
+            });
+
+        return $out;
+    }
+
     public function countBoardedByTrips(array $tripIds): array
     {
         if ($tripIds === []) {
@@ -356,7 +380,7 @@ class TicketRepository
 
         return [
             'priority' => (clone $waiting)->whereNotNull('priority_type')->count(),
-            'baggage' => (clone $waiting)->where('baggage_fee', '>', 0)->count(),
+            'baggage' => (clone $waiting)->where('has_baggage', true)->count(),
         ];
     }
 

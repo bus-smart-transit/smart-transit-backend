@@ -561,9 +561,9 @@ class TicketService
             'original_amount' => $reserved['original_amount'] ?? null,
             'discount_amount' => $reserved['discount_amount'] ?? null,
             'discount_id_checked_at' => $reserved['discount_id_checked_at'] ?? null,
-            // Batch 76: priority seat and the baggage compartment fee (kept apart from the fare).
+            // Batch 76: priority seat, and whether there is baggage (its fee is already in the amount).
             'priority_type' => $reserved['priority_type'] ?? null,
-            'baggage_fee' => (float) ($reserved['baggage_fee'] ?? 0),
+            'has_baggage' => ! empty($reserved['has_baggage']),
         ]);
 
         if ($passengerId) {
@@ -615,8 +615,8 @@ class TicketService
     }
 
     /**
-     * Batch 76: a cash sale's priority seat (chosen, or implied by a senior or PWD discount) and baggage fee. The fee is on
-     * the full fare, before any discount (BaggageFee).
+     * Batch 76: a cash sale's priority seat (chosen, or implied by a senior or PWD discount) and baggage. The fee is worked
+     * out on the full fare, before any discount (BaggageFee), and added to the amount.
      *
      * @param  array<string, mixed>  $reserved
      * @param  array<string, mixed>  $item
@@ -627,6 +627,8 @@ class TicketService
         $reserved['priority_type'] = PriorityBoarding::resolve($item['priority_type'] ?? null, $reserved['discount_type_key'] ?? ($item['discount_type_key'] ?? null));
         $fullFare = (float) ($reserved['original_amount'] ?? $reserved['amount'] ?? 0);
         $reserved['baggage_fee'] = ! empty($item['baggage']) ? BaggageFee::forFare($fullFare) : 0.0;
+        $reserved['has_baggage'] = $reserved['baggage_fee'] > 0;
+        $reserved['amount'] = round((float) ($reserved['amount'] ?? 0) + $reserved['baggage_fee'], 2);
 
         return $reserved;
     }
@@ -845,8 +847,7 @@ class TicketService
             ->where('payments.status', 'paid')
             ->where('payments.is_valid', true)
             ->where('tickets.status', '!=', 'rebooked')
-            // Batch 76: a ticket's money includes its baggage fee.
-            ->get([DB::raw('tickets.amount + COALESCE(tickets.baggage_fee, 0) AS amount'), 'payments.payment_method']);
+            ->get(['tickets.amount', 'payments.payment_method']);
 
         $isCash = fn ($row) => in_array($row->payment_method, ['cash', 'onsite'], true);
         $onsiteAmount = (float) $paid->filter($isCash)->sum('amount');

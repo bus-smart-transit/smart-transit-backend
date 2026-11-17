@@ -12,6 +12,7 @@ use App\Support\PriorityBoarding;
 use App\Support\ServiceType;
 use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
+use App\Support\TripPassengerCount;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 
@@ -168,6 +169,8 @@ class OccupancyService
                 'baggage_count' => $nextExtras['baggage'],
             ] : null,
             'waiting_total' => array_sum($waitingByStop),
+            // Batch 76: the leg's passenger count, for an inspector to compare with the people on the bus.
+            'passenger_count' => TripPassengerCount::from($this->ticketRepository->countPaidByStatusForTrips([$tripId])[$tripId] ?? []),
         ];
     }
 
@@ -273,7 +276,7 @@ class OccupancyService
                 // Batch 76: priority seat and baggage in the compartment.
                 'priority_type' => $ticket->priority_type,
                 'priority_label' => PriorityBoarding::label($ticket->priority_type),
-                'baggage' => (float) $ticket->baggage_fee > 0,
+                'baggage' => (bool) $ticket->has_baggage,
                 // 2026-10-27 (§7): which destination group this passenger gets off with.
                 'destination_stop_id' => $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
                 'destination_key' => DropOffGroups::key(

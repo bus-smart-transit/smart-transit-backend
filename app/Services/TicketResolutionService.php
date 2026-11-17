@@ -566,19 +566,19 @@ class TicketResolutionService
     }
 
     /**
-     * The share of the payment this ticket accounts for: its fare plus its baggage fee (Batch 76: a refunded ticket
-     * refunds its baggage too), scaled down if reward points lowered the payment.
+     * The share of the payment this ticket accounts for: its amount (Batch 76: any baggage fee is part of it, so a
+     * refunded ticket refunds its baggage too), scaled down if reward points lowered the payment.
      */
     public function farePaid(Ticket $ticket): float
     {
         $payment = $ticket->payment;
-        $fare = (float) $ticket->amount + (float) $ticket->baggage_fee;
+        $fare = (float) $ticket->amount;
         if (! $payment) {
             return $fare;
         }
 
         // A rebooked ticket's replacement shares the payment: count each journey once.
-        $sum = (float) Ticket::where('payment_id', $payment->payment_id)->where('status', '!=', self::REBOOKED)->sum(DB::raw('amount + COALESCE(baggage_fee, 0)'));
+        $sum = (float) Ticket::where('payment_id', $payment->payment_id)->where('status', '!=', self::REBOOKED)->sum('amount');
         if ($sum > 0 && (float) $payment->amount < $sum - 0.005) {
             return round($fare * (float) $payment->amount / $sum, 2);
         }
@@ -722,7 +722,7 @@ class TicketResolutionService
             'boarding_distance_m' => $ticket->boarding_distance_m,
             'alighting_distance_m' => $ticket->alighting_distance_m,
             // Batch 76: the baggage and priority seat move with the passenger.
-            'baggage_fee' => (float) $ticket->baggage_fee,
+            'has_baggage' => (bool) $ticket->has_baggage,
             'priority_type' => $ticket->priority_type,
         ]);
 

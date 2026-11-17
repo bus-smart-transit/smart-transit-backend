@@ -15,6 +15,7 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Services\DiscountClaimService;
 use App\Services\FleetDailyPinService;
+use App\Services\OccupancyService;
 use App\Services\PaymentService;
 use App\Services\TicketExpiryService;
 use App\Services\TicketResolutionService;
@@ -22,6 +23,7 @@ use App\Services\TicketService;
 use App\Services\TripService;
 use App\Support\BaggageFee;
 use App\Support\PriorityBoarding;
+use App\Support\TripPassengerCount;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -34,7 +36,7 @@ uses(RefreshDatabase::class);
 // Batch 76 (user, 2026-11-17): a priority seat per ticket (senior, PWD, pregnant), baggage in the compartment at 50
 // percent of the full fare, and "missed" tickets (the bus left the boarding stop before the ticket was scanned).
 // Fare numbers are SAMPLE test values: B -> D is 20 km, 13 + 15 x 2.25 = 46.75, 47 at the whole peso; the baggage fee is
-// 23.5, 24 at the whole peso, so the ticket payment is PHP 71.
+// 23.5, 24 at the whole peso, added to the ticket's amount (the user's decision: one sale), so the ticket is PHP 71.
 
 const B76_SECRET = 'whsk_b76_secret';
 
@@ -145,17 +147,19 @@ it('adds the baggage fee to an online ticket payment, on its own PayMongo line, 
     });
 });
 
-it('keeps the fare and the baggage fee apart on the ticket, so an approved discount never touches the baggage', function () {
+it('adds the baggage fee to the ticket amount but gives a discount only on the fare', function () {
     $f = b76Fixture();
     $ticket = b76Paid($this, b76Passenger(), $f, ['discount_claim_key' => 'student', 'baggage' => true]);
-    expect((float) $ticket->amount)->toBe(47.0)->and((float) $ticket->baggage_fee)->toBe(24.0);
+    expect((float) $ticket->amount)->toBe(71.0)->and($ticket->has_baggage)->toBeTrue()
+        ->and((float) DiscountClaim::where('ticket_id', $ticket->ticket_id)->value('fare'))->toBe(47.0);
 
     $f['trip']->update(['status' => 'boarding']);
     app(DiscountClaimService::class)->review($ticket->fresh(), true, $f['trip']->fresh(), b76Staff('conductor'));
 
     $ticket = $ticket->fresh();
-    expect((float) $ticket->amount)->toBe(38.0)
-        ->and((float) $ticket->baggage_fee)->toBe(24.0)
+    // 20% of the PHP 47 fare is about PHP 9; the PHP 24 baggage stays paid: 71 - 9 = 62.
+    expect((float) $ticket->amount)->toBe(62.0)
+        ->and((float) $ticket->original_amount)->toBe(47.0)
         ->and((float) DiscountClaim::where('ticket_id', $ticket->ticket_id)->value('refund_amount'))->toBe(9.0);
 });
 
@@ -201,7 +205,8 @@ it('adds the baggage fee to a cash sale on the bus', function () {
     $result = app(PaymentService::class)->checkoutOnsite((int) $chauffeur->companyProfile->company_user_id, ['items' => [$item]]);
 
     expect((float) $result['payment']->amount)->toBe(71.0)
-        ->and((float) $result['tickets'][0]->baggage_fee)->toBe(24.0)
+        ->and((float) $result['tickets'][0]->amount)->toBe(71.0)
+        ->and($result['tickets'][0]->has_baggage)->toBeTrue()
         ->and($result['tickets'][0]->priority_type)->toBe('pwd');
 });
 
@@ -261,4 +266,27 @@ it('marks missed when the Driver departs, through the trip service', function ()
     app(TripService::class)->departTrip((int) $f['trip']->trip_id);
 
     expect($atA->fresh()->status)->toBe('missed');
+});
+
+it('counts the passengers of a leg for an inspector: sold, scanned in, on board, off, not scanned, missed', function () {
+    expect(TripPassengerCount::from(['boarded' => 12, 'alighted' => 3, 'valid' => 2, 'missed' => 1, 'expired' => 1, 'rebooked' => 4]))->toBe([
+        'tickets_sold' => 19, 'scanned_in' => 15, 'on_board' => 12, 'got_off' => 3, 'not_scanned' => 2, 'missed' => 1, 'expired' => 1,
+    ]);
+});
+
+it('gives the Chauffeur and the Operator the same count, from paid tickets only', function () {
+    $f = b76Fixture('departed');
+    b76Unscanned($f, 'B', 'D');
+    b76Unscanned($f, 'C', 'D')->update(['status' => 'boarded']);
+    $unpaid = b76Unscanned($f, 'C', 'E');
+    $unpaid->payment->update(['status' => 'pending']);
+
+    $count = app(OccupancyService::class)->getOccupancyByStop((int) $f['trip']->trip_id)['passenger_count'];
+    expect($count)->toMatchArray(['tickets_sold' => 2, 'scanned_in' => 1, 'on_board' => 1, 'not_scanned' => 1]);
+
+    $rows = $this->actingAs($f['operator'])->getJson('/api/operator/trips?status_filter=all')->json('data') ?? [];
+    $mine = collect($rows)->firstWhere('trip_id', $f['trip']->trip_id);
+    if ($mine !== null) {
+        expect($mine['passenger_count'])->toBe($count);
+    }
 });

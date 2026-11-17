@@ -15,6 +15,7 @@ use App\Services\FleetService;
 use App\Services\TripActionGuard;
 use App\Services\TripAssignmentRequestService;
 use App\Services\TripService;
+use App\Support\TripPassengerCount;
 use App\Support\TripRunInfo;
 use App\Support\TripTiming;
 use App\Traits\ApiResponse;
@@ -335,6 +336,9 @@ class TripController extends Controller
         // §4.7: how many passengers are on board now, for the Operator's Track fleet view (tickets sold stays separate).
         $onboard = app(TicketRepository::class)->countBoardedByTrips($trips->pluck('trip_id')->map(fn ($id) => (int) $id)->all());
         $trips->each(fn ($trip) => $trip->setAttribute('onboard_count', $onboard[(int) $trip->trip_id] ?? 0));
+        // Batch 76: each leg's passenger count (sold, scanned in, on board, off, not scanned, missed, expired).
+        $byStatus = app(TicketRepository::class)->countPaidByStatusForTrips($trips->pluck('trip_id')->map(fn ($id) => (int) $id)->all());
+        $trips->each(fn ($trip) => $trip->setAttribute('passenger_count', TripPassengerCount::from($byStatus[(int) $trip->trip_id] ?? [])));
 
         return response()->json([
             'status' => 'success',

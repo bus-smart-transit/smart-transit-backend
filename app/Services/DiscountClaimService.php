@@ -88,7 +88,8 @@ class DiscountClaimService
             'discount_label' => $claim['label'],
             'discount_rate' => $claim['rate'],
             'status' => DiscountClaim::CLAIMED,
-            'fare' => (float) $ticket->amount,
+            // Batch 76: the fare without any baggage fee (set at checkout), so the discount never applies to baggage.
+            'fare' => (float) ($claim['fare'] ?? $ticket->amount),
         ]);
     }
 
@@ -136,9 +137,10 @@ class DiscountClaimService
                 'not_before' => $refund > 0 ? $this->waitUntil($locked->payment, $refund) : null,
                 'completed_at' => $refund > 0 ? null : Carbon::now('UTC'),
             ]);
-            // Recorded like a cash discount, so every report counts the discounted fare.
+            // Recorded like a cash discount, so every report counts the discounted fare. Batch 76: the refund comes off
+            // the ticket's amount, so a baggage fee in it stays paid (the discount is only on the fare).
             $locked->update([
-                'amount' => $discounted,
+                'amount' => round(max(0.0, (float) $locked->amount - $refund), 2),
                 'original_amount' => $fare,
                 'discount_amount' => $refund,
                 'discount_type_key' => $claim->discount_type_key,
