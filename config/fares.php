@@ -45,4 +45,8 @@ return [
         ],
         'vat_percent' => (float) env('TRANSACTION_FEE_VAT_PERCENT', 12),
     ],
+
+    // Batch 76 (user, 2026-11-17): baggage in the compartment costs this percent of the ticket's full fare (fare 100,
+    // baggage 50, ticket payment 150), whole pesos. Charged per ticket, online and in cash; a discount never applies to it.
+    'baggage_percent' => (float) env('BAGGAGE_FEE_PERCENT', 50),
 ];

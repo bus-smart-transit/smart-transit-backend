@@ -242,7 +242,16 @@ class DriverNavigationService
             return true;
         }
 
-        return $this->tripRepository->updateLastAcknowledgedStop($trip->trip_id, $stopId);
+        $updated = $this->tripRepository->updateLastAcknowledgedStop($trip->trip_id, $stopId);
+        if ($updated) {
+            // Batch 76: passengers who did not board at the stops now behind the bus missed it; their seats go back on sale.
+            $fresh = $this->tripRepository->findById((int) $trip->trip_id);
+            if ($fresh) {
+                app(TicketExpiryService::class)->markMissedForTrip($fresh);
+            }
+        }
+
+        return $updated;
     }
 
     /**

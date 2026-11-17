@@ -90,15 +90,16 @@ afterEach(fn () => Carbon::setTestNow());
 it('still scans a ticket whose destination is ahead of the bus', function () {
     $f = txFixture();
     txBusAt($f, 7.01); // just left Maa
-    $ticket = txTicket($f, 'Maa', 'Panabo');
+    // Batch 76: boards at Panabo, which the bus has not left (a Maa ticket would now be missed: the bus left Maa).
+    $ticket = txTicket($f, 'Panabo', 'Carmen');
 
     expect(txScan($f, $ticket)->status)->toBe('boarded');
 });
 
 it('refuses and expires a ticket once the bus has passed its destination', function () {
     $f = txFixture();
-    txBusAt($f, 7.12); // about 3 km past Panabo
-    $ticket = txTicket($f, 'Maa', 'Panabo');
+    txBusAt($f, 7.21); // about 3 km past Carmen; no stop tapped, so the bus has not "left" Panabo for the missed rule
+    $ticket = txTicket($f, 'Panabo', 'Carmen');
 
     expect(fn () => txScan($f, $ticket))->toThrow(ValidationException::class, TicketExpiryService::PASSED_MESSAGE);
     expect($ticket->fresh()->status)->toBe('expired');
@@ -106,8 +107,8 @@ it('refuses and expires a ticket once the bus has passed its destination', funct
 
 it('does not expire on GPS noise just past the destination', function () {
     $f = txFixture();
-    txBusAt($f, 7.0905); // about 55 m past Panabo, inside the 100 m margin
-    $ticket = txTicket($f, 'Maa', 'Panabo');
+    txBusAt($f, 7.1805); // about 55 m past Carmen, inside the 100 m margin
+    $ticket = txTicket($f, 'Panabo', 'Carmen');
 
     expect(app(TicketExpiryService::class)->expirePassedForTrip($f['trip']->fresh()))->toBe(0)
         ->and($ticket->fresh()->status)->toBe('valid');
@@ -115,12 +116,14 @@ it('does not expire on GPS noise just past the destination', function () {
 
 it('expires a ticket once the Driver taps its destination stop, even with no GPS', function () {
     $f = txFixture();
-    $ticket = txTicket($f, 'Maa', 'Panabo');
-    $later = txTicket($f, 'Maa', 'Tagum');
-    $f['trip']->forceFill(['last_acknowledged_stop_id' => $f['stops']['Panabo']->stop_id, 'last_acknowledged_at' => now()])->save();
+    $ticket = txTicket($f, 'Panabo', 'Carmen');
+    $later = txTicket($f, 'Carmen', 'Tagum');
+    $f['trip']->forceFill(['last_acknowledged_stop_id' => $f['stops']['Carmen']->stop_id, 'last_acknowledged_at' => now()])->save();
 
-    expect(app(TicketExpiryService::class)->expirePassedForTrip($f['trip']->fresh()))->toBe(1)
-        ->and($ticket->fresh()->status)->toBe('expired')
+    // Batch 76: tapping Carmen means the bus left Panabo, so the unscanned Panabo ticket is missed (seat given back);
+    // the Carmen ticket is still at its stop.
+    app(TicketExpiryService::class)->expirePassedForTrip($f['trip']->fresh());
+    expect($ticket->fresh()->status)->toBe('missed')
         ->and($later->fresh()->status)->toBe('valid');
 });
 
@@ -128,7 +131,7 @@ it('knows nothing without a tap or a fresh position, so nothing expires', functi
     $f = txFixture();
     txBusAt($f, 7.20);
     Carbon::setTestNow(now()->addSeconds((int) config('tracking.stale_seconds') + 60));
-    $ticket = txTicket($f, 'Maa', 'Panabo');
+    $ticket = txTicket($f, 'Panabo', 'Carmen');
 
     expect(app(TicketExpiryService::class)->expirePassedForTrip($f['trip']->fresh()))->toBe(0)
         ->and($ticket->fresh()->status)->toBe('valid');
@@ -136,21 +139,22 @@ it('knows nothing without a tap or a fresh position, so nothing expires', functi
 
 it('follows the leg direction on a return leg', function () {
     $f = txFixture('reverse'); // Tagum -> Maa
-    txBusAt($f, 7.15); // between Carmen and Panabo, heading south
-    $carmen = txTicket($f, 'Tagum', 'Carmen');
-    $panabo = txTicket($f, 'Tagum', 'Panabo');
+    txBusAt($f, 7.05); // between Panabo and Maa, heading south
+    // Batch 76: both board at Carmen (no stop tapped, so not missed); one is going to Panabo, behind the bus.
+    $panabo = txTicket($f, 'Carmen', 'Panabo');
+    $maa = txTicket($f, 'Carmen', 'Maa');
 
     expect(app(TicketExpiryService::class)->expirePassedForTrip($f['trip']->fresh()))->toBe(1)
-        ->and($carmen->fresh()->status)->toBe('expired')
-        ->and($panabo->fresh()->status)->toBe('valid');
+        ->and($panabo->fresh()->status)->toBe('expired')
+        ->and($maa->fresh()->status)->toBe('valid');
 });
 
 it('sweeps running trips every minute and never touches a boarded ticket', function () {
     $f = txFixture();
-    txBusAt($f, 7.12);
-    $passed = txTicket($f, 'Maa', 'Panabo');
-    $boarded = txTicket($f, 'Maa', 'Panabo', 'boarded');
-    $ahead = txTicket($f, 'Maa', 'Tagum');
+    txBusAt($f, 7.21);
+    $passed = txTicket($f, 'Panabo', 'Carmen');
+    $boarded = txTicket($f, 'Panabo', 'Carmen', 'boarded');
+    $ahead = txTicket($f, 'Panabo', 'Tagum');
 
     $this->artisan('tickets:expire-passed')->assertSuccessful();
 

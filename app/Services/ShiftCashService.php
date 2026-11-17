@@ -78,7 +78,8 @@ class ShiftCashService
             ->where('payments.status', 'paid')
             ->where('payments.is_valid', true)
             ->where('tickets.status', '!=', 'rebooked')
-            ->get(['tickets.amount']);
+            // Batch 76: the baggage fee is cash collected with the fare.
+            ->get([DB::raw('tickets.amount + COALESCE(tickets.baggage_fee, 0) AS amount')]);
         $salesCents = (int) $sales->sum(fn ($r) => (int) round(((float) $r->amount) * 100));
 
         $refunds = DB::table('ticket_resolutions')

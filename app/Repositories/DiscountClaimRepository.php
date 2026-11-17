@@ -52,6 +52,18 @@ class DiscountClaimRepository
             ->update(['status' => DiscountClaim::LAPSED, 'updated_at' => now()]);
     }
 
+    /**
+     * Batch 76: claims on tickets that were missed lapse (the passenger never boarded, so nobody checks an ID).
+     *
+     * @param  array<int, int>  $ticketIds
+     */
+    public function lapseOpenForTickets(array $ticketIds): int
+    {
+        return $ticketIds === [] ? 0 : DiscountClaim::where('status', DiscountClaim::CLAIMED)
+            ->whereIn('ticket_id', $ticketIds)
+            ->update(['status' => DiscountClaim::LAPSED, 'updated_at' => now()]);
+    }
+
     /** @return Collection<int, DiscountClaim> approved refunds whose waiting time (Maya) is over and not sent yet */
     public function deferredDue(): Collection
     {

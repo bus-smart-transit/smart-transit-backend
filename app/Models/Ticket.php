@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\PriorityBoarding;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
@@ -96,12 +97,24 @@ class Ticket extends Model
         'original_amount',
         'discount_amount',
         'discount_id_checked_at',
+        // Batch 76: priority seat, baggage compartment fee, missed at the boarding stop.
+        'priority_type',
+        'baggage_fee',
+        'missed_at',
     ];
 
     // The tracking token is a bearer secret: never serialised with a ticket. Owners get it only
     // through the explicit `tracking_token` attribute the ticket service sets for them.
     // Batch 49 item 5: the short tracking code is a secret too; owners get it as the explicit `tracking_code` attribute.
     protected $hidden = ['tracking_token_hash', 'tracking_token_enc', 'tracking_code_hash', 'tracking_code_enc'];
+
+    /** Batch 76: the priority seat's words travel with the ticket (PriorityBoarding owns them). */
+    protected $appends = ['priority_label'];
+
+    public function getPriorityLabelAttribute(): ?string
+    {
+        return PriorityBoarding::label($this->attributes['priority_type'] ?? null);
+    }
 
     protected function casts(): array
     {
@@ -118,6 +131,8 @@ class Ticket extends Model
             'original_amount' => 'float',
             'discount_amount' => 'float',
             'discount_id_checked_at' => 'datetime',
+            'baggage_fee' => 'float',
+            'missed_at' => 'datetime',
         ];
     }
 

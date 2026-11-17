@@ -61,6 +61,38 @@ class TripProgressService
     }
 
     /**
+     * Batch 76 (user, 2026-11-17): the bus has LEFT this boarding stop, so a passenger still waiting there missed it.
+     * Only the Driver's stop taps and Depart decide this, never GPS alone: a jumpy position, or the Driver tapping the
+     * stop on arrival while people are still boarding, must not mark anyone missed. Left means the trip is on the road
+     * and either this is the leg's first stop (Depart left it) or the Driver has tapped a stop after it.
+     */
+    public function boardingStopPassed(Trip $trip, int $stopId): bool
+    {
+        if (! self::isRunning($trip->status)) {
+            return false;
+        }
+        $trip->loadMissing('fleetRoute');
+        if (! $trip->fleetRoute) {
+            return false;
+        }
+        $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
+        $stopIds = $this->routeStops->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $direction)
+            ->map(fn ($routeStop) => (int) $routeStop->stop_id)
+            ->values()
+            ->all();
+        $index = array_search($stopId, $stopIds, true);
+        if ($index === false) {
+            return false;
+        }
+        if ($index === 0) {
+            return true;
+        }
+        $ackIndex = $trip->last_acknowledged_stop_id !== null ? array_search((int) $trip->last_acknowledged_stop_id, $stopIds, true) : false;
+
+        return $ackIndex !== false && $ackIndex > $index;
+    }
+
+    /**
      * What passengers see about a trip that has left: "Departed" from a stop behind the bus, "On the way" with the next
      * stop ahead, or null for a trip that has not left. The next stop is null (shown as "Not provided") when unknown.
      *

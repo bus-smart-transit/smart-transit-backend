@@ -11,10 +11,13 @@ use App\Repositories\OnlinePaymentRepository;
 use App\Repositories\OnsitePaymentRepository;
 use App\Repositories\PassengerRepository;
 use App\Repositories\PaymentRepository;
+use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Services\Sms\SmsNotifier;
+use App\Support\BaggageFee;
 use App\Support\BookingFee;
 use App\Support\Database\RlsContext;
+use App\Support\PriorityBoarding;
 use App\Support\TravellerContact;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -187,6 +190,8 @@ class PaymentService
                     ]);
 
                     $total = 0;
+                    $baggageTotal = 0.0;
+                    $priorityByTrip = [];
                     $reservedItems = [];
                     $lineItems = [];
                     $groupedItems = [];
@@ -209,6 +214,8 @@ class PaymentService
                             'destination_lat' => isset($item['destination_lat']) ? (float) $item['destination_lat'] : null,
                             'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
                             'discount_claim_key' => isset($item['discount_claim_key']) && $item['discount_claim_key'] !== '' ? (string) $item['discount_claim_key'] : null,
+                            'priority_type' => PriorityBoarding::resolve($item['priority_type'] ?? null, $item['discount_claim_key'] ?? null),
+                            'baggage' => ! empty($item['baggage']),
                         ]);
 
                         if (! isset($groupedItems[$itemKey])) {
@@ -231,12 +238,29 @@ class PaymentService
                         if ($claim !== null) {
                             $template['discount_claim'] = $claim;
                         }
+                        // Batch 76: a priority seat (a senior or PWD claim asks for one) and the baggage fee, on the full fare.
+                        $template['priority_type'] = PriorityBoarding::resolve($group['item']['priority_type'] ?? null, $group['item']['discount_claim_key'] ?? null);
+                        $template['baggage_fee'] = ! empty($group['item']['baggage']) ? BaggageFee::forFare((float) $template['amount']) : 0.0;
+                        if ($template['priority_type'] !== null) {
+                            $priorityByTrip[(int) $template['trip_id']] = ($priorityByTrip[(int) $template['trip_id']] ?? 0) + (int) $group['count'];
+                        }
 
                         for ($i = 0; $i < (int) $group['count']; $i++) {
                             $reserved = $template;
-                            $total += $reserved['amount'];
+                            $total += $reserved['amount'] + $reserved['baggage_fee'];
+                            $baggageTotal += $reserved['baggage_fee'];
                             $reserved['passenger_id'] = $passengerId;
                             $reservedItems[] = $reserved;
+                        }
+                    }
+
+                    // Batch 76: at most booking.priority.seats_per_bus priority tickets per trip are sold online.
+                    foreach ($priorityByTrip as $priorityTripId => $wanted) {
+                        $left = max(0, PriorityBoarding::seatsPerBus() - app(TicketRepository::class)->countPriorityForTrip($priorityTripId));
+                        if ($wanted > $left) {
+                            throw ValidationException::withMessages(['priority' => [$left > 0
+                                ? "Only {$left} priority ".($left === 1 ? 'seat is' : 'seats are').' left on this bus. Turn off Priority on the other tickets.'
+                                : 'The priority seats on this bus are taken. Turn off Priority to book a regular seat; the Chauffeur can still help you on the bus.']]);
                         }
                     }
 
@@ -282,12 +306,23 @@ class PaymentService
                     }
 
                     $targetCentavos = max(100, (int) round($netTotal * 100));
+                    // Batch 76: the baggage fee is its own line on PayMongo's page when the fares line keeps at least PHP 1.
+                    $baggageCentavos = (int) round($baggageTotal * 100);
+                    $splitBaggage = $baggageCentavos > 0 && $targetCentavos - $baggageCentavos >= 100;
                     $lineItems = [[
                         'name' => 'Smart Transit Ticket Purchase',
-                        'amount' => $targetCentavos,
+                        'amount' => $splitBaggage ? $targetCentavos - $baggageCentavos : $targetCentavos,
                         'currency' => 'PHP',
                         'quantity' => 1,
                     ]];
+                    if ($splitBaggage) {
+                        $lineItems[] = [
+                            'name' => 'Baggage compartment',
+                            'amount' => $baggageCentavos,
+                            'currency' => 'PHP',
+                            'quantity' => 1,
+                        ];
+                    }
 
                     // Batch 45 Feature A: the fee is its own line on PayMongo's page and its own column here;
                     // payments.amount stays the fares (after reward points), so revenue and rewards never include it.
@@ -621,7 +656,8 @@ class PaymentService
                     // Set here, never read from the request: only the cash flow may sell while the bus is moving.
                     $item['channel'] = 'onsite';
                     $ticket = $this->ticketService->issueTicket($item, $passengerId, $payment->payment_id);
-                    $total += $ticket->amount;
+                    // Batch 76: the baggage fee is collected with the fare.
+                    $total += $ticket->amount + (float) $ticket->baggage_fee;
                     $tickets[] = $ticket;
                 }
 
@@ -672,10 +708,12 @@ class PaymentService
     {
         // Set here, never read from the request, exactly as the sale does.
         $item['channel'] = 'onsite';
-        $priced = $this->ticketService->priceItem($item);
+        $priced = $this->ticketService->withExtras($this->ticketService->priceItem($item), $item);
 
         return [
             'amount' => round((float) $priced['amount'], 2),
+            // Batch 76: the baggage fee the sale would add (0 without baggage).
+            'baggage_fee' => (float) $priced['baggage_fee'],
             'distance_km' => isset($priced['distance_km']) ? (float) $priced['distance_km'] : null,
             'seat_type' => (string) $priced['seat_type'],
             // 2026-10-27: with an onsite discount, the fare before it and the discount (null without one).

@@ -50,4 +50,16 @@ return [
         'max_age_seconds' => (int) env('BOARDING_GPS_MAX_AGE_SECONDS', 90),
         'max_accuracy_m' => (float) env('BOARDING_GPS_MAX_ACCURACY_M', 50),
     ],
+
+    // Batch 76 (user, 2026-11-17): priority seats for seniors, persons with disability and pregnant passengers. A ticket
+    // asks for one at checkout (a senior or PWD discount claim asks for it automatically); the Chauffeur checks on the bus.
+    // At most seats_per_bus priority tickets are sold online per trip. No money changes hands, so nothing is refunded.
+    'priority' => [
+        'seats_per_bus' => (int) env('PRIORITY_SEATS_PER_BUS', 4),
+        'types' => [
+            'senior' => 'Senior citizen',
+            'pwd' => 'Person with disability',
+            'pregnant' => 'Pregnant',
+        ],
+    ],
 ];

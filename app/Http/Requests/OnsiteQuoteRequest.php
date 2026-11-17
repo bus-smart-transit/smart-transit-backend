@@ -25,6 +25,8 @@ class OnsiteQuoteRequest extends FormRequest
             // 2026-10-27: the quote includes the discount, so the sale's fare check compares like with like.
             'discount_type_key' => 'nullable|string|max:32',
             'discount_id_checked' => 'nullable|boolean',
+            // Batch 76: the baggage fee is shown with the fare before the sale.
+            'baggage' => ['sometimes', 'boolean'],
         ];
     }
 }

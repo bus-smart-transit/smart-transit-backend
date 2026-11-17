@@ -118,7 +118,7 @@ it('tells the Chauffeur the next stop and how many paid passengers are still to 
     b75Ticket($trip, $f['stops']['B'], $f['stops']['D'], 'boarded'); // already scanned: not waiting
 
     $byStop = app(OccupancyService::class)->getOccupancyByStop((int) $trip->trip_id);
-    expect($byStop['next_stop'])->toBe(['stop_id' => $f['stops']['A']->stop_id, 'stop_name' => 'Stop A', 'waiting_count' => 1])
+    expect($byStop['next_stop'])->toBe(['stop_id' => $f['stops']['A']->stop_id, 'stop_name' => 'Stop A', 'waiting_count' => 1, 'priority_count' => 0, 'baggage_count' => 0])
         ->and($byStop['waiting_total'])->toBe(3)
         ->and(collect($byStop['stops'])->firstWhere('stop_name', 'Stop B')['waiting_count'])->toBe(2);
 

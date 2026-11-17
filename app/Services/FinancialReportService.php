@@ -198,11 +198,11 @@ class FinancialReportService
         $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
 
         return $this->csv(
-            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Transaction fee (PHP)'],
+            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare and baggage (PHP)', 'Baggage (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Transaction fee (PHP)'],
             $rows->map(fn ($t) => [
                 $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
                 $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
-                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '', number_format($t['booking_fee'], 2, '.', ''),
+                number_format($t['amount'], 2, '.', ''), number_format($t['baggage_fee'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '', number_format($t['booking_fee'], 2, '.', ''),
             ])->all(),
         );
     }
@@ -389,7 +389,7 @@ class FinancialReportService
     private function columns(): array
     {
         return [
-            'tickets.ticket_id', 'tickets.ticket_uuid', 'tickets.amount', 'tickets.status as ticket_status', 'tickets.seat_type', 'tickets.boarded_at',
+            'tickets.ticket_id', 'tickets.ticket_uuid', 'tickets.amount', 'tickets.baggage_fee', 'tickets.status as ticket_status', 'tickets.seat_type', 'tickets.boarded_at',
             'tickets.discount_type_key', 'tickets.discount_label', 'tickets.discount_rate', 'tickets.original_amount', 'tickets.discount_amount',
             'trips.trip_id', 'trips.trip_date', 'trips.departure_time', 'trips.leg_direction', 'trips.service_type', 'trips.shift_block_id',
             'fleets.fleet_id', 'fleets.plate_number', 'fleets.bus_company_name', 'fleets.body_no',
@@ -425,7 +425,9 @@ class FinancialReportService
     private function mapSale(object $r): array
     {
         $paidAt = FinancialClock::paidAt((string) $r->payment_method, $r->onsite_issued_at, $r->first_ticket_at, $r->payment_created);
-        $cents = (int) round(((float) $r->amount) * 100);
+        // Batch 76: a sale is the fare plus its baggage fee (a cancellation refunds both).
+        $baggageCents = (int) round(((float) ($r->baggage_fee ?? 0)) * 100);
+        $cents = (int) round(((float) $r->amount) * 100) + $baggageCents;
 
         $refundCents = ($r->resolution === 'refund' && $r->res_status === 'succeeded' && $r->res_amount !== null) ? (int) round(((float) $r->res_amount) * 100) : 0;
         $status = RefundStatus::of($cents, $refundCents, $r->resolution === 'refund' && in_array($r->res_status, RefundStatus::IN_PROGRESS, true));
@@ -434,6 +436,7 @@ class FinancialReportService
             'transaction_id' => (string) $r->transaction_reference,
             'payment_id' => (int) $r->payment_id,
             'cents' => $cents,
+            'baggage_cents' => $baggageCents,
             // Batch 45 Feature A: the purchase's booking fee, counted once, on its first ticket.
             'fee_cents' => (int) $r->ticket_id === (int) ($r->first_ticket_id ?? 0) ? (int) round(((float) ($r->fee_amount ?? 0)) * 100) : 0,
             'refund_cents' => $refundCents,
@@ -674,6 +677,7 @@ class FinancialReportService
             'amount' => $this->money($r['cents']),
             'refunded' => $this->money($r['refund_cents']),
             'booking_fee' => $this->money($r['fee_cents']),
+            'baggage_fee' => $this->money($r['baggage_cents'] ?? 0),
             'status' => $r['status'],
             'status_label' => $labels[$r['status']] ?? $r['status'],
             'refund_completed_at' => $r['refund_completed_at']?->format('Y-m-d H:i:s'),

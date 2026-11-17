@@ -8,6 +8,7 @@ use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
 use App\Support\DropOffGroups;
+use App\Support\PriorityBoarding;
 use App\Support\ServiceType;
 use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
@@ -130,6 +131,7 @@ class OccupancyService
         // after the Driver's last acknowledged stop, in this leg's direction; the first stop before the bus leaves).
         $waitingByStop = $this->ticketRepository->countWaitingByOriginStop($tripId);
         $nextStop = $this->nextStopFor($trip);
+        $nextExtras = $nextStop ? $this->ticketRepository->countWaitingExtrasAtStop($tripId, (int) $nextStop->stop_id) : ['priority' => 0, 'baggage' => 0];
 
         // Compute cumulative on-bus count in PHP — no additional DB calls
         $cumulativeOnBus = 0;
@@ -161,6 +163,9 @@ class OccupancyService
                 'stop_id' => (int) $nextStop->stop_id,
                 'stop_name' => $nextStop->stop?->stop_name,
                 'waiting_count' => (int) ($waitingByStop[(int) $nextStop->stop_id] ?? 0),
+                // Batch 76: of those, priority seats to keep free and bags for the compartment.
+                'priority_count' => $nextExtras['priority'],
+                'baggage_count' => $nextExtras['baggage'],
             ] : null,
             'waiting_total' => array_sum($waitingByStop),
         ];
@@ -265,6 +270,10 @@ class OccupancyService
                 'drop_off_order' => $dropOffOrder,
                 'boarded_at' => $ticket->boarded_at,
                 'discount_claim' => $claims[(int) $ticket->ticket_id] ?? null,
+                // Batch 76: priority seat and baggage in the compartment.
+                'priority_type' => $ticket->priority_type,
+                'priority_label' => PriorityBoarding::label($ticket->priority_type),
+                'baggage' => (float) $ticket->baggage_fee > 0,
                 // 2026-10-27 (§7): which destination group this passenger gets off with.
                 'destination_stop_id' => $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
                 'destination_key' => DropOffGroups::key(

@@ -181,6 +181,23 @@ class TicketRepository
         return $ticketIds === [] ? 0 : Ticket::whereIn('ticket_id', $ticketIds)->where('status', 'valid')->update(['status' => 'expired']);
     }
 
+    /** Batch 76: the bus left this ticket's boarding stop before it was scanned. Only while still unscanned (a scan in between wins). */
+    public function markMissedIfValid(int $ticketId): bool
+    {
+        return Ticket::where('ticket_id', $ticketId)
+            ->where('status', 'valid')
+            ->update(['status' => 'missed', 'missed_at' => now()]) > 0;
+    }
+
+    /** Batch 76: priority tickets sold on a trip that still hold their seat (unscanned or on board). */
+    public function countPriorityForTrip(int $tripId): int
+    {
+        return Ticket::where('trip_id', $tripId)
+            ->whereIn('status', ['valid', 'boarded'])
+            ->whereNotNull('priority_type')
+            ->count();
+    }
+
     public function markBoarded(int $ticketId): bool
     {
         return Ticket::where('ticket_id', $ticketId)
@@ -322,6 +339,25 @@ class TicketRepository
             ->map(fn ($v) => (int) $v);
 
         return ['boarding' => $boarding, 'alighting' => $alighting];
+    }
+
+    /**
+     * Batch 76: of the paid passengers still to board at this stop, how many asked for a priority seat and how many
+     * carry baggage for the compartment.
+     *
+     * @return array{priority: int, baggage: int}
+     */
+    public function countWaitingExtrasAtStop(int $tripId, int $stopId): array
+    {
+        $waiting = Ticket::where('trip_id', $tripId)
+            ->where('status', 'valid')
+            ->where('origin_stop_id', $stopId)
+            ->whereHas('payment', fn ($q) => $q->where('status', 'paid')->where('is_valid', true));
+
+        return [
+            'priority' => (clone $waiting)->whereNotNull('priority_type')->count(),
+            'baggage' => (clone $waiting)->where('baggage_fee', '>', 0)->count(),
+        ];
     }
 
     /**

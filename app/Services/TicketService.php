@@ -11,9 +11,11 @@ use App\Models\Trip;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\BaggageFee;
 use App\Support\BusLabel;
 use App\Support\LegDistance;
 use App\Support\PlaceGroups;
+use App\Support\PriorityBoarding;
 use App\Support\ServiceType;
 use App\Support\TicketBoarding;
 use App\Support\TripCapacity;
@@ -559,6 +561,9 @@ class TicketService
             'original_amount' => $reserved['original_amount'] ?? null,
             'discount_amount' => $reserved['discount_amount'] ?? null,
             'discount_id_checked_at' => $reserved['discount_id_checked_at'] ?? null,
+            // Batch 76: priority seat and the baggage compartment fee (kept apart from the fare).
+            'priority_type' => $reserved['priority_type'] ?? null,
+            'baggage_fee' => (float) ($reserved['baggage_fee'] ?? 0),
         ]);
 
         if ($passengerId) {
@@ -598,7 +603,7 @@ class TicketService
                 ? $this->pendingBoardings->claim((int) $item['pending_boarding_id'], (int) $item['trip_id'])
                 : null;
 
-            $reserved = $this->reserveAndPrice($item);
+            $reserved = $this->withExtras($this->reserveAndPrice($item), $item);
             $ticket = $this->finalizeTicket($reserved, $passengerId, $paymentId, $onsite);
 
             if ($checkIn) {
@@ -607,6 +612,23 @@ class TicketService
 
             return $ticket;
         });
+    }
+
+    /**
+     * Batch 76: a cash sale's priority seat (chosen, or implied by a senior or PWD discount) and baggage fee. The fee is on
+     * the full fare, before any discount (BaggageFee).
+     *
+     * @param  array<string, mixed>  $reserved
+     * @param  array<string, mixed>  $item
+     * @return array<string, mixed>
+     */
+    public function withExtras(array $reserved, array $item): array
+    {
+        $reserved['priority_type'] = PriorityBoarding::resolve($item['priority_type'] ?? null, $reserved['discount_type_key'] ?? ($item['discount_type_key'] ?? null));
+        $fullFare = (float) ($reserved['original_amount'] ?? $reserved['amount'] ?? 0);
+        $reserved['baggage_fee'] = ! empty($item['baggage']) ? BaggageFee::forFare($fullFare) : 0.0;
+
+        return $reserved;
     }
 
     /**
@@ -696,6 +718,11 @@ class TicketService
                 throw ValidationException::withMessages([
                     'ticket' => ['This ticket is for a different trip and cannot be scanned on your current trip.'],
                 ]);
+            }
+
+            // Batch 76: the bus already left the passenger's boarding stop, so the ticket was missed (a new one is needed).
+            if ($this->expiry->missIfPassed($ticket, $activeTrip)) {
+                throw ValidationException::withMessages(['ticket' => [TicketExpiryService::MISSED_MESSAGE]]);
             }
 
             // Batch 60 item 1: the bus has reached or passed the passenger's destination, so the ride cannot happen.
@@ -818,7 +845,8 @@ class TicketService
             ->where('payments.status', 'paid')
             ->where('payments.is_valid', true)
             ->where('tickets.status', '!=', 'rebooked')
-            ->get(['tickets.amount', 'payments.payment_method']);
+            // Batch 76: a ticket's money includes its baggage fee.
+            ->get([DB::raw('tickets.amount + COALESCE(tickets.baggage_fee, 0) AS amount'), 'payments.payment_method']);
 
         $isCash = fn ($row) => in_array($row->payment_method, ['cash', 'onsite'], true);
         $onsiteAmount = (float) $paid->filter($isCash)->sum('amount');
@@ -952,6 +980,13 @@ class TicketService
             // Trip ownership check — same logic as single-ticket scan.
             if ($activeTripId !== null && (int) $ticket->trip_id !== (int) $activeTripId) {
                 $results[] = array_merge($base, ['status' => $ticket->status, 'skipped' => true, 'skip_reason' => 'This ticket is invalid.']);
+
+                continue;
+            }
+
+            // Batch 76: same as the single scan.
+            if ($activeTripId !== null && $this->expiry->missIfPassed($ticket, $activeTrip)) {
+                $results[] = array_merge($base, ['status' => 'missed', 'skipped' => true, 'skip_reason' => TicketExpiryService::MISSED_MESSAGE]);
 
                 continue;
             }

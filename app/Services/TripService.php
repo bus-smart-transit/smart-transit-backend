@@ -194,7 +194,13 @@ class TripService
         $this->durationFactors->freezeFor($tripId);
         app(ShiftBlockLifecycleService::class)->started($tripId);
 
-        return $this->tripRepository->findById($tripId);
+        $departed = $this->tripRepository->findById($tripId);
+        // Batch 76: the bus left its first stop, so unscanned tickets from there were missed; their seats go back on sale.
+        if ($departed) {
+            app(TicketExpiryService::class)->markMissedForTrip($departed);
+        }
+
+        return $departed;
     }
 
     public function completeTrip(int $tripId): object

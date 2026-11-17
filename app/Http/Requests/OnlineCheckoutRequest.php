@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\Trip;
 use App\Support\BookingWindow;
+use App\Support\PriorityBoarding;
 use App\Support\TravellerContact;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
@@ -32,6 +33,9 @@ class OnlineCheckoutRequest extends FormRequest
             'items.*.discount_type_key' => 'prohibited',
             // Batch 75: online, a discount is CLAIMED (full fare paid) and checked by the Chauffeur on the bus.
             'items.*.discount_claim_key' => 'nullable|string|max:32',
+            // Batch 76: a priority seat (checked on the bus) and baggage in the compartment (its own fee), per ticket.
+            'items.*.priority_type' => ['nullable', 'string', Rule::in(array_keys(PriorityBoarding::types()))],
+            'items.*.baggage' => ['sometimes', 'boolean'],
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             // Online tickets are for seats; standing places are sold only on the bus (TicketService::priceItem).
             'items.*.seat_type' => 'required|string|in:seated',

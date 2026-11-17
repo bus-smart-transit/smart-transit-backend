@@ -575,10 +575,14 @@ class TripRepository
      */
     public function decrementOccupancy(int $tripId, int $seatedDelta, int $standingDelta): bool
     {
+        // Batch 76: CASE instead of GREATEST, so the same statement runs on PostgreSQL and on the SQLite test database.
+        $seated = "CASE WHEN current_seated_capacity > {$seatedDelta} THEN current_seated_capacity - {$seatedDelta} ELSE 0 END";
+        $standing = "CASE WHEN current_standing_capacity > {$standingDelta} THEN current_standing_capacity - {$standingDelta} ELSE 0 END";
+
         return Trip::where('trip_id', $tripId)->update([
-            'current_seated_capacity' => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta})"),
-            'current_standing_capacity' => DB::raw("GREATEST(0, current_standing_capacity - {$standingDelta})"),
-            'total_occupancy' => DB::raw("GREATEST(0, current_seated_capacity - {$seatedDelta}) + GREATEST(0, current_standing_capacity - {$standingDelta})"),
+            'current_seated_capacity' => DB::raw($seated),
+            'current_standing_capacity' => DB::raw($standing),
+            'total_occupancy' => DB::raw("({$seated}) + ({$standing})"),
         ]) > 0;
     }
 
