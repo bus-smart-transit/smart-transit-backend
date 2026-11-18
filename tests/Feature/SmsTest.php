@@ -132,7 +132,7 @@ it('texts the buyer the Ticket IDs when an online payment is confirmed', functio
     app(SmsNotifier::class)->paymentConfirmed($p['pay']);
 
     $text = SmsLog::sole()->message;
-    expect($text)->toContain('2 tickets Stop A to Stop B on Nov 20 08:30')
+    expect($text)->toContain('2 tickets Stop A to Stop B on Nov 20 8:30 AM')
         ->toContain(strtoupper(substr($p['tickets'][0]->ticket_uuid, 0, 8)))
         ->and(mb_strlen($text))->toBeLessThanOrEqual(160);
 });

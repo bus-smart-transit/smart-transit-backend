@@ -12,6 +12,7 @@ use App\Repositories\ShiftBlockRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
 use App\Services\Sms\SmsNotifier;
+use App\Support\ClockTime;
 use App\Support\Notifications\NotificationLink;
 use App\Support\ServiceType;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -385,7 +386,7 @@ class ShiftBlockService
                 throw ValidationException::withMessages(['departure_time' => ['Choose a time that has not passed yet.']]);
             }
             if ($newTime < $oldTime && (int) $leg->total_occupancy > 0) {
-                throw ValidationException::withMessages(['departure_time' => ["Passengers already hold tickets for {$oldTime}. You can move this leg later, not earlier."]]);
+                throw ValidationException::withMessages(['departure_time' => ['Passengers already hold tickets for '.ClockTime::label($oldTime).'. You can move this leg later, not earlier.']]);
             }
 
             $times = $legs->map(fn (Trip $l) => substr((string) $l->departure_time, 0, 5))->all();
@@ -411,7 +412,7 @@ class ShiftBlockService
         });
 
         [$block, $leg, $oldTime, $times, $routeId, $legNumber] = $result;
-        $message = "Leg {$legNumber} on ".$leg->trip_date->toDateString()." now leaves at {$newTime}, not {$oldTime}.";
+        $message = "Leg {$legNumber} on ".$leg->trip_date->toDateString().' now leaves at '.ClockTime::label($newTime).', not '.ClockTime::label($oldTime).'.';
         foreach ([$block->driver_id, $block->conductor_id] as $staffId) {
             $staff = $staffId ? $this->staffRepository->findById((int) $staffId) : null;
             if ($staff?->user) {

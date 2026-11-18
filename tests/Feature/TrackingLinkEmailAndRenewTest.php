@@ -126,7 +126,7 @@ it('emails a passenger the tracking link of the ticket they bought', function ()
             && $mail->items[0]['link'] === 'https://app.example.test/track/'.tlkToken($ticket)
             && $mail->items[0]['route'] === 'Davao - Tagum'
             && $mail->items[0]['date'] === '2026-10-05'
-            && $mail->items[0]['time'] === '08:00'
+            && $mail->items[0]['time'] === '8:00 AM'
             && $mail->items[0]['from'] === 'Stop B'
             && $mail->items[0]['to'] === 'Stop D';
     });

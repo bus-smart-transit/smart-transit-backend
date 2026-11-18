@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ClockTime;
 use Illuminate\Support\Carbon;
 
 /**
@@ -71,7 +72,7 @@ class RefundListService
             'transaction_reference' => $row['transaction_reference'],
             'passenger' => $row['payer']['is_guest'] ? 'Guest' : ($row['payer']['name'] ?: 'Passenger'),
             'email' => $row['payer']['email'],
-            'trip' => $trip ? trim(($trip['route_name'] ?? 'Route unavailable').', '.($trip['trip_date'] ?? '').' '.substr((string) ($trip['departure_time'] ?? ''), 0, 5)) : null,
+            'trip' => $trip ? trim(($trip['route_name'] ?? 'Route unavailable').', '.($trip['trip_date'] ?? '').' '.ClockTime::label(substr((string) ($trip['departure_time'] ?? ''), 0, 5))) : null,
             'reason' => $unknown ? 'Checkout unclear' : 'Paid, but no ticket was made',
             'amount' => (float) $row['total_paid'],
             'status' => $status,

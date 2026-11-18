@@ -85,6 +85,19 @@ it('shows three at first and more on request, and says how many there are', func
         ->and($this->getJson('/api/stops/'.$f['stops']['B']->stop_code.'/arrivals?limit=10')->json('data.arrivals'))->toHaveCount(5);
 });
 
+// Batch 79 (user, 2026-11-18): the expected (timetable) time beside the estimate, and Delayed when the estimate is behind.
+it('gives the timetable time beside the estimate and flags a bus running behind it as delayed', function () {
+    $f = saFixture();
+    $late = ($f['trip'])('06:40', 'departed'); // reaches B at 06:50 by the timetable; the Driver tapped it at 07:00
+    $late->forceFill(['last_acknowledged_stop_id' => $f['stops']['B']->stop_id, 'last_acknowledged_at' => Carbon::parse('2026-10-05 07:00:00', 'Asia/Manila')])->save();
+    ($f['trip'])('07:30');
+
+    $arrivals = $this->getJson('/api/stops/'.$f['stops']['D']->stop_code.'/arrivals')->assertOk()->json('data.arrivals');
+
+    expect($arrivals[0])->toMatchArray(['scheduled_time' => '07:10', 'eta_time' => '07:20', 'late_by_minutes' => 10, 'live' => true, 'delayed' => true])
+        ->and($arrivals[1])->toMatchArray(['scheduled_time' => '08:00', 'eta_time' => '08:00', 'late_by_minutes' => 0, 'delayed' => false]);
+});
+
 it('answers 404 for an unknown stop', function () {
     $this->getJson('/api/stops/no-such-stop/arrivals')->assertNotFound();
 });

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\BusLabel;
+use App\Support\ClockTime;
 use App\Support\CompanyScope;
 use App\Support\FinancialClock;
 use App\Support\RefundStatus;
@@ -589,7 +590,7 @@ class FinancialReportService
             $hours[$h]['cents'] += $r['cents'];
         }
 
-        return collect($hours)->map(fn ($v, $h) => ['hour' => $h, 'label' => sprintf('%02d:00', $h), 'tickets' => $v['tickets'], 'gross' => $this->money($v['cents'])])->values()->all();
+        return collect($hours)->map(fn ($v, $h) => ['hour' => $h, 'label' => ClockTime::label(sprintf('%02d:00', $h)), 'tickets' => $v['tickets'], 'gross' => $this->money($v['cents'])])->values()->all();
     }
 
     /** Per Manila day: sales on the day they were paid, refunds on the day they were completed. */
@@ -642,7 +643,7 @@ class FinancialReportService
             ->map(fn ($f) => ['fleet_id' => (int) $f->fleet_id, 'plate_number' => $f->plate_number, 'bus_label' => BusLabel::compose($f->bus_company_name, $f->body_no)])->all();
 
         $trips = $allSales->unique('trip_id')->sortByDesc(fn ($r) => $r['trip_date'].' '.$r['departure_time'])->map(fn ($r) => [
-            'trip_id' => $r['trip_id'], 'label' => trim($r['trip_date'].' '.$r['departure_time'].' '.$r['route_name'].' '.$r['plate_number']),
+            'trip_id' => $r['trip_id'], 'label' => trim($r['trip_date'].' '.ClockTime::label($r['departure_time']).' '.$r['route_name'].' '.$r['plate_number']),
         ])->values()->all();
 
         $channels = $allSales->map(fn ($r) => ['method' => $r['method'], 'channel' => $r['channel'], 'label' => $this->channelLabel($r['channel'], $r['method'])])->unique(fn ($c) => $c['method'].'|'.$c['channel'])->values()->all();

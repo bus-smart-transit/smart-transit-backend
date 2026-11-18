@@ -57,7 +57,8 @@ class StopArrivalsService
             if ($eta->lt($now->copy()->subMinutes(2)) || $eta->gt($until)) {
                 continue;
             }
-            $scheduled = ! empty($row['scheduled_at']) ? Carbon::parse($row['scheduled_at']) : null;
+            $scheduled = ! empty($row['scheduled_at']) ? Carbon::parse($row['scheduled_at'])->setTimezone($now->getTimezone()) : null;
+            $lateBy = $scheduled !== null ? (int) round($scheduled->diffInSeconds($eta, false) / 60) : null;
             $destination = collect($rows)->reverse()->first(fn ($r) => ($r['type'] ?? null) !== 'pass_through' && empty($r['custom']));
             $fleet = $trip->fleetRoute?->fleet;
             $arrivals[] = [
@@ -70,8 +71,13 @@ class StopArrivalsService
                 'eta' => $eta->toIso8601String(),
                 'eta_time' => $eta->format('H:i'),
                 'eta_minutes' => max(0, (int) ceil($now->diffInSeconds($eta, false) / 60)),
+                // Batch 79 (user, 2026-11-18): the timetable time at this stop ("expected") beside the estimate, and how
+                // many minutes the estimate is behind it (negative: early). Delayed is the same comparison as before.
+                'scheduled' => $scheduled?->toIso8601String(),
+                'scheduled_time' => $scheduled?->format('H:i'),
+                'late_by_minutes' => $lateBy,
                 'live' => ($row['eta_source'] ?? null) === 'live',
-                'delayed' => $scheduled !== null && $scheduled->diffInMinutes($eta, false) >= $delayedAfter,
+                'delayed' => $lateBy !== null && $lateBy >= $delayedAfter,
                 'status' => (string) $trip->status,
             ];
         }

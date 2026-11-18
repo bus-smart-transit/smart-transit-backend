@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\TicketTrackingMail;
 use App\Models\Payment;
 use App\Models\Ticket;
+use App\Support\ClockTime;
 use App\Support\TicketBoarding;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\PngWriter;
@@ -47,7 +48,7 @@ class TrackingLinkMailer
                 return $token === null ? null : [
                     'route' => (string) ($ticket->trip?->fleetRoute?->route?->route_name ?? 'Your trip'),
                     'date' => (string) $ticket->trip?->trip_date?->toDateString(),
-                    'time' => substr((string) $ticket->trip?->departure_time, 0, 5),
+                    'time' => ClockTime::label(substr((string) $ticket->trip?->departure_time, 0, 5)),
                     'from' => (string) ($ticket->originStop?->stop_name ?? 'Boarding point'),
                     'to' => (string) ($ticket->destinationStop?->stop_name ?? $ticket->destination_label ?? 'Drop-off point'),
                     'tickets' => (string) $group->count(),

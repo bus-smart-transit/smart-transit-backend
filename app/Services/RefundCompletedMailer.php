@@ -7,6 +7,7 @@ use App\Models\PassengerUser;
 use App\Models\Payment;
 use App\Models\Ticket;
 use App\Services\Sms\SmsNotifier;
+use App\Support\ClockTime;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -40,7 +41,7 @@ class RefundCompletedMailer
                 reference: (string) ($payment->transaction_reference ?? ''),
                 route: (string) ($ticket?->trip?->fleetRoute?->route?->route_name ?? ''),
                 date: (string) ($ticket?->trip?->trip_date?->toDateString() ?? ''),
-                time: substr((string) ($ticket?->trip?->departure_time ?? ''), 0, 5),
+                time: ClockTime::label(substr((string) ($ticket?->trip?->departure_time ?? ''), 0, 5)),
                 accountEmail: (string) $buyer,
                 redirected: (bool) $intercept,
             ));

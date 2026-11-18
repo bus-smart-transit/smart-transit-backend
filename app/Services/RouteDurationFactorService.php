@@ -6,6 +6,7 @@ use App\Models\RouteDurationFactor;
 use App\Models\Trip;
 use App\Repositories\RouteDurationFactorRepository;
 use App\Repositories\RouteStopRepository;
+use App\Support\ClockTime;
 use App\Support\CompanyScope;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
@@ -220,7 +221,7 @@ class RouteDurationFactorService
             ->first();
         if ($conflict) {
             throw ValidationException::withMessages(['start_time' => [
-                'This window overlaps another window of the same route ('.substr($conflict->start_time, 0, 5).' to '.substr($conflict->end_time, 0, 5).'). Change or remove that one first.',
+                'This window overlaps another window of the same route ('.ClockTime::label($conflict->start_time).' to '.ClockTime::label($conflict->end_time).'). Change or remove that one first.',
             ]]);
         }
 

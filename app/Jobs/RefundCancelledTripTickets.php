@@ -7,6 +7,7 @@ use App\Models\Ticket;
 use App\Models\TicketResolution;
 use App\Services\TicketResolutionService;
 use App\Services\TripCancellationService;
+use App\Support\ClockTime;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -79,7 +80,7 @@ class RefundCancelledTripTickets implements ShouldQueue
                 name: $first->passenger?->name ?: 'there',
                 route: (string) ($first->trip?->fleetRoute?->route?->route_name ?? 'Your trip'),
                 date: (string) $first->trip?->trip_date?->toDateString(),
-                time: substr((string) $first->trip?->departure_time, 0, 5),
+                time: ClockTime::label(substr((string) $first->trip?->departure_time, 0, 5)),
                 tickets: count($pairs),
                 amount: round($amount, 2),
                 wallet: ['gcash' => 'GCash', 'maya' => 'Maya'][$first->payment?->payment_channel] ?? 'your e-wallet',

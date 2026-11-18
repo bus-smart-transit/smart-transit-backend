@@ -69,7 +69,7 @@ it('keeps one trip a day, a completed one included, and says why in the picker',
     $listed = $this->getJson("/api/operator/drivers?trip_date={$date}&include_busy=1")->assertOk()->json('data');
     expect($listed)->toHaveCount(1)
         ->and($listed[0]['name'])->toBe('Cbr Driver')
-        ->and($listed[0]['busy_reason'])->toBe('Already on a trip that day (14:00, completed)');
+        ->and($listed[0]['busy_reason'])->toBe('Already on a trip that day (2:00 PM, completed)');
 
     $second = $trip($date, '18:00');
     $this->patchJson("/api/operator/trips/{$second->trip_id}/driver", ['driver_id' => $driverId])

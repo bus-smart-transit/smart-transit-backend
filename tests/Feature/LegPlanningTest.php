@@ -154,7 +154,7 @@ it('refuses a leg that would leave before the previous one is back plus the turn
 
     lplBlock($this, $f, ['06:00', '06:50'])
         ->assertStatus(422)
-        ->assertJsonFragment(['Leg 2 leaves at 06:50, but leg 1 is expected to arrive at 06:40 and needs a 30 minute turnaround. Choose 07:10 or later.']);
+        ->assertJsonFragment(['Leg 2 leaves at 6:50 AM, but leg 1 is expected to arrive at 6:40 AM and needs a 30 minute turnaround. Choose 7:10 AM or later.']);
     expect(ShiftBlock::count())->toBe(0);
 });
 
@@ -187,7 +187,7 @@ it('lets the Operator move a leg later, and keeps the turnaround to the next leg
     // 07:40 + 40 = 08:20 arrival: leg 3 at 08:30 would have only 10 minutes.
     $this->actingAs($f['operator'])->patchJson("/api/operator/shift-blocks/{$block['shift_block_id']}/legs/{$leg2}", ['departure_time' => '07:40'])
         ->assertStatus(422)
-        ->assertJsonFragment(['Leg 3 leaves at 08:30, but leg 2 is expected to arrive at 08:20 and needs a 30 minute turnaround. Choose 08:50 or later.']);
+        ->assertJsonFragment(['Leg 3 leaves at 8:30 AM, but leg 2 is expected to arrive at 8:20 AM and needs a 30 minute turnaround. Choose 8:50 AM or later.']);
 });
 
 it('keeps the legs in order and never moves a leg with passengers earlier', function () {
@@ -201,7 +201,7 @@ it('keeps the legs in order and never moves a leg with passengers earlier', func
     Trip::whereKey($leg3)->update(['total_occupancy' => 2]);
     $this->actingAs($f['operator'])->patchJson($url, ['departure_time' => '08:15'])
         ->assertStatus(422)
-        ->assertJsonFragment(['Passengers already hold tickets for 08:20. You can move this leg later, not earlier.']);
+        ->assertJsonFragment(['Passengers already hold tickets for 8:20 AM. You can move this leg later, not earlier.']);
     $this->actingAs($f['operator'])->patchJson($url, ['departure_time' => '08:25'])->assertSuccessful();
 });
 

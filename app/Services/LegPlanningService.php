@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ClockTime;
 use App\Support\LegDistance;
 use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
@@ -120,7 +121,7 @@ class LegPlanningService
             if ($legs[$i]['start_at']->lt($earliest)) {
                 throw ValidationException::withMessages([$field => [sprintf(
                     'Leg %d leaves at %s, but leg %d is expected to arrive at %s and needs a %d minute turnaround. Choose %s or later.',
-                    $i + 1, $legs[$i]['start_at']->format('H:i'), $i, $previousEnd->format('H:i'), $buffer, $earliest->format('H:i'),
+                    $i + 1, ClockTime::label($legs[$i]['start_at']), $i, ClockTime::label($previousEnd), $buffer, ClockTime::label($earliest),
                 )]]);
             }
         }

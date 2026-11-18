@@ -8,6 +8,7 @@ use App\Models\TripAssignmentRequest;
 use App\Repositories\CompanyRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\UserRepository;
+use App\Support\ClockTime;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -163,7 +164,7 @@ class StaffService
             $id = (int) $driver->company_user_id;
             if ($dayTrips->has($id)) {
                 $trip = $dayTrips->get($id)->first();
-                $time = $trip->departure_time ? substr((string) $trip->departure_time, 0, 5) : null;
+                $time = $trip->departure_time ? ClockTime::label(substr((string) $trip->departure_time, 0, 5)) : null;
                 $status = str_replace(['-', '_'], ' ', (string) $trip->status);
 
                 return 'Already on a trip that day ('.($time ? "{$time}, " : '').$status.')';

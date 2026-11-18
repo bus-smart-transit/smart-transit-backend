@@ -7,6 +7,7 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\TicketRepository;
 use App\Services\TripCancellationService;
+use App\Support\ClockTime;
 use App\Support\TicketBoarding;
 use App\Support\TravellerContact;
 use Illuminate\Support\Collection;
@@ -222,7 +223,7 @@ class SmsNotifier
             return '';
         }
         $date = $trip->trip_date?->format('M j');
-        $time = substr((string) $trip->departure_time, 0, 5);
+        $time = ClockTime::label(substr((string) $trip->departure_time, 0, 5));
 
         return trim(($date ? "on {$date}" : '').($time ? " {$time}" : ''));
     }
