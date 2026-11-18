@@ -10,6 +10,7 @@ use App\Models\PassengerUser;
 use App\Models\Payment;
 use App\Models\Route;
 use App\Models\RouteStop;
+use App\Models\SmsLog;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\Ticket;
@@ -657,6 +658,28 @@ it('refunds the online tickets at once when the operator cancels before departur
     Mail::assertQueued(TripCancelledRefundMail::class, fn ($mail) => $mail->hasTo($pax->user->email)
         && $mail->tickets === 2 && $mail->amount === 94.0 && $mail->wallet === 'GCash' && $mail->needsReview === false
         && str_contains($mail->render(), 'You do not need to do anything'));
+});
+
+// Batch 79 (production test, 2026-11-18): the buyer got "refunded" twice, once when the refund was requested and once
+// from the webhook. Now only the webhook's success sends it.
+it('texts the buyer once that the refund is done, when PayMongo says it succeeded, not when it is requested', function () {
+    config(['refunds.auto_refund_online_on_cancel' => true, 'mail.intercept_email' => null, 'sms.enabled' => true, 'sms.api_token' => 'tok_sample', 'sms.intercept_to' => null]);
+    Mail::fake();
+    Http::fake([
+        'api.paymongo.com/v1/refunds' => Http::response(['data' => ['id' => 'ref_sms_1', 'type' => 'refund', 'attributes' => ['status' => 'pending', 'amount' => 0]]]),
+        'www.iprogsms.com/*' => Http::response(['status' => 200, 'message' => 'SMS successfully queued for delivery.', 'message_id' => 'iSms-SAMPLE']),
+    ]);
+    $f = rfFixture();
+    $pax = rfPassenger();
+    $pax->user->forceFill(['sms_opt_in' => true])->save();
+    rfTicket($f, $f['trip'], [], 'gcash', $pax);
+
+    rfCancel($this, $f, $f['trip'])->assertSuccessful();
+    expect(SmsLog::where('event', 'refund_completed')->count())->toBe(0);
+
+    rfRefundWebhook($this, 'ref_sms_1', 'succeeded')->assertSuccessful();
+    rfRefundWebhook($this, 'ref_sms_1', 'succeeded')->assertSuccessful(); // a replay changes nothing
+    expect(SmsLog::where('event', 'refund_completed')->pluck('message')->all())->toBe(['PHP 47.00 was refunded to your GCash. Ref '.Payment::first()->transaction_reference.'.']);
 });
 
 it('sends a running trip\'s refund to operator review when the last point is unknown, and says so in the email', function () {
