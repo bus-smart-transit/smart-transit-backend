@@ -10,6 +10,7 @@ RUN apk add --no-cache \
         zip \
         unzip \
         oniguruma-dev \
+        libpng-dev \
     && docker-php-ext-install \
         pdo \
         pdo_pgsql \
@@ -17,6 +18,7 @@ RUN apk add --no-cache \
         zip \
         mbstring \
         pcntl \
+        gd \
     && rm -rf /var/cache/apk/*
 
 # ── Composer ─────────────────────────────────────────────────────
@@ -44,5 +46,7 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8000
+# Batch 58: live updates (Reverb), started by the entrypoint when BROADCAST_CONNECTION=reverb
+EXPOSE 8080
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

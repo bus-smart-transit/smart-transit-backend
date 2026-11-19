@@ -50,6 +50,8 @@ class Trip extends Model
      */
     protected $table = 'trips';
 
+    protected $appends = ['driver_request_status', 'conductor_request_status'];
+
     protected $primaryKey = 'trip_id';
     /**
      * The attributes that are mass assignable from structural payloads.
@@ -58,12 +60,26 @@ class Trip extends Model
         'fleet_route_id',
         'company_user_id',
         'trip_date',
+        'departure_time',
+        'trip_type',
+        'leg_direction',
+        'service_type', // regular | express (Batch 28)
+        'return_departure_time',
         'status',
+        'dispatch_decision',
+        'dispatch_route',
+        'dispatch_reason',
+        'dispatch_decided_at',
         'current_seated_capacity',
         'current_standing_capacity',
         'total_occupancy',
         'driver_id',
         'conductor_id',
+        'driver_accepted_at',
+        'conductor_accepted_at',
+        'delay_notified_at',
+        'shift_block_id',
+        'duration_factor',
     ];
 
     /**
@@ -74,7 +90,11 @@ class Trip extends Model
     protected function casts(): array
     {
         return [
-            'trip_date' => 'date',
+            'trip_date' => 'date:Y-m-d',
+            'boarding_at' => 'datetime',
+            'departed_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'last_acknowledged_at' => 'datetime',
         ];
     }
 
@@ -95,10 +115,73 @@ class Trip extends Model
     }
 
     /**
+     * Assigned driver profile for this trip.
+     */
+    public function driver()
+    {
+        return $this->belongsTo(StaffUser::class, 'driver_id', 'company_user_id');
+    }
+
+    /**
+     * Assigned conductor profile for this trip.
+     */
+    public function conductor()
+    {
+        return $this->belongsTo(StaffUser::class, 'conductor_id', 'company_user_id');
+    }
+
+    /**
+     * Batch 18: the shift block this trip ("leg") belongs to, if any.
+     */
+    public function shiftBlock()
+    {
+        return $this->belongsTo(ShiftBlock::class, 'shift_block_id', 'shift_block_id');
+    }
+
+    /**
      * Get the tickets for this trip.
      */
     public function tickets()
     {
         return $this->hasMany(Ticket::class, 'trip_id', 'trip_id');
+    }
+
+    /**
+     * Batch 24 (C6): assignment-level decline requests (D6), separate from the
+     * trip lifecycle status.
+     */
+    public function assignmentRequests()
+    {
+        return $this->hasMany(TripAssignmentRequest::class, 'trip_id', 'trip_id');
+    }
+
+    /** 'for_approval' | 'rejected' | null, only when assignmentRequests is eager loaded. */
+    public function getDriverRequestStatusAttribute(): ?string
+    {
+        return $this->requestStatusFor('driver', $this->driver_id);
+    }
+
+    public function getConductorRequestStatusAttribute(): ?string
+    {
+        return $this->requestStatusFor('conductor', $this->conductor_id);
+    }
+
+    private function requestStatusFor(string $role, ?int $assignedStaffId): ?string
+    {
+        if (! $assignedStaffId || ! $this->relationLoaded('assignmentRequests')) {
+            return null;
+        }
+
+        // Only a request from the staff member currently holding the
+        // assignment counts (a replacement starts with a clean slate).
+        $latest = $this->assignmentRequests
+            ->where('role', $role)
+            ->where('staff_company_user_id', $assignedStaffId)
+            ->sortByDesc('id')
+            ->first();
+
+        return in_array($latest?->status, [TripAssignmentRequest::FOR_APPROVAL, TripAssignmentRequest::REJECTED], true)
+            ? $latest->status
+            : null;
     }
 }

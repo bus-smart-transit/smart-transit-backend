@@ -6,6 +6,8 @@ use App\Repositories\FleetRepository;
 use App\Repositories\ReportingRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 
 class ReportingService
 {
@@ -19,8 +21,8 @@ class ReportingService
      */
     private function ensureFleetExists(int $fleetId): void
     {
-        if (!$this->fleetRepository->findById($fleetId)) {
-            throw (new ModelNotFoundException())->setModel('Fleet', $fleetId);
+        if (! $this->fleetRepository->findById($fleetId)) {
+            throw (new ModelNotFoundException)->setModel('Fleet', $fleetId);
         }
     }
 
@@ -31,7 +33,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -45,7 +47,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -55,7 +57,10 @@ class ReportingService
                 'start_date' => $startDate,
                 'end_date' => $endDate,
             ],
-            'routes' => $this->reportingRepository->getRevenueByRoute($fleetId, $startDate, $endDate)->toArray(),
+            // ->values() resets Collection keys to 0-indexed so the JSON
+            // serialises as an array [ {...}, {...} ] instead of an object
+            // keyed by route_id, which would break Array.map() on the frontend.
+            'routes' => $this->reportingRepository->getRevenueByRoute($fleetId, $startDate, $endDate)->values()->toArray(),
         ];
     }
 
@@ -66,7 +71,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -80,7 +85,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -105,7 +110,7 @@ class ReportingService
     {
         $this->ensureFleetExists($fleetId);
         $startDate = $startDate ?? Carbon::now()->startOfMonth()->toDateString();
-        $endDate = $endDate ?? Carbon::now()->endOfMonth()->toDateString();
+        $endDate = $endDate ?? Carbon::now()->toDateString();
 
         $this->validateDateRange($startDate, $endDate);
 
@@ -114,7 +119,7 @@ class ReportingService
 
     private function validateDateRange(string $startDate, string $endDate): void
     {
-        if (!$this->isValidDate($startDate) || !$this->isValidDate($endDate)) {
+        if (! $this->isValidDate($startDate) || ! $this->isValidDate($endDate)) {
             throw ValidationException::withMessages([
                 'dates' => ['Invalid date format. Use YYYY-MM-DD.'],
             ]);
@@ -136,5 +141,14 @@ class ReportingService
     private function isValidDate(string $date): bool
     {
         return preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) && strtotime($date) !== false;
+    }
+
+    /**
+     * List stored (nightly generated) reports. Moved here from a route
+     * closure in routes/api.php so the routing layer stays free of data access.
+     */
+    public function listStoredReports(array $filters, int $limit = 100): Collection
+    {
+        return $this->reportingRepository->getStoredReports($filters, min($limit, 500));
     }
 }

@@ -10,8 +10,8 @@ uses(RefreshDatabase::class);
 function makeDriverWithProfile(): User
 {
     $user = User::create([
-        'username' => 'driver_' . uniqid(),
-        'email' => 'driver+' . uniqid() . '@smarttransit.test',
+        'username' => 'driver_'.uniqid(),
+        'email' => 'driver+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'driver',
     ]);
@@ -32,7 +32,7 @@ describe('Driver Navigation System', function () {
     it('driver can retrieve current trip with stops and passengers', function () {
         $driver = makeDriverWithProfile();
 
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -49,7 +49,7 @@ describe('Driver Navigation System', function () {
     it('driver can view specific stop details', function () {
         $driver = makeDriverWithProfile();
 
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -67,6 +67,7 @@ describe('Driver Navigation System', function () {
                 ->getJson("/api/driver/trips/current/stops/$stopId");
 
             expect($response->status())->toBeIn([200, 404]);
+
             return;
         }
 
@@ -76,7 +77,7 @@ describe('Driver Navigation System', function () {
     it('driver can acknowledge reaching a stop', function () {
         $driver = makeDriverWithProfile();
 
-        $driverLogin = $this->postJson('/api/staff/login', [
+        $driverLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $driver->email,
             'password' => 'password123',
         ]);
@@ -94,6 +95,7 @@ describe('Driver Navigation System', function () {
                 ->postJson("/api/driver/trips/current/stops/$stopId/acknowledge", []);
 
             expect($response->status())->toBeIn([200, 404]);
+
             return;
         }
 

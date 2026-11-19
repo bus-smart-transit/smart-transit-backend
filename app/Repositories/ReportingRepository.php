@@ -2,17 +2,19 @@
 
 namespace App\Repositories;
 
-use App\Models\Trip;
-use App\Models\Ticket;
 use App\Models\Payment;
-use Illuminate\Support\Carbon;
+use App\Models\RewardTransaction;
+use App\Models\Ticket;
+use App\Models\Trip;
+use App\Services\RewardService;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ReportingRepository
 {
     private function isRevenueStatus(?string $status): bool
     {
-        if (!$status) {
+        if (! $status) {
             return false;
         }
 
@@ -24,92 +26,30 @@ class ReportingRepository
      */
     public function getFleetFinancialSummary(int $fleetId, string $startDate, string $endDate): array
     {
-        $trips = Trip::with('fleetRoute', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+        // Pure Eloquent aggregation — works on both SQLite (tests) and PostgreSQL (production).
+        // We scope to payments on trips that belong to this fleet within the date window.
+        $fleetTripIds = Trip::whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
-            ->get();
+            ->pluck('trip_id');
 
-        $fleetTripIds = $trips->pluck('trip_id')->all();
+        $payments = Payment::whereIn('payment_id', function ($sub) use ($fleetTripIds) {
+            $sub->select('payment_id')
+                ->from('tickets')
+                ->whereIn('trip_id', $fleetTripIds);
+        })->whereIn('status', ['paid', 'completed', 'success', 'succeeded'])->get();
 
-        $totalRevenue = 0;
-        $onlineRevenue = 0;
-        $onsiteRevenue = 0;
-        $totalTickets = 0;
-        $completedTrips = 0;
-        $countedPaymentIds = [];
+        $totalRevenue = $payments->sum('amount');
+        $onlineRevenue = $payments->where('payment_method', 'online')->sum('amount');
+        $onsiteRevenue = $payments->where('payment_method', 'cash')->sum('amount');
 
-        foreach ($trips as $trip) {
-            $paymentMap = [];
-            foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
-                    continue;
-                }
+        $totalTickets = Ticket::whereIn('trip_id', $fleetTripIds)
+            ->whereIn('payment_id', $payments->pluck('payment_id'))
+            ->distinct('ticket_id')
+            ->count('ticket_id');
 
-                $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
-                    continue;
-                }
-
-                $paymentMap[$payment->payment_id] = $payment;
-                $totalTickets++;
-            }
-
-            foreach ($paymentMap as $payment) {
-                $amount = $payment->amount;
-                $totalRevenue += $amount;
-                $countedPaymentIds[$payment->payment_id] = true;
-
-                if ($payment->payment_method === 'online') {
-                    $onlineRevenue += $amount;
-                } elseif ($payment->payment_method === 'cash') {
-                    $onsiteRevenue += $amount;
-                }
-            }
-            
-            if ($trip->status === 'completed') {
-                $completedTrips++;
-            }
-        }
-
-        // Include paid/success online checkouts that may not yet have ticket rows
-        // but contain reserved trip IDs in items_payload.
-        if (!empty($fleetTripIds)) {
-            $candidateOnlinePayments = Payment::query()
-                ->where('payment_method', 'online')
-                ->whereBetween('payment_created', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
-                ->get();
-
-            foreach ($candidateOnlinePayments as $payment) {
-                if (!$this->isRevenueStatus($payment->status)) {
-                    continue;
-                }
-
-                if (isset($countedPaymentIds[$payment->payment_id])) {
-                    continue;
-                }
-
-                $items = $payment->items_payload ?? [];
-                $hasFleetTrip = false;
-                foreach ($items as $item) {
-                    $tripId = isset($item['trip_id']) ? (int) $item['trip_id'] : null;
-                    if ($tripId && in_array($tripId, $fleetTripIds, true)) {
-                        $hasFleetTrip = true;
-                        break;
-                    }
-                }
-
-                if (!$hasFleetTrip) {
-                    continue;
-                }
-
-                $amount = (float) $payment->amount;
-                $onlineRevenue += $amount;
-                $totalRevenue += $amount;
-                $countedPaymentIds[$payment->payment_id] = true;
-            }
-        }
-
-        $averageRevenuePerTrip = $completedTrips > 0 ? $totalRevenue / $completedTrips : 0;
+        $completedTrips = Trip::whereIn('trip_id', $fleetTripIds)
+            ->where('status', 'completed')
+            ->count();
 
         return [
             'fleet_id' => $fleetId,
@@ -118,9 +58,9 @@ class ReportingRepository
                 'end_date' => $endDate,
             ],
             'revenue' => [
-                'total' => round($totalRevenue, 2),
-                'online' => round($onlineRevenue, 2),
-                'onsite_cash' => round($onsiteRevenue, 2),
+                'total' => round((float) $totalRevenue, 2),
+                'online' => round((float) $onlineRevenue, 2),
+                'onsite_cash' => round((float) $onsiteRevenue, 2),
                 'currency' => 'PHP',
             ],
             'tickets' => [
@@ -129,7 +69,7 @@ class ReportingRepository
             ],
             'trips' => [
                 'completed' => $completedTrips,
-                'average_revenue_per_trip' => round($averageRevenuePerTrip, 2),
+                'average_revenue_per_trip' => $completedTrips > 0 ? round($totalRevenue / $completedTrips, 2) : 0,
             ],
         ];
     }
@@ -140,7 +80,7 @@ class ReportingRepository
     public function getRevenueByRoute(int $fleetId, string $startDate, string $endDate): Collection
     {
         $trips = Trip::with('fleetRoute.route', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->get();
 
@@ -150,7 +90,7 @@ class ReportingRepository
             $routeId = $trip->fleetRoute->route_id;
             $routeName = $trip->fleetRoute->route->route_name ?? "Route {$routeId}";
 
-            if (!isset($routeData[$routeId])) {
+            if (! isset($routeData[$routeId])) {
                 $routeData[$routeId] = [
                     'route_id' => $routeId,
                     'route_name' => $routeName,
@@ -166,12 +106,12 @@ class ReportingRepository
 
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -203,38 +143,143 @@ class ReportingRepository
      */
     public function getRouteAdherence(int $fleetId, string $startDate, string $endDate): array
     {
-        $trips = Trip::with('fleetRoute.route')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+        $trips = Trip::with('fleetRoute.route.routeStops.stop')
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['departed', 'completed'])
             ->get();
 
-        $totalTrips = count($trips);
-        $onTimeTrips = 0; // Would require actual departure vs scheduled time
-        $delayedTrips = 0;
+        $gpsByTrip = $this->getGpsPointsForTrips($trips->pluck('trip_id')->all(), DB::getDriverName())
+            ->groupBy('trip_id');
 
-        // For now, calculate based on trip completion
+        $totalTrips = count($trips);
+        $tripAdherences = [];
+        $stopCoverageSum = 0;
+        $deviatedTrips = 0;
+        $PROXIMITY_METERS = 300; // metres — bus considered "at" a stop if within 300 m
+
         foreach ($trips as $trip) {
-            if ($trip->status === 'completed') {
-                $onTimeTrips++;
+            // Route::routeStops is already ordered by stop_order; a route stop whose stop row is gone is skipped.
+            $stops = ($trip->fleetRoute?->route?->routeStops ?? collect())->pluck('stop')->filter()->values();
+            $stopCount = $stops->count();
+
+            if ($stopCount === 0) {
+                continue; // no route geometry — skip adherence calc
             }
+
+            $gpsPoints = $gpsByTrip->get($trip->trip_id, collect());
+
+            if ($gpsPoints->isEmpty()) {
+                // No GPS data — fall back to completion-based proxy
+                $tripAdherences[] = [
+                    'trip_id' => $trip->trip_id,
+                    'trip_date' => $trip->trip_date,
+                    'status' => $trip->status,
+                    'stop_coverage_pct' => $trip->status === 'completed' ? 100.0 : null,
+                    'gps_points' => 0,
+                    'data_source' => 'proxy',
+                ];
+
+                continue;
+            }
+
+            // For each scheduled stop, find whether a GPS point came within PROXIMITY_METERS
+            $stopsVisited = 0;
+            foreach ($stops as $stop) {
+                $stopLat = (float) $stop->latitude;
+                $stopLng = (float) $stop->longitude;
+
+                $nearestDist = $gpsPoints->min(function ($pt) use ($stopLat, $stopLng) {
+                    return $this->haversineMeters($pt->latitude, $pt->longitude, $stopLat, $stopLng);
+                });
+
+                if ($nearestDist !== null && $nearestDist <= $PROXIMITY_METERS) {
+                    $stopsVisited++;
+                }
+            }
+
+            $coveragePct = $stopCount > 0 ? round(($stopsVisited / $stopCount) * 100, 1) : 0;
+            $stopCoverageSum += $coveragePct;
+
+            if ($coveragePct < 80) {
+                $deviatedTrips++;
+            }
+
+            $tripAdherences[] = [
+                'trip_id' => $trip->trip_id,
+                'trip_date' => $trip->trip_date,
+                'status' => $trip->status,
+                'stops_scheduled' => $stopCount,
+                'stops_visited' => $stopsVisited,
+                'stop_coverage_pct' => $coveragePct,
+                'gps_points' => $gpsPoints->count(),
+                'data_source' => 'gps',
+            ];
         }
 
-        $delayedTrips = $totalTrips - $onTimeTrips;
+        $tripsWithData = count($tripAdherences);
+        $avgCoverage = $tripsWithData > 0 ? round($stopCoverageSum / $tripsWithData, 1) : null;
 
         return [
             'fleet_id' => $fleetId,
-            'period' => [
-                'start_date' => $startDate,
-                'end_date' => $endDate,
-            ],
-            'on_time_performance' => [
+            'period' => ['start_date' => $startDate, 'end_date' => $endDate],
+            'summary' => [
                 'total_trips' => $totalTrips,
-                'on_time_trips' => $onTimeTrips,
-                'delayed_trips' => $delayedTrips,
-                'on_time_percentage' => $totalTrips > 0 ? ($onTimeTrips / $totalTrips) * 100 : 0,
+                'trips_with_gps_data' => collect($tripAdherences)->where('data_source', 'gps')->count(),
+                'avg_stop_coverage_pct' => $avgCoverage,
+                'deviated_trips' => $deviatedTrips,
+                'adherence_rate_pct' => $tripsWithData > 0
+                    ? round((($tripsWithData - $deviatedTrips) / $tripsWithData) * 100, 1)
+                    : null,
             ],
+            'trips' => $tripAdherences,
         ];
+    }
+
+    private function getGpsPointsForTrips(array $tripIds, string $driver): Collection
+    {
+        if ($tripIds === []) {
+            return collect();
+        }
+
+        $placeholders = implode(',', array_fill(0, count($tripIds), '?'));
+        if ($driver === 'sqlite') {
+            return collect(DB::select("
+                SELECT
+                    trip_id,
+                    CAST(SUBSTR(location, 1, INSTR(location,',')-1) AS REAL) AS latitude,
+                    CAST(SUBSTR(location, INSTR(location,',')+1) AS REAL)    AS longitude,
+                    recorded_at
+                FROM fleet_location_history
+                WHERE trip_id IN ({$placeholders})
+                ORDER BY trip_id ASC, recorded_at ASC
+            ", $tripIds));
+        }
+
+        return collect(DB::select("
+            SELECT
+                trip_id,
+                ST_Y(location::geometry) AS latitude,
+                ST_X(location::geometry) AS longitude,
+                recorded_at
+            FROM fleet_location_history
+            WHERE trip_id IN ({$placeholders})
+            ORDER BY trip_id ASC, recorded_at ASC
+        ", $tripIds));
+    }
+
+    /**
+     * Haversine great-circle distance in metres.
+     */
+    private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $R = 6371000; // Earth radius in metres
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2
+              + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return $R * 2 * asin(sqrt($a));
     }
 
     /**
@@ -243,7 +288,7 @@ class ReportingRepository
     public function getOccupancyTrends(int $fleetId, string $startDate, string $endDate): array
     {
         $trips = Trip::with('fleetRoute.fleet')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->whereIn('status', ['boarding', 'departed', 'completed'])
             ->get();
@@ -269,7 +314,7 @@ class ReportingRepository
             }
         }
 
-        $tripsWithPassengers = count(array_filter($trips->pluck('total_occupancy')->toArray(), fn($x) => $x > 0));
+        $tripsWithPassengers = count(array_filter($trips->pluck('total_occupancy')->toArray(), fn ($x) => $x > 0));
         $averageOccupancy = $tripsWithPassengers > 0 ? $totalOccupancy / $tripsWithPassengers : 0;
 
         // Calculate average per hour
@@ -305,7 +350,7 @@ class ReportingRepository
     public function getDailySummary(int $fleetId, string $date): array
     {
         $trips = Trip::with('fleetRoute.route', 'tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->where('trip_date', $date)
             ->get();
 
@@ -325,12 +370,12 @@ class ReportingRepository
 
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -363,21 +408,22 @@ class ReportingRepository
     public function getPaymentChannelBreakdown(int $fleetId, string $startDate, string $endDate): array
     {
         $trips = Trip::with('tickets.payment')
-            ->whereHas('fleetRoute', fn($q) => $q->where('fleet_id', $fleetId))
+            ->whereHas('fleetRoute', fn ($q) => $q->where('fleet_id', $fleetId))
             ->whereBetween('trip_date', [$startDate, $endDate])
             ->get();
 
         $channelData = [];
+        $inScopePaymentIds = [];
 
         foreach ($trips as $trip) {
             $paymentMap = [];
             foreach ($trip->tickets as $ticket) {
-                if (!$ticket->payment) {
+                if (! $ticket->payment) {
                     continue;
                 }
 
                 $payment = $ticket->payment;
-                if (!$this->isRevenueStatus($payment->status)) {
+                if (! $this->isRevenueStatus($payment->status)) {
                     continue;
                 }
 
@@ -386,7 +432,7 @@ class ReportingRepository
 
             foreach ($paymentMap as $payment) {
                 $channel = $payment->payment_channel ?? 'unknown';
-                if (!isset($channelData[$channel])) {
+                if (! isset($channelData[$channel])) {
                     $channelData[$channel] = [
                         'channel' => $channel,
                         'total_amount' => 0,
@@ -397,6 +443,7 @@ class ReportingRepository
 
                 $channelData[$channel]['total_amount'] += $payment->amount;
                 $channelData[$channel]['transaction_count']++;
+                $inScopePaymentIds[$payment->payment_id] = true;
             }
         }
 
@@ -407,6 +454,23 @@ class ReportingRepository
             }
         }
 
+        // Batch C / THESIS_OBJECTIVES_AUDIT.md item #8: reward-point
+        // redemptions were previously invisible to "multi-channel" financial
+        // reporting — a passenger applying points as a discount during
+        // checkout (PaymentService::checkoutOnline() → RewardService::
+        // redeemPoints($paymentId, ...)) reduces the effective cash collected
+        // but that value never showed up anywhere in this report. Reported
+        // as a separate reconciliation line (not injected as a fake
+        // "channel") since it's a discount/adjustment against face value,
+        // not incoming revenue.
+        $redemptions = RewardTransaction::where('type', 'redeemed')
+            ->whereIn('payment_id', array_keys($inScopePaymentIds))
+            ->get();
+
+        // Net per payment: points taken at checkout minus points given back when the payment did not go through.
+        $netByPayment = $redemptions->groupBy('payment_id')->map(fn ($rows) => max(0, -1 * (int) $rows->sum('points')));
+        $totalPointsRedeemed = (int) $netByPayment->sum();
+
         return [
             'fleet_id' => $fleetId,
             'period' => [
@@ -414,6 +478,44 @@ class ReportingRepository
                 'end_date' => $endDate,
             ],
             'channels' => array_values($channelData),
+            'reward_redemptions' => [
+                'redemption_count' => $netByPayment->filter(fn ($points) => $points > 0)->count(),
+                'total_points_redeemed' => $totalPointsRedeemed,
+                // What the passenger actually saved: a point is worth the checkout discount, not the earning rate.
+                'total_value_php' => round($totalPointsRedeemed * RewardService::REDEMPTION_PESOS_PER_POINT, 2),
+            ],
         ];
+    }
+
+    /**
+     * Query the scheduled_reports table (no Eloquent model — raw table) with
+     * optional filters. Moved here from a route closure in routes/api.php
+     * to keep data access out of the routing layer.
+     */
+    public function getStoredReports(array $filters, int $limit): Collection
+    {
+        $query = DB::table('scheduled_reports')
+            ->orderByDesc('report_date')
+            ->orderByDesc('generated_at')
+            ->limit($limit);
+
+        if (! empty($filters['fleet_id'])) {
+            $query->where('fleet_id', (int) $filters['fleet_id']);
+        }
+        if (! empty($filters['report_type'])) {
+            $query->where('report_type', $filters['report_type']);
+        }
+        if (! empty($filters['date'])) {
+            $query->where('report_date', $filters['date']);
+        }
+        if (! empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get()->map(function ($row) {
+            $row->payload = json_decode($row->payload, true);
+
+            return $row;
+        });
     }
 }

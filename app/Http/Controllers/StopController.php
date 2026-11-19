@@ -1,35 +1,83 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\StopService;
+
 use App\Http\Requests\StoreStopRequest;
 use App\Http\Requests\UpdateStopRequest;
+use App\Services\AuditLogger;
+use App\Services\StopService;
+use App\Support\CompanyScope;
 use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class StopController extends Controller
 {
     use ApiResponse;
-    public function __construct(private StopService $stopService)
+
+    public function __construct(private StopService $stopService) {}
+
+    /** 2026-11-06: staff see their own company's stops; the platform Admin sees every stop. */
+    public function index(Request $request)
     {
+        return $this->success($this->stopService->listStops(CompanyScope::companyFilterFor($request->user())), 'Stops retrieved successfully');
     }
 
-    public function index()
-    {
-        return $this->success($this->stopService->listStops(), 'Stops retrieved successfully');
-    }
-
+    /** 2026-11-06: a stop belongs to the creating company admin's company (the platform Admin's has none). */
     public function store(StoreStopRequest $request)
     {
-        return $this->success($this->stopService->createStop($request->validated()), 'Stop created successfully');
+        $payload = $request->validated();
+        if ($request->user()?->role !== 'admin') {
+            $payload['company_id'] = $request->user()?->companyProfile?->company_id;
+        }
+
+        $stop = $this->stopService->createStop($payload);
+        AuditLogger::log('stop.create', 'Stop', (int) $stop->stop_id, ['name' => $stop->stop_name, 'latitude' => $stop->latitude, 'longitude' => $stop->longitude]);
+
+        return $this->success($stop, 'Stop created successfully');
     }
 
     public function update(UpdateStopRequest $request, int $stopId)
     {
-        return $this->success($this->stopService->updateStop($stopId, $request->validated()), 'Stop updated successfully');
+        if ($denied = $this->ownStopOr404($request, $stopId)) {
+            return $denied;
+        }
+        $before = $this->stopService->findStop($stopId);
+
+        $stop = $this->stopService->updateStop($stopId, $request->validated());
+        $moved = $stop && ((float) $before->latitude !== (float) $stop->latitude || (float) $before->longitude !== (float) $stop->longitude);
+        AuditLogger::log($moved ? 'stop.move' : 'stop.update', 'Stop', $stopId, array_filter([
+            'changed' => array_keys($request->validated()),
+            'from' => $moved ? ['latitude' => $before->latitude, 'longitude' => $before->longitude] : null,
+            'to' => $moved ? ['latitude' => $stop->latitude, 'longitude' => $stop->longitude] : null,
+        ]));
+
+        return $this->success($stop, 'Stop updated successfully');
     }
 
-    public function destroy(int $stopId)
+    public function destroy(Request $request, int $stopId)
     {
+        if ($denied = $this->ownStopOr404($request, $stopId)) {
+            return $denied;
+        }
+        $before = $this->stopService->findStop($stopId);
         $this->stopService->deleteStop($stopId);
+        AuditLogger::log('stop.delete', 'Stop', $stopId, ['name' => $before?->stop_name, 'latitude' => $before?->latitude, 'longitude' => $before?->longitude]);
+
         return $this->success(null, 'Stop deleted successfully');
+    }
+
+    /** Another company's stop reads as not found; one still used by another company's route cannot be changed. */
+    private function ownStopOr404(Request $request, int $stopId): ?JsonResponse
+    {
+        $stop = $this->stopService->findStop($stopId);
+        if (! $stop || ! CompanyScope::ownsRow($stop->company_id, $request->user())) {
+            return $this->error('Stop not found.', 404);
+        }
+        if ($request->user()?->role !== 'admin' && $this->stopService->usedByAnotherCompany($stopId, (int) $stop->company_id)) {
+            return $this->error('Another company\'s route also uses this stop, so it cannot be changed. Add your own stop instead.', 422);
+        }
+
+        return null;
     }
 }

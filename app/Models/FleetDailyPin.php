@@ -39,6 +39,7 @@ class FleetDailyPin extends Model
 
     protected $fillable = [
         'trip_id',
+        'shift_block_id',
         'driver_id',
         'conductor_id',
         'pin_code',
@@ -51,7 +52,7 @@ class FleetDailyPin extends Model
     protected function casts(): array
     {
         return [
-            'pin_date'              => 'date',
+            'pin_date'              => 'date:Y-m-d',
             'driver_verified_at'   => 'datetime',
             'conductor_verified_at' => 'datetime',
             'paired_at'             => 'datetime',

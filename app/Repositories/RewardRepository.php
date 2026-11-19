@@ -1,8 +1,10 @@
 <?php
+
 namespace App\Repositories;
 
 use App\Models\PassengerUser;
 use App\Models\RewardTransaction;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
 class RewardRepository
@@ -19,6 +21,35 @@ class RewardRepository
             ->decrement('reward_points', $points);
     }
 
+    /**
+     * One atomic statement: the points are taken only if the passenger still has them at this moment, so two
+     * checkouts at the same time cannot both spend the same points. False when there were not enough.
+     */
+    public function decrementPointsIfEnough(int $passengerId, int $points): bool
+    {
+        return PassengerUser::where('passenger_id', $passengerId)
+            ->where('reward_points', '>=', $points)
+            ->decrement('reward_points', $points) > 0;
+    }
+
+    /** Every redeemed row of one payment: negative = points taken at checkout, positive = points given back. */
+    public function redemptionRowsForPayment(int $paymentId): Collection
+    {
+        return RewardTransaction::where('type', 'redeemed')
+            ->where('payment_id', $paymentId)
+            ->get();
+    }
+
+    /**
+     * Locks the passenger's points row (SELECT ... FOR UPDATE) until the transaction ends, so two point changes for the
+     * same passenger run one after the other. Read the ledger AFTER this call: a fresh query then sees what a
+     * transaction that held the lock before has committed. Must be called inside a DB::transaction().
+     */
+    public function lockPassengerPoints(int $passengerId): void
+    {
+        PassengerUser::where('passenger_id', $passengerId)->lockForUpdate()->value('reward_points');
+    }
+
     public function getPoints(int $passengerId): float
     {
         return PassengerUser::where('passenger_id', $passengerId)
@@ -30,11 +61,12 @@ class RewardRepository
         return RewardTransaction::create($payload);
     }
 
-    public function findHistoryForPassenger(int $passengerId): Collection
+    public function findHistoryForPassenger(int $passengerId, int $perPage = 50, int $page = 1): LengthAwarePaginator
     {
         return RewardTransaction::with('payment')
             ->where('passenger_id', $passengerId)
-            ->latest()
-            ->get();
+            ->orderByDesc('created_at')
+            ->orderByDesc('reward_transaction_id')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 }

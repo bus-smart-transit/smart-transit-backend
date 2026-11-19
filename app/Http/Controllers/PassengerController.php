@@ -1,34 +1,100 @@
 <?php
+
 namespace App\Http\Controllers;
 
+use App\Http\Requests\DeleteOwnAccountRequest;
 use App\Http\Requests\RegisterPassengerRequest;
 use App\Http\Requests\UpdatePassengerProfileRequest;
 use App\Http\Resources\PassengerResource;
+use App\Services\AccountDeletionService;
+use App\Services\AuditLogger;
 use App\Services\PassengerService;
+use App\Services\PaymentService;
+use App\Services\RewardService;
+use App\Services\TicketService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class PassengerController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private PassengerService $passengerService)
+    public function __construct(
+        private PassengerService $passengerService,
+        private TicketService $ticketService,
+        private RewardService $rewardService,
+        private PaymentService $paymentService,
+    ) {}
+
+    public function summary(Request $request): JsonResponse
     {
+        $user = $request->user();
+        $passenger = $request->user()?->passengerProfile;
+
+        if (! $passenger) {
+            return $this->error('Passenger profile not found.', 404);
+        }
+
+        $historyPerPage = 50;
+        $tickets = $this->ticketService->getPassengerTickets($passenger->passenger_id, 1, $historyPerPage);
+        $dashboardFacts = $this->ticketService->getPassengerDashboardFacts($passenger->passenger_id);
+        $rewards = $this->rewardService->getHistory($passenger->passenger_id, 1, $historyPerPage);
+        $payments = $this->paymentService->getPassengerHistoryFromPayments($passenger->passenger_id, 1, $historyPerPage);
+
+        return $this->success([
+            'profile' => [
+                'passenger_uuid' => $passenger->passenger_uuid,
+                'name' => $passenger->name,
+                'phone_num' => $passenger->phone_num,
+                'address' => $passenger->address,
+                'birth_date' => $passenger->birth_date,
+                'reward_points' => $passenger->reward_points,
+                'gender' => $passenger->gender, // 2026-10-28: shown on the passenger's own profile
+                'email' => $user?->email,
+                'username' => $user?->username,
+                'two_factor_enabled' => (bool) ($user?->two_factor_enabled ?? false),
+                'user' => [
+                    'email' => $user?->email,
+                    'username' => $user?->username,
+                    'two_factor_enabled' => (bool) ($user?->two_factor_enabled ?? false),
+                ],
+                'created_at' => $passenger->created_at,
+            ],
+            'tickets' => $tickets->items(),
+            'rewards' => $rewards->items(),
+            'payments' => $payments->items(),
+            'dashboard_facts' => $dashboardFacts,
+            'meta' => [
+                'tickets_count' => $tickets->total(),
+                'rewards_count' => $rewards->total(),
+                'payments_count' => $payments->total(),
+                'history_pagination' => [
+                    'per_page' => $historyPerPage,
+                    'tickets' => ['page' => 1, 'last_page' => $tickets->lastPage(), 'total' => $tickets->total()],
+                    'rewards' => ['page' => 1, 'last_page' => $rewards->lastPage(), 'total' => $rewards->total()],
+                    'payments' => ['page' => 1, 'last_page' => $payments->lastPage(), 'total' => $payments->total()],
+                ],
+                'synced_at' => now()->toISOString(),
+            ],
+        ], 'Dashboard summary retrieved successfully');
     }
 
     public function index(): JsonResponse
     {
         $paginated = $this->passengerService->listPassenger(request()->input('per_page', 15));
+
         return $this->success(PassengerResource::collection($paginated)->response()->getData(true));
     }
 
     public function store(RegisterPassengerRequest $request): JsonResponse
     {
-        ['passenger' => $passenger, 'token' => $token] = $this->passengerService->registerPassenger($request->validated());
+        ['passenger' => $passenger, 'verification' => $verification] = $this->passengerService->registerPassenger($request->validated());
 
+        // 2026-10-28: no token until the emailed code is entered (email verification).
         return $this->success(
-            ['passenger' => new PassengerResource($passenger), 'token' => $token],
-            'Registered successfully',
+            ['passenger' => new PassengerResource($passenger)] + $verification,
+            'Registered. Enter the code sent to your email to verify it.',
             201
         );
     }
@@ -42,30 +108,35 @@ class PassengerController extends Controller
     {
         // Enforce ownership: always update the authenticated user's own profile
         $passengerProfile = $request->user()?->passengerProfile;
-        if (!$passengerProfile) {
+        if (! $passengerProfile) {
             return $this->error('Passenger profile not found.', 404);
         }
 
-        $model = $this->passengerService->updatePassenger(
-            $passengerProfile->passenger_uuid,
-            $request->validated()
-        );
+        $changes = $request->validated();
+        $model = $this->passengerService->updatePassenger($passengerProfile->passenger_uuid, $changes);
 
-        // Revoke all other tokens when profile is updated (session hygiene)
-        $request->user()->tokens()->where('id', '!=', $request->user()->currentAccessToken()->id)->delete();
+        // 2026-10-29 (Batch 36 Phase 2): a name, phone or gender change keeps the passenger's other devices signed in
+        // (only an email or password change signs them out). The change is audit-logged (which fields, not the values).
+        AuditLogger::log('passenger.profile_updated', 'PassengerUser', (int) $passengerProfile->passenger_id, ['fields' => array_keys($changes)]);
 
         return $this->success(new PassengerResource($model), 'Profile updated successfully');
     }
 
-    public function destroy(string $uuid): JsonResponse
+    /**
+     * 2026-11-05: the signed-in passenger deletes their OWN account (least privilege: no id is taken, so nobody can
+     * reach another passenger). Every session ends now; signing in within the grace days cancels it.
+     */
+    public function destroy(DeleteOwnAccountRequest $request, AccountDeletionService $deletions): JsonResponse
     {
-        $this->passengerService->deletePassenger($uuid);
-        return $this->success(null, 'Deleted successfully');
+        $result = $deletions->request($request->user(), (string) $request->validated('password'));
+
+        return $this->success($result, 'Your account will be deleted. You have been signed out.');
     }
 
     public function restore(string $uuid): JsonResponse
     {
         $model = $this->passengerService->restorePassenger($uuid);
+
         return $this->success(new PassengerResource($model), 'Restored successfully');
     }
 }

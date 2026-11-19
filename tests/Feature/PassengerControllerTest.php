@@ -6,17 +6,19 @@ uses(RefreshDatabase::class);
 
 test('it can create a passenger user', function () {
     $response = $this->postJson('/api/passengers/register', [
-        'email' => 'test+' . uniqid() . '@example.com',
+        'email' => 'test+'.uniqid().'@example.com',
         'password' => 'password123',
         'password_confirmation' => 'password123',
         'name' => 'John Doe',
-        'phone_num' => '1234567890',
+        'phone_num' => '09171234567', // Batch 47 part B: a real mobile number (stored as +639171234567)
         'address' => '123 Smart St',
         'birthdate' => '2000-01-01',
     ]);
 
     $response->assertStatus(201);
-    $response->assertJsonStructure(['data' => ['passenger', 'token']]);
+    // 2026-10-28: no token at sign-up; a code is emailed to verify the address first.
+    $response->assertJsonStructure(['data' => ['passenger', 'verification_required', 'account_uuid', 'email_masked']]);
+    $response->assertJsonMissingPath('data.token');
 });
 
 test('it validates request data when creating a passenger user', function () {

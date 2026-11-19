@@ -23,7 +23,8 @@ class FleetDailyPinController extends Controller
      */
     public function showForDriver(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
@@ -58,7 +59,8 @@ class FleetDailyPinController extends Controller
      */
     public function showForConductor(Request $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
         $pin = $this->pinService->getTodayPin($trip->trip_id);
@@ -92,7 +94,8 @@ class FleetDailyPinController extends Controller
      */
     public function verifyAsDriver(VerifyPinRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForDriver($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(
@@ -118,7 +121,8 @@ class FleetDailyPinController extends Controller
      */
     public function verifyAsConductor(VerifyPinRequest $request)
     {
-        $companyUser = $request->user()->companyProfile;
+        $companyUser = $request->user()?->companyProfile;
+        if (!$companyUser) return $this->error('Staff profile not found.', 404);
         $trip        = $this->resolveTripForConductor($companyUser->company_user_id);
 
         $pin = $this->pinService->verify(
@@ -144,10 +148,15 @@ class FleetDailyPinController extends Controller
 
     private function resolveTripForDriver(int $driverId): object
     {
-        $trip = $this->tripService->getCurrentOrScheduledTripForDriver($driverId);
+        $trip = $this->tripService->getTodayAssignedTripForDriver($driverId);
 
         if (!$trip) {
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
+        }
+
+        // Batch 29: no PIN until the assignment is accepted.
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'driver')) {
+            abort(422, $reason);
         }
 
         return $trip;
@@ -155,10 +164,14 @@ class FleetDailyPinController extends Controller
 
     private function resolveTripForConductor(int $conductorId): object
     {
-        $trip = $this->tripService->getCurrentOrScheduledTripForConductor($conductorId);
+        $trip = $this->tripService->getTodayAssignedTripForConductor($conductorId);
 
         if (!$trip) {
             abort(404, 'No trip assigned for today. Cannot resolve PIN context.');
+        }
+
+        if ($reason = \App\Support\AssignmentAcceptance::blockedReason($trip, 'conductor')) {
+            abort(422, $reason);
         }
 
         return $trip;

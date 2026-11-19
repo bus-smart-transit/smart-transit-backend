@@ -12,6 +12,7 @@ class UpdateLocationRequest extends FormRequest
             'trip_id'   => 'nullable|integer|exists:trips,trip_id',
             'heading'   => 'nullable|numeric|between:0,360',
             'speed_kmh' => 'nullable|numeric|min:0',
+            'accuracy'  => 'nullable|numeric|min:0',
         ];
     }
 }

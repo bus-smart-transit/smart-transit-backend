@@ -1,0 +1,247 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\ConductorShiftLog;
+use App\Models\DriverShiftLog;
+use App\Models\RouteStop;
+use App\Models\ShiftBlock;
+use App\Models\Ticket;
+use App\Models\Trip;
+use App\Services\AuditLogger;
+use App\Services\CashRemittanceService;
+use App\Services\TripService;
+use App\Support\TripTiming;
+use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Batch 27 Part 2, Task 1c: repairs stale shift state left by earlier days (the dev data had a Chauffeur shift
+ * open on yesterday's first leg and a block whose later legs stayed "delayed" forever).
+ *
+ * DRY RUN BY DEFAULT: without --apply it only prints what it would do and changes nothing.
+ *
+ * Rules (it never touches a leg that has started or finished):
+ *  - Only blocks dated before today (Manila) are looked at.
+ *  - A block with any leg that is departed or in-progress is skipped whole and reported.
+ *  - A leg still scheduled, delayed or boarding is cancelled, unless it has a valid ticket: then it is
+ *    left alone and listed for the Operator (a person must decide about passengers).
+ *  - When no live leg is left the block becomes completed (if a leg completed) or cancelled.
+ *  - An open driver or Chauffeur shift log whose block (or trip) is finished once this runs is closed
+ *    with end_source "repair_stale".
+ *  - Batch 29: standalone trips (no block) dated before today follow the same rules: one that is still scheduled,
+ *    delayed or boarding is cancelled unless it has a valid ticket; one that is departed or in-progress is left alone
+ *    and listed (an Operator or Admin must complete or cancel it).
+ *  - Batch 54 (user, 2026-11-10): nobody was told about the trips left alone, and they stayed live for ever (a bus
+ *    "arriving now" on the map days later, a Chauffeur unable to start the next shift). They are now closed first,
+ *    through TripService like a person would: a trip that left (or whose passengers boarded) is completed once its
+ *    expected arrival plus booking.stale_trip_close_after_minutes has passed; one that never left but has paid
+ *    tickets is cancelled, so its passengers are told and can rebook or ask for a refund. A trip that may still be
+ *    on the road is left alone.
+ */
+class RepairStaleShiftState extends Command
+{
+    protected $signature = 'shift:repair-stale {--apply : Write the changes. Without it nothing is changed (dry run).}';
+
+    protected $description = 'Repair stale shift blocks and open shift logs from earlier days (dry run unless --apply)';
+
+    public function handle(): int
+    {
+        $apply = (bool) $this->option('apply');
+        $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString();
+        $this->info(($apply ? 'APPLYING' : 'DRY RUN (nothing is changed; add --apply to write)')." - Manila today is {$today}");
+
+        [$toComplete, $toCancel, $running] = $this->planUnfinishedTrips($today);
+        $this->table(['Trips to complete (left, never ended)', 'date', 'was'], $toComplete);
+        $this->table(['Trips with passengers to cancel (never left)', 'date', 'was'], $toCancel);
+        if ($apply) {
+            $trips = app(TripService::class);
+            foreach ($toComplete as [$tripId]) {
+                $trips->completeTrip((int) $tripId);
+            }
+            foreach ($toCancel as [$tripId]) {
+                $trips->cancelTrip((int) $tripId, null, 'Closed overnight: the trip never left.');
+            }
+            if ($toComplete !== [] || $toCancel !== []) {
+                AuditLogger::logAs('system', null, 'shift.repair_stale_trips', null, null, [
+                    'completed' => array_column($toComplete, 0),
+                    'cancelled' => array_column($toCancel, 0),
+                ]);
+            }
+        }
+
+        // In a dry run the trips above are still open: the rules below skip them so each trip is listed once.
+        $planned = $apply ? [] : array_map('intval', [...array_column($toComplete, 0), ...array_column($toCancel, 0)]);
+
+        $legsToCancel = [];
+        $tripsToCancel = [];
+        $blockUpdates = [];
+        $leftAlone = [];
+        $finishedBlocks = [];
+
+        foreach (ShiftBlock::whereDate('scheduled_date', '<', $today)->whereIn('status', ['scheduled', 'in_progress'])->get() as $block) {
+            $legs = Trip::where('shift_block_id', $block->shift_block_id)->orderBy('departure_time')->orderBy('trip_id')->get()
+                ->reject(fn (Trip $l) => in_array((int) $l->trip_id, $planned, true));
+
+            if ($legs->contains(fn (Trip $l) => in_array($l->status, ['departed', 'in-progress'], true))) {
+                $leftAlone[] = ["block {$block->shift_block_id}", 'a leg has started (departed or in-progress): not touched'];
+
+                continue;
+            }
+
+            $live = $legs->filter(fn (Trip $l) => in_array($l->status, ['scheduled', 'delayed', 'boarding'], true));
+            foreach ($live as $leg) {
+                $hasTickets = Ticket::where('trip_id', $leg->trip_id)->where('status', 'valid')->exists();
+                if ($hasTickets) {
+                    $leftAlone[] = ["trip {$leg->trip_id} (block {$block->shift_block_id})", 'has valid tickets: the Operator must decide'];
+
+                    continue;
+                }
+                $legsToCancel[] = [$leg->trip_id, $block->shift_block_id, $leg->status];
+            }
+
+            $remaining = $legs->filter(fn (Trip $l) => in_array($l->status, ['scheduled', 'delayed', 'boarding'], true)
+                && ! in_array($l->trip_id, array_column($legsToCancel, 0), true));
+            if ($remaining->isEmpty()) {
+                $newStatus = $legs->contains(fn (Trip $l) => $l->status === 'completed') ? 'completed' : 'cancelled';
+                $blockUpdates[] = [$block->shift_block_id, $block->status, $newStatus];
+                $finishedBlocks[] = $block->shift_block_id;
+            }
+        }
+
+        // Batch 29: standalone trips left over from earlier days.
+        foreach (Trip::whereNull('shift_block_id')->whereDate('trip_date', '<', $today)->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])->orderBy('trip_date')->orderBy('trip_id')->get() as $trip) {
+            if (in_array((int) $trip->trip_id, $planned, true)) {
+                continue;
+            }
+            if (in_array($trip->status, ['departed', 'in-progress'], true)) {
+                $leftAlone[] = ["trip {$trip->trip_id} ({$trip->trip_date->toDateString()})", 'under way (departed or in-progress): an Operator or Admin must complete or cancel it'];
+
+                continue;
+            }
+            if (Ticket::where('trip_id', $trip->trip_id)->where('status', 'valid')->exists()) {
+                $leftAlone[] = ["trip {$trip->trip_id} ({$trip->trip_date->toDateString()})", 'has valid tickets: the Operator must decide'];
+
+                continue;
+            }
+            $tripsToCancel[] = [$trip->trip_id, $trip->trip_date->toDateString(), $trip->status];
+        }
+
+        // Open shift logs whose shift is finished (or becomes finished by this run).
+        $logsToClose = [];
+        foreach ([['driver', DriverShiftLog::whereNull('ended_at')->get()], ['conductor', ConductorShiftLog::whereNull('ended_at')->get()]] as [$role, $logs]) {
+            foreach ($logs as $log) {
+                $trip = Trip::find($log->trip_id);
+                if (! $trip || $trip->trip_date?->toDateString() >= $today) {
+                    continue;
+                }
+                $finished = $trip->shift_block_id
+                    ? in_array((int) $trip->shift_block_id, $finishedBlocks, true) || ! Trip::where('shift_block_id', $trip->shift_block_id)->whereNotIn('status', ['completed', 'cancelled'])->exists()
+                    : (in_array($trip->status, ['completed', 'cancelled'], true) || in_array((int) $trip->trip_id, array_column($tripsToCancel, 0), true));
+                if ($finished) {
+                    $logsToClose[] = [$role, $log->shift_log_id, $log->trip_id];
+                } else {
+                    $leftAlone[] = ["{$role} shift log {$log->shift_log_id}", 'its trip or block is not finished: not touched'];
+                }
+            }
+        }
+
+        $this->table(['Legs to cancel', 'block', 'was'], $legsToCancel);
+        $this->table(['Standalone trips to cancel', 'date', 'was'], $tripsToCancel);
+        $this->table(['Blocks to close', 'was', 'becomes'], $blockUpdates);
+        $this->table(['Open shift logs to close', 'log id', 'trip'], $logsToClose);
+        $this->table(['Left alone', 'why'], [...$running, ...$leftAlone]);
+
+        if (! $apply) {
+            $this->comment('Dry run: no changes written.');
+
+            return self::SUCCESS;
+        }
+
+        DB::transaction(function () use ($legsToCancel, $tripsToCancel, $blockUpdates, $logsToClose) {
+            foreach ($legsToCancel as [$tripId]) {
+                Trip::where('trip_id', $tripId)->whereIn('status', ['scheduled', 'delayed', 'boarding'])->update(['status' => 'cancelled']);
+            }
+            foreach ($tripsToCancel as [$tripId]) {
+                Trip::where('trip_id', $tripId)->whereIn('status', ['scheduled', 'delayed', 'boarding'])->update(['status' => 'cancelled']);
+            }
+            foreach ($blockUpdates as [$blockId, , $newStatus]) {
+                ShiftBlock::where('shift_block_id', $blockId)->update(['status' => $newStatus]);
+            }
+            foreach ($logsToClose as [$role, $logId]) {
+                ($role === 'driver' ? DriverShiftLog::class : ConductorShiftLog::class)::where('shift_log_id', $logId)
+                    ->whereNull('ended_at')->update(['ended_at' => now(), 'end_source' => 'repair_stale']);
+                if ($role === 'conductor') {
+                    // Batch 29: a Conductor shift closed by the repair is still accounted for: a pending batch, no declared count.
+                    app(CashRemittanceService::class)->openForShift(ConductorShiftLog::findOrFail($logId), null);
+                }
+            }
+            AuditLogger::logAs('system', null, 'shift.repair_stale', null, null, [
+                'legs_cancelled' => array_merge(array_column($legsToCancel, 0), array_column($tripsToCancel, 0)),
+                'blocks' => array_column($blockUpdates, 0),
+                'shift_logs_closed' => array_column($logsToClose, 1),
+            ]);
+        });
+
+        $this->info('Applied.');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Batch 54: unfinished trips from earlier days that a person used to have to close.
+     *
+     * @return array{0: list<array{0: int, 1: string, 2: string}>, 1: list<array{0: int, 1: string, 2: string}>, 2: list<array{0: string, 1: string}>}
+     */
+    private function planUnfinishedTrips(string $today): array
+    {
+        $now = Carbon::now(config('app.timezone', 'Asia/Manila'));
+        $complete = [];
+        $cancel = [];
+        $running = [];
+
+        $trips = Trip::with('fleetRoute')->whereDate('trip_date', '<', $today)
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->orderBy('trip_date')->orderBy('departure_time')->orderBy('trip_id')->get();
+
+        foreach ($trips as $trip) {
+            $row = [(int) $trip->trip_id, $trip->trip_date->toDateString(), $trip->status];
+            if (in_array($trip->status, ['departed', 'in-progress'], true)) {
+                if ($this->mayStillBeRunning($trip, $now)) {
+                    $running[] = ["trip {$trip->trip_id} ({$row[1]})", 'left and may still be on the road: closed on a later run'];
+                } else {
+                    $complete[] = $row;
+                }
+
+                continue;
+            }
+            $tickets = Ticket::where('trip_id', $trip->trip_id)->where('status', 'valid');
+            if (! (clone $tickets)->exists()) {
+                continue; // no passengers: the older rules below cancel it
+            }
+            if ((clone $tickets)->whereNotNull('boarded_at')->exists()) {
+                $complete[] = $row; // passengers boarded, so it ran: the crew only forgot to tap
+            } else {
+                $cancel[] = $row;
+            }
+        }
+
+        return [$complete, $cancel, $running];
+    }
+
+    /** Expected arrival (departure plus the route's last stop offset) plus the close-after margin is still ahead. */
+    private function mayStillBeRunning(Trip $trip, Carbon $now): bool
+    {
+        $departure = TripTiming::departureAt($trip) ?? $trip->trip_date->copy()->shiftTimezone(config('app.timezone', 'Asia/Manila'))->startOfDay();
+        $routeId = $trip->fleetRoute?->route_id;
+        $length = $routeId ? (int) RouteStop::where('route_id', $routeId)->max('scheduled_offset_min') : 0;
+        if ($length <= 0) {
+            $length = (int) config('booking.stale_trip_fallback_length_minutes', 240);
+        }
+        $factor = (float) ($trip->duration_factor ?: 1);
+        $closeAt = $departure->copy()->addMinutes((int) ceil($length * $factor) + (int) config('booking.stale_trip_close_after_minutes', 120));
+
+        return $closeAt->gt($now);
+    }
+}

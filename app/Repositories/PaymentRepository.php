@@ -1,10 +1,14 @@
 <?php
+
 namespace App\Repositories;
-use App\Models\Stop;
+
 use App\Models\Payment;
-use App\Models\Ticket;
 use App\Models\RewardTransaction;
-use Illuminate\Support\Collection;
+use App\Models\Stop;
+use App\Support\RefundStatus;
+use App\Support\TicketBoarding;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class PaymentRepository
@@ -13,12 +17,31 @@ class PaymentRepository
     {
         $payload['payment_uuid'] = $payload['payment_uuid'] ?? (string) Str::uuid();
         $payload['payment_created'] = $payload['payment_created'] ?? now();
+
         return Payment::create($payload);
     }
 
     public function findById(int $paymentId): ?Payment
     {
         return Payment::with('tickets')->find($paymentId);
+    }
+
+    public function findByTransactionReference(string $transactionReference): ?Payment
+    {
+        return Payment::where('transaction_reference', $transactionReference)->first();
+    }
+
+    public function findByIdempotencyKey(string $scopeHash, string $keyHash, bool $lockForUpdate = false): ?Payment
+    {
+        $query = Payment::with(['tickets', 'onsitePayment'])
+            ->where('idempotency_scope_hash', $scopeHash)
+            ->where('idempotency_key_hash', $keyHash);
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->first();
     }
 
     public function findByGatewayReference(string $gatewayReference): ?Payment
@@ -39,40 +62,30 @@ class PaymentRepository
         ]) > 0;
     }
 
-    public function findPassengerHistoryFromPayments(int $passengerId): Collection
+    public function findPassengerHistoryFromPayments(int $passengerId, int $perPage = 50, int $page = 1): LengthAwarePaginator
     {
-        // Fast path: resolve payment ids through indexed relations first.
-        $ticketPaymentIds = Ticket::query()
+        $ticketPaymentIds = DB::table('tickets')
+            ->select('payment_id')
             ->where('passenger_id', $passengerId)
             ->whereNotNull('payment_id')
-            ->pluck('payment_id')
-            ->map(fn ($id) => (int) $id)
-            ->values();
-
-        $rewardPaymentIds = RewardTransaction::query()
+            ->distinct();
+        $rewardPaymentIds = DB::table('reward_transactions')
+            ->select('payment_id')
             ->where('passenger_id', $passengerId)
             ->whereNotNull('payment_id')
-            ->pluck('payment_id')
-            ->map(fn ($id) => (int) $id)
-            ->values();
-
-        $resolvedPaymentIds = $ticketPaymentIds
-            ->merge($rewardPaymentIds)
-            ->unique()
-            ->values();
-
-        if ($resolvedPaymentIds->isEmpty()) {
-            return collect();
-        }
+            ->distinct();
+        $resolvedPaymentIds = $ticketPaymentIds->union($rewardPaymentIds);
 
         $payments = Payment::query()
             ->with(['tickets.originStop', 'tickets.destinationStop'])
             ->whereIn('payment_id', $resolvedPaymentIds)
             ->orderByDesc('payment_created')
             ->orderByDesc('created_at')
-            ->get();
+            ->orderByDesc('payment_id')
+            ->paginate($perPage, ['*'], 'page', $page);
+        $paymentRows = $payments->getCollection();
 
-        $paymentIds = $payments->pluck('payment_id')->filter()->map(fn ($id) => (int) $id)->values();
+        $paymentIds = $paymentRows->pluck('payment_id')->filter()->map(fn ($id) => (int) $id)->values();
 
         $rewardByPayment = RewardTransaction::query()
             ->where('passenger_id', $passengerId)
@@ -81,8 +94,24 @@ class PaymentRepository
             ->get()
             ->groupBy('payment_id');
 
+        // 2026-11-14 (user): the refunds of each purchase (cancelled trips), so the passenger's history shows them.
+        $refundsByPayment = DB::table('ticket_resolutions as res')
+            ->join('tickets', 'tickets.ticket_id', '=', 'res.ticket_id')
+            ->whereIn('tickets.payment_id', $paymentIds)
+            ->where('res.resolution', 'refund')
+            ->get(['tickets.payment_id', 'res.status', 'res.amount', 'res.fee_amount'])
+            ->groupBy('payment_id');
+
+        // Batch 75: discounts approved on the bus send part of the fare back too.
+        $discountRefundsByPayment = DB::table('discount_claims as dc')
+            ->join('tickets', 'tickets.ticket_id', '=', 'dc.ticket_id')
+            ->whereIn('tickets.payment_id', $paymentIds)
+            ->whereNotNull('dc.refund_status')
+            ->get(['tickets.payment_id', 'dc.refund_status', 'dc.refund_amount'])
+            ->groupBy('payment_id');
+
         $stopIds = [];
-        foreach ($payments as $payment) {
+        foreach ($paymentRows as $payment) {
             foreach (($payment->items_payload ?? []) as $item) {
                 if (isset($item['origin_stop_id'])) {
                     $stopIds[] = (int) $item['origin_stop_id'];
@@ -97,7 +126,7 @@ class PaymentRepository
             ->whereIn('stop_id', array_values(array_unique(array_filter($stopIds))))
             ->pluck('stop_name', 'stop_id');
 
-        return $payments->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment) {
+        $payments->setCollection($paymentRows->map(function (Payment $payment) use ($stopNames, $passengerId, $rewardByPayment, $refundsByPayment, $discountRefundsByPayment) {
             $matchedItems = collect($payment->items_payload ?? [])
                 ->filter(function ($item) use ($passengerId) {
                     return (int) ($item['passenger_id'] ?? 0) === $passengerId;
@@ -126,6 +155,22 @@ class PaymentRepository
                 $originName = $originId ? ($stopNames[$originId] ?? "Stop {$originId}") : null;
                 $destinationName = $destinationId ? ($stopNames[$destinationId] ?? "Stop {$destinationId}") : null;
 
+                if (! $originName && isset($item['origin_label'])) {
+                    $originName = trim((string) $item['origin_label']) ?: null;
+                }
+
+                if (! $destinationName && isset($item['destination_label'])) {
+                    $destinationName = trim((string) $item['destination_label']) ?: null;
+                }
+
+                if (! $originName && isset($item['origin_lat'], $item['origin_lng'])) {
+                    $originName = TicketBoarding::BETWEEN_STOPS;
+                }
+
+                if (! $destinationName && isset($item['destination_lat'], $item['destination_lng'])) {
+                    $destinationName = 'Custom drop-off point';
+                }
+
                 return [
                     'trip_id' => $item['trip_id'] ?? null,
                     'seat_type' => $item['seat_type'] ?? null,
@@ -134,7 +179,7 @@ class PaymentRepository
                     'destination_stop_id' => $destinationId,
                     'origin_stop_name' => $originName,
                     'destination_stop_name' => $destinationName,
-                    'route_label' => ($originName && $destinationName) ? ($originName . ' to ' . $destinationName) : 'Route unavailable',
+                    'route_label' => ($originName && $destinationName) ? ($originName.' to '.$destinationName) : 'Route unavailable',
                 ];
             })->values();
 
@@ -144,6 +189,17 @@ class PaymentRepository
             $rewardDiscount = (float) $redeemedPoints;
             $grossAmount = (float) $payment->amount + $rewardDiscount;
 
+            $refunds = $refundsByPayment->get($payment->payment_id, collect());
+            $discountRefunds = $discountRefundsByPayment->get($payment->payment_id, collect());
+            $refundedCents = (int) round($refunds->where('status', 'succeeded')->sum(fn ($r) => (float) $r->amount + (float) $r->fee_amount) * 100)
+                + (int) round($discountRefunds->where('refund_status', 'succeeded')->sum(fn ($r) => (float) $r->refund_amount) * 100);
+            $refundStatus = $refunds->isEmpty() && $discountRefunds->isEmpty() ? null : RefundStatus::of(
+                (int) round((float) $payment->amount * 100),
+                $refundedCents,
+                $refunds->contains(fn ($r) => in_array($r->status, RefundStatus::IN_PROGRESS, true))
+                    || $discountRefunds->contains(fn ($r) => $r->refund_status === 'pending'),
+            );
+
             return [
                 'payment_id' => $payment->payment_id,
                 'payment_uuid' => $payment->payment_uuid,
@@ -151,6 +207,10 @@ class PaymentRepository
                 'payment_method' => $payment->payment_method,
                 'payment_channel' => $payment->payment_channel,
                 'status' => $payment->status,
+                // null = no refund was ever asked for this purchase; otherwise RefundStatus (refund_pending, refunded,
+                // partially_refunded, or paid when nothing came back). refunded_amount = what was actually returned.
+                'refund_status' => $refundStatus,
+                'refunded_amount' => $refundedCents / 100,
                 'is_valid' => (bool) $payment->is_valid,
                 'amount' => (float) $payment->amount,
                 'gross_amount' => $grossAmount,
@@ -162,6 +222,8 @@ class PaymentRepository
                 'route_summary' => $items->pluck('route_label')->filter()->unique()->implode('; '),
                 'items' => $items,
             ];
-        })->values();
+        })->values());
+
+        return $payments;
     }
 }

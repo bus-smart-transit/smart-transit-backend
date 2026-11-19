@@ -1,0 +1,49 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class ConductorShiftLog extends Model
+{
+    protected $table = 'conductor_shift_logs';
+
+    protected $primaryKey = 'shift_log_id';
+
+    protected $fillable = [
+        'conductor_company_user_id',
+        'trip_id',
+        'fleet_id',
+        'shift_date',
+        'started_at',
+        'ended_at',
+        'start_source',
+        'end_source',
+        'opening_cash',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'shift_date' => 'date:Y-m-d',
+            'started_at' => 'datetime',
+            'ended_at' => 'datetime',
+            'opening_cash' => 'decimal:2',
+        ];
+    }
+
+    public function conductor()
+    {
+        return $this->belongsTo(StaffUser::class, 'conductor_company_user_id', 'company_user_id');
+    }
+
+    public function trip()
+    {
+        return $this->belongsTo(Trip::class, 'trip_id', 'trip_id');
+    }
+
+    public function fleet()
+    {
+        return $this->belongsTo(Fleet::class, 'fleet_id', 'fleet_id');
+    }
+}

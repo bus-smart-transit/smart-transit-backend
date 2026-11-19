@@ -20,6 +20,11 @@ class DefaultAccountsSeeder extends Seeder
             ]
         );
 
+        // 2026-10-28: the demo passenger counts as email-verified.
+        if ($user->email_verified_at === null) {
+            $user->forceFill(['email_verified_at' => now()])->save();
+        }
+
         PassengerUser::firstOrCreate(
             ['user_id' => $user->user_id],
             [

@@ -1,31 +1,80 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Models\RouteStop;
-use App\Services\RouteService;
-use App\Http\Requests\StoreRouteRequest;
+
 use App\Http\Requests\AddRouteStopRequest;
+use App\Http\Requests\RouteFareTableRequest;
+use App\Http\Requests\StoreRouteRequest;
+use App\Http\Requests\UpdateRouteCustomDropoffRequest;
+use App\Http\Requests\UpdateRouteStopExpressRequest;
+use App\Http\Requests\UpdateRouteStopTypeRequest;
+use App\Models\Route;
+use App\Repositories\FleetRouteRepository;
+use App\Services\FleetService;
+use App\Services\RouteFareTableService;
+use App\Services\RouteGeometryGenerator;
+use App\Services\RouteService;
 use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class RouteController extends Controller
 {
     use ApiResponse;
-    public function __construct(private RouteService $routeService)
+
+    public function __construct(private RouteService $routeService) {}
+
+    public function index(Request $request)
     {
+        return $this->success($this->routeService->listRoutes($request->user()), 'Routes retrieved successfully');
     }
 
-    public function index()
+    public function show(Request $request, int $routeId)
     {
-        return $this->success($this->routeService->listRoutes(), 'Routes retrieved successfully');
+        // 2026-11-06: another company's route reads as not found.
+        $route = $this->routeService->getRouteWithStops($routeId, $request->user());
+
+        return $route ? $this->success($route, 'Route retrieved successfully') : $this->error('Route not found.', 404);
     }
 
-    public function show(int $routeId)
+    /**
+     * Batch 75 (panel, 2026-11-15): GET operator/routes/{routeId}/fares - the fares from one stop to every later stop
+     * for one of the company's buses on this route, as passengers are charged them.
+     */
+    public function fareTable(RouteFareTableRequest $request, int $routeId, FleetService $fleets, FleetRouteRepository $fleetRoutes, RouteFareTableService $table)
     {
-        return $this->success($this->routeService->getRouteWithStops($routeId), 'Route retrieved successfully');
+        if (! $this->routeService->getRouteWithStops($routeId, $request->user())) {
+            return $this->error('Route not found.', 404);
+        }
+        $fleetRouteId = (int) $request->validated('fleet_route_id');
+        $fleets->assertFleetRouteOfCompany((int) $request->user()?->companyProfile?->company_user_id, $fleetRouteId);
+        $fleetRoute = $fleetRoutes->findWithRoute($fleetRouteId);
+        if (! $fleetRoute || (int) $fleetRoute->route_id !== $routeId) {
+            return $this->error('That bus does not run this route.', 422);
+        }
+        $origin = $request->validated('origin_stop_id');
+
+        return $this->success(
+            $table->forFleetRoute($fleetRoute, $request->validated('direction'), $request->validated('service_type'), $origin === null ? null : (int) $origin),
+            'Fare table retrieved successfully'
+        );
     }
 
     public function store(StoreRouteRequest $request)
     {
-        return $this->success($this->routeService->createRoute($request->validated()), 'Route created successfully');
+        // 2026-11-06: a route belongs to the creating company admin's company (the platform Admin's has none).
+        $payload = $request->validated();
+        if ($request->user()?->role !== 'admin') {
+            $payload['company_id'] = $request->user()?->companyProfile?->company_id;
+        }
+
+        return $this->success($this->routeService->createRoute($payload), 'Route created successfully');
+    }
+
+    /** 2026-11-06: every change to a route's stops, line or drop-off rule needs the route to be the company's own. */
+    private function ownRouteOr404(Request $request, int $routeId): ?JsonResponse
+    {
+        return $this->routeService->userOwnsRoute($routeId, $request->user()) ? null : $this->error('Route not found.', 404);
     }
 
     /**
@@ -33,36 +82,126 @@ class RouteController extends Controller
      * Used by passenger map (route polyline) and driver navigation map.
      * GET /routes/{routeId}/stops
      */
-    public function publicStops(int $routeId)
+    public function publicStops(Request $request, int $routeId)
     {
-        $stops = RouteStop::with('stop')
-            ->where('route_id', $routeId)
-            ->orderBy('stop_order')
-            ->get()
-            ->map(fn ($rs) => [
-                'stop_id'                 => $rs->stop_id,
-                'stop_name'               => $rs->stop?->stop_name,
-                'latitude'                => $rs->stop?->latitude !== null ? (float) $rs->stop->latitude : null,
-                'longitude'               => $rs->stop?->longitude !== null ? (float) $rs->stop->longitude : null,
-                'stop_order'              => $rs->stop_order,
-                'distance_from_origin_km' => (float) $rs->distance_from_origin_km,
-            ]);
+        return $this->success(
+            $this->routeService->getPublicStopsForRoute($routeId, $this->direction($request)),
+            'Route stops retrieved successfully'
+        );
+    }
 
-        return $this->success($stops, 'Route stops retrieved successfully');
+    /**
+     * Public endpoint: canonical route line as GeoJSON, per direction.
+     * GET /routes/{routeId}/geometry?direction=outbound|reverse
+     */
+    public function geometry(Request $request, int $routeId)
+    {
+        return $this->success(
+            $this->routeService->getRouteGeometry($routeId, $this->direction($request)),
+            'Route geometry retrieved successfully'
+        );
+    }
+
+    // Operator: queue a background regeneration of the canonical geometry.
+    public function regenerateGeometry(Request $request, int $routeId)
+    {
+        if (! $this->routeService->canRegenerateGeometry($routeId, $request->user())) {
+            return $this->error('Route not found.', 404);
+        }
+
+        $this->routeService->queueManualGeometryRegeneration($routeId);
+
+        return $this->success(['queued' => true, 'redraw' => RouteGeometryGenerator::redrawStatus($routeId)], 'Route line redraw queued');
+    }
+
+    // Operator/admin: stop_type is editable per route stop.
+    public function updateStopType(UpdateRouteStopTypeRequest $request, int $routeId, int $routeStopId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $updated = $this->routeService->updateStopType($routeId, $routeStopId, $request->validated('stop_type'));
+
+        return $updated
+            ? $this->success(null, 'Stop type updated successfully')
+            : $this->error('Route stop not found.', 404);
+    }
+
+    // Operator/admin: which stops an express trip serves (and optional express timing).
+    public function updateStopExpress(UpdateRouteStopExpressRequest $request, int $routeId, int $routeStopId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $updated = $this->routeService->updateStopExpress($routeId, $routeStopId, $request->validated());
+
+        return $updated
+            ? $this->success(null, 'Express stop setting updated successfully')
+            : $this->error('Route stop not found.', 404);
+    }
+
+    // Operator/admin: D5 per-route switch for custom drop-off (default off).
+    public function updateCustomDropoff(UpdateRouteCustomDropoffRequest $request, int $routeId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $mode = $request->validated('custom_dropoff_mode');
+        $updated = $mode !== null
+            ? $this->routeService->setCustomDropoffMode($routeId, (string) $mode)
+            : $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
+        $route = $updated ? Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']) : null;
+
+        return $route
+            ? $this->success(['allow_custom_dropoff' => (bool) $route->allow_custom_dropoff, 'custom_dropoff_mode' => $route->custom_dropoff_mode], 'Custom drop-off setting updated')
+            : $this->error('Route not found.', 404);
+    }
+
+    private function direction(Request $request): string
+    {
+        return $request->query('direction') === 'reverse' ? 'reverse' : 'outbound';
     }
 
     // route_stop_table management — folded into RouteController, no separate controller
     public function addStop(AddRouteStopRequest $request, int $routeId)
     {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+        // 2026-11-06: only the company's own stops go on its routes (so a stop is never shared between companies).
+        if (! $this->routeService->userOwnsStop((int) $request->validated('stop_id'), $request->user())) {
+            return $this->error('Stop not found.', 404);
+        }
+
         return $this->success(
             $this->routeService->addStopToRoute($routeId, $request->validated()),
             'Stop added to route successfully'
         );
     }
 
-    public function removeStop(int $routeId, int $routeStopId)
+    /** Batch 59: delete a route that was never used (RouteService::deleteUnusedRoute decides). */
+    public function destroy(Request $request, int $routeId)
     {
-        $this->routeService->removeStopFromRoute($routeStopId);
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $this->routeService->deleteUnusedRoute($routeId);
+
+        return $this->success(null, 'Route deleted.');
+    }
+
+    public function removeStop(Request $request, int $routeId, int $routeStopId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+
+        $this->routeService->removeStopFromRoute($routeId, $routeStopId);
+
         return $this->success(null, 'Stop removed from route successfully');
     }
 }

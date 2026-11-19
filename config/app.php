@@ -68,6 +68,62 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Step-Up Authentication Dev Bypass (LOCAL/DEV ONLY)
+    |--------------------------------------------------------------------------
+    |
+    | TEMPORARY dev-phase convenience flag. When true, RequireStepUp lets
+    | requests through without a valid step-up token — but ONLY when
+    | APP_ENV is "local" (checked directly in the middleware, not just here)
+    | so this can never silently activate in staging/production even if the
+    | env var is mistakenly copied into another environment's config.
+    |
+    | TODO(security): remove this flag and re-enable step-up enforcement
+    | everywhere before any production or client-facing demo deployment.
+    | Tracked in SECURITY_AUDIT.md under STEPUP-01 / AUTH-02.
+    |
+    */
+
+    'disable_step_up' => env('DISABLE_STEP_UP', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Staff Login OTP Dev Bypass (LOCAL/DEV ONLY)
+    |--------------------------------------------------------------------------
+    |
+    | TEMPORARY dev-phase convenience flag. When true, staff login (driver/
+    | conductor/operator/admin) skips the OTP step entirely and issues a
+    | session token immediately — useful when teammates are testing staff
+    | accounts and can't receive the OTP email themselves. Operator/Admin
+    | normally require MFA unconditionally (see UserService::
+    | MFA_MANDATORY_ROLES); this flag overrides that too. ONLY takes effect
+    | when APP_ENV is "local" (checked directly in UserService, not just
+    | here) so this can never silently activate in staging/production even
+    | if the env var is mistakenly copied into another environment's config.
+    |
+    | TODO(security): remove this flag before any production or
+    | client-facing demo deployment. Tracked in SECURITY_AUDIT.md.
+    |
+    */
+
+    'disable_staff_otp' => env('DISABLE_STAFF_OTP', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rate Limiting Switch (LOCAL/DEV ONLY when set to false)
+    |--------------------------------------------------------------------------
+    |
+    | Default true = every route throttle and login/OTP/tracking limiter is
+    | enforced. RATE_LIMITING_ENABLED=false switches ALL of them off (see
+    | App\Support\RateLimiting\ToggleableRateLimiter) so the app can be tested
+    | without lockouts. AppServiceProvider refuses to boot with it off unless
+    | APP_ENV is "local" (or "testing"). Set it back to true to re-apply.
+    |
+    */
+
+    'rate_limiting_enabled' => (bool) env('RATE_LIMITING_ENABLED', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |
@@ -77,7 +133,7 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => env('APP_TIMEZONE', 'Asia/Manila'),
 
     /*
     |--------------------------------------------------------------------------

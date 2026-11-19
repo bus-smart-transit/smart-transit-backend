@@ -1,0 +1,155 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\BookingDiscountTypesRequest;
+use App\Services\AddressSearchService;
+use App\Services\BookingLinkService;
+use App\Services\BookingStopsService;
+use App\Services\DiscountClaimService;
+use App\Services\TripAreaService;
+use App\Services\TripResolverService;
+use App\Support\BaggageFee;
+use App\Support\BookingFee;
+use App\Support\BookingWindow;
+use App\Support\PriorityBoarding;
+use App\Support\VehicleClass;
+use App\Traits\ApiResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Public, read-only passenger booking helpers: destinations computed from data
+ * (C3), trip resolution for Book Now / Book Later (C1, C2, D3) and the address
+ * search proxy for custom drop-off (D5). Nothing here creates or holds anything.
+ */
+class BookingController extends Controller
+{
+    use ApiResponse;
+
+    public function __construct(
+        private BookingStopsService $bookingStopsService,
+        private TripResolverService $tripResolverService,
+        private AddressSearchService $addressSearchService,
+        private BookingLinkService $bookingLinkService,
+    ) {}
+
+    // Checks the untrusted parts of a shared booking link (stop codes, date).
+    public function link(Request $request)
+    {
+        return $this->success(
+            $this->bookingLinkService->resolve($request->only(['from', 'to', 'date'])),
+            'Booking link is valid'
+        );
+    }
+
+    public function stops(Request $request)
+    {
+        $data = $request->validate(['origin_stop_id' => 'nullable|integer|min:1']);
+
+        $result = $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null);
+        // What the date picker needs: today in Manila and how far ahead a date may be chosen.
+        $result['meta'] = BookingWindow::describe() + [
+            'home_preview_limit' => (int) config('booking.home_preview_limit'),
+            'trips_per_page' => (int) config('booking.trips_per_page'),
+            // Batch 54 (user): the trips page's bus type filter (from config/fares.php, nothing named here).
+            'bus_types' => collect(VehicleClass::all())->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values()->all(),
+        ];
+
+        return $this->success($result, 'Booking stops retrieved successfully');
+    }
+
+    /**
+     * Batch 29, issue 4: the booking window alone (today, how many days ahead, the last bookable date), the same values
+     * the passenger date pickers get. The Operator's schedule form uses it to warn about a date passengers cannot book yet.
+     */
+    public function window()
+    {
+        // Batch 45 Feature A: the booking page shows the online booking fee before the passenger pays (BookingFee owns it).
+        return $this->success(BookingWindow::describe() + ['transaction_fee_rates' => BookingFee::ratesPercent(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase'), 'priority_types' => PriorityBoarding::options(), 'priority_seats_per_bus' => PriorityBoarding::seatsPerBus(), 'baggage_percent' => BaggageFee::percent()], 'Booking window retrieved successfully');
+    }
+
+    /** Batch 75: GET booking/discount-types?trip_id= - the discounts that may be claimed online for this trip. */
+    public function discountTypes(BookingDiscountTypesRequest $request, DiscountClaimService $claims)
+    {
+        return $this->success($claims->offeredFor((int) $request->validated('trip_id')), 'Discount types retrieved successfully');
+    }
+
+    // Available trips for a Manila date (default today), optionally for one journey, paginated.
+    // The journey is given as readable stop codes (never ids) and is optional so the home preview
+    // can list today's buses before anything is chosen. Bad codes or dates answer a friendly 422.
+    public function trips(Request $request, TripAreaService $areas)
+    {
+        $data = $request->validate([
+            // Batch 52 item 1: the passenger's town (or province), and the stop ids nearest first as measured on the device.
+            'town' => 'nullable|string|max:100',
+            'province' => 'nullable|string|max:100',
+            'prefer' => ['nullable', 'string', 'max:2000', 'regex:/^\d+(,\d+)*$/'],
+            'from' => 'nullable|string|max:64',
+            'to' => 'nullable|string|max:64',
+            'date' => 'nullable|string|max:10',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
+            // Batch 54 (user): the trips page's bus type filter (Ordinary or Aircon, the classes in config/fares.php).
+            'bus_type' => 'nullable|string|in:'.implode(',', VehicleClass::keys()),
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:'.(int) config('booking.trips_max_per_page'),
+        ]);
+
+        $journey = $this->bookingLinkService->resolveJourney($data);
+        $area = null;
+        if (! empty($data['town']) || ! empty($data['province'])) {
+            $prefer = ! empty($data['prefer']) ? array_slice(array_map('intval', explode(',', $data['prefer'])), 0, 200) : [];
+            $area = $areas->resolve($data['town'] ?? null, $data['province'] ?? null, $prefer) ?? ['level' => ! empty($data['town']) ? 'town' : 'province', 'name' => (string) ($data['town'] ?? $data['province']), 'stop_ids' => []];
+        }
+        $result = $this->tripResolverService->available([
+            ...($area !== null && empty($journey['from']) ? ['area_stop_ids' => $area['stop_ids']] : []),
+            'origin_stop_id' => $journey['from']['stop_id'] ?? null,
+            'destination_stop_id' => $journey['to']['stop_id'] ?? null,
+            'date' => $journey['date'],
+            'seat_type' => $data['seat_type'] ?? null,
+            'vehicle_class' => $data['bus_type'] ?? null,
+        ], (int) ($data['page'] ?? 1), isset($data['per_page']) ? (int) $data['per_page'] : null);
+
+        $areaInfo = $area !== null ? ['level' => $area['level'], 'name' => $area['name'], 'stops' => count($area['stop_ids'])] : null;
+
+        return $this->success($result + ['from' => $journey['from'], 'to' => $journey['to'], 'area' => $areaInfo], 'Trips retrieved');
+    }
+
+    // Book Later: the departures of one Manila date that fit the journey, to choose from.
+    public function departures(Request $request)
+    {
+        $data = $request->validate([
+            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
+            'date' => 'required|date_format:Y-m-d',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
+        ]);
+
+        return $this->success($this->tripResolverService->departures($data), 'Departures retrieved');
+    }
+
+    public function resolve(Request $request)
+    {
+        $data = $request->validate([
+            'mode' => 'required|in:now,later',
+            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
+            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
+            'date' => 'nullable|date_format:Y-m-d|required_if:mode,later',
+            'time' => 'nullable|date_format:H:i|required_if:mode,later',
+            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
+        ]);
+
+        return $this->success($this->tripResolverService->resolve($data), 'Trip resolved');
+    }
+
+    public function addressSearch(Request $request)
+    {
+        $data = $request->validate(['q' => 'required|string|min:'.(int) config('timeline.address_search.min_query_length').'|max:120']);
+
+        $results = $this->addressSearchService->search($data['q']);
+        if ($results === null) {
+            return $this->error('Address search is unavailable right now. Drop the pin on the map instead.', 503);
+        }
+
+        return $this->success(['results' => $results], 'Address search results');
+    }
+}

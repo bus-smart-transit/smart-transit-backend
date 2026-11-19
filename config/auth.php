@@ -99,6 +99,16 @@ return [
             'expire' => 60,
             'throttle' => 60,
         ],
+
+        // The passenger endpoints ask for this broker by name (AuthController). Passengers and staff share the
+        // users table, so it reads the same provider and token table as 'users'; the reset email links to the
+        // passenger or the staff page by the account's role (User::sendPasswordResetNotification).
+        'passengers' => [
+            'provider' => 'users',
+            'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
+            'expire' => 60,
+            'throttle' => 60,
+        ],
     ],
 
     /*
@@ -113,5 +123,41 @@ return [
     */
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sign-in limits (POST /auth/login, App\Support\RateLimiting\SignInThrottle)
+    |--------------------------------------------------------------------------
+    |
+    | Decided 2026-11-04 (Batch 45, Todo 2). Failed sign-ins are counted per
+    | email + IP: after `failures` of them within `failure_window_minutes`,
+    | that email is locked on that IP for `lock_minutes`. A wider cap counts
+    | every failure from one IP (many people can share a carrier or office
+    | address), so one address cannot try many emails. A successful sign-in
+    | clears only that email's count.
+    |
+    */
+
+    'sign_in_limits' => [
+        'failures' => 5,
+        'failure_window_minutes' => 15,
+        'lock_minutes' => 5,
+        'ip_failures' => 30,
+        'ip_window_minutes' => 15,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Login code lifetime (2026-11-08, user)
+    |--------------------------------------------------------------------------
+    |
+    | How long an emailed login code works: passenger sign-in and email check,
+    | staff sign-in and the staff security check. The one value the server
+    | keeps the code for, the email states and the staff sign-in page counts
+    | down from (sent as `otp_expires_in_seconds`).
+    |
+    */
+
+    'login_code_minutes' => 3,
 
 ];

@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\FleetDailyPin;
+use App\Models\Trip;
 use App\Repositories\FleetDailyPinRepository;
+use App\Repositories\StaffRepository;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -11,15 +13,27 @@ class FleetDailyPinService
 {
     public function __construct(
         private FleetDailyPinRepository $pinRepository,
+        private StaffRepository $staffRepository,
+        private LegProgressionService $legs,
     ) {}
 
     /**
      * Called when both driver and conductor are assigned to a trip.
      * Generates a 6-digit PIN for the trip for today, or returns the
      * existing one if it was already created earlier in the day.
+     *
+     * Hard guard: refuses to generate/return a PIN unless both IDs
+     * reference currently valid, active staff accounts with the correct
+     * role (driver_id -> role 'driver', conductor_id -> role 'conductor').
+     * This is the last line of defense — even if a trip somehow ends up
+     * with driver_id/conductor_id that were never validated as a real
+     * assignment (e.g. set directly at trip creation), no PIN/QR will be
+     * issued for it.
      */
     public function generateOrGet(int $tripId, int $driverId, int $conductorId): FleetDailyPin
     {
+        $this->assertValidAssignment($driverId, $conductorId);
+
         $existing = $this->pinRepository->findTodayByTrip($tripId);
 
         if ($existing) {
@@ -38,12 +52,38 @@ class FleetDailyPinService
         }
 
         return $this->pinRepository->create([
-            'trip_id'       => $tripId,
+            // A block's pin is made once, on its first leg, and serves every leg of that day.
+            'trip_id'       => $this->legs->pairingScopeTripId($tripId),
+            'shift_block_id' => Trip::where('trip_id', $tripId)->value('shift_block_id'),
             'driver_id'     => $driverId,
             'conductor_id'  => $conductorId,
             'pin_code'      => $this->generateCode(),
             'pin_date'      => Carbon::today(),
         ]);
+    }
+
+    /**
+     * Refuses to proceed unless both IDs reference existing staff users
+     * with the correct role. This is what "a valid assignment record"
+     * means in this codebase's data model (driver_id/conductor_id on the
+     * trip, backed by a role-checked company_users record) — there is no
+     * separate assignment table.
+     */
+    private function assertValidAssignment(int $driverId, int $conductorId): void
+    {
+        $driver = $this->staffRepository->findById($driverId);
+        if (! $driver || $driver->user?->role !== 'driver') {
+            throw ValidationException::withMessages([
+                'driver_id' => ['No valid driver assignment found for this trip. PIN/QR cannot be generated.'],
+            ]);
+        }
+
+        $conductor = $this->staffRepository->findById($conductorId);
+        if (! $conductor || $conductor->user?->role !== 'conductor') {
+            throw ValidationException::withMessages([
+                'conductor_id' => ['No valid conductor assignment found for this trip. PIN/QR cannot be generated.'],
+            ]);
+        }
     }
 
     /**
@@ -60,7 +100,7 @@ class FleetDailyPinService
             ]);
         }
 
-        if ($pin->pin_code !== $submittedPin) {
+        if (! hash_equals((string) $pin->pin_code, $submittedPin)) {
             throw ValidationException::withMessages([
                 'pin_code' => ['Incorrect PIN. You may be assigned to the wrong trip.'],
             ]);

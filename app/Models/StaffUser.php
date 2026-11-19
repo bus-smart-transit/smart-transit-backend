@@ -2,20 +2,23 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperStaffUser
+ *
  * @property int $company_user_id
  * @property string $company_user_uuid
  * @property int $user_id
  * @property string $phone_num
  * @property string $name
  * @property string $address
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\User $user
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read User $user
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser query()
@@ -27,6 +30,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser wherePhoneNum($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUpdatedAt($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|StaffUser whereUserId($value)
+ *
  * @mixin \Eloquent
  */
 class StaffUser extends Model
@@ -37,8 +41,11 @@ class StaffUser extends Model
 
     // Keep incrementing true since your primary key is an auto-incrementing integer id
     public $incrementing = true;
+
     protected $keyType = 'int';
+
     protected $table = 'company_users';
+
     protected $fillable = [
         'user_id',
         'company_user_uuid',
@@ -46,16 +53,40 @@ class StaffUser extends Model
         'name',
         'address',
         'birth_date',
+        'is_available',
+        'available_since',
+        'gender',
+        // Batch 46: the company an Operator, Driver or Chauffeur works for (null for the Admin).
+        'company_id',
+        // 2026-11-06: manages the company's buses, fares, staff, routes and stops (other Operators dispatch).
+        'is_company_admin',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_available' => 'boolean',
+            'is_company_admin' => 'boolean',
+            'available_since' => 'datetime',
+        ];
+    }
+
     public function uniqueIds(): array
     {
         return ['company_user_uuid'];
     }
+
     /**
      * Get the user that owns this record.
      */
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /** Batch 46: the company this person works for. */
+    public function company()
+    {
+        return $this->belongsTo(Company::class, 'company_id', 'company_id');
     }
 }

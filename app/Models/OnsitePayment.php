@@ -37,6 +37,8 @@ class OnsitePayment extends Model
     protected $fillable = [
         'payment_id',
         'conductor_id',
+        'issued_at',
+        'conductor_shift_log_id', // the Conductor shift the cash sale was made in (Batch 29)
     ];
 
     /**

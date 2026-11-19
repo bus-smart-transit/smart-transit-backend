@@ -1,6 +1,9 @@
 <?php
+
 namespace App\Repositories;
+
 use App\Models\FleetRoute;
+use App\Support\CompanyScope;
 use Illuminate\Support\Collection;
 
 class FleetRouteRepository
@@ -18,6 +21,12 @@ class FleetRouteRepository
     public function findWithRoute(int $fleetRouteId): ?FleetRoute
     {
         return FleetRoute::with(['route', 'fleet'])->find($fleetRouteId);
+    }
+
+    /** @return array<int, int> the routes the buses of this Operator's company are assigned to (Batch 46: by company) */
+    public function routeIdsForCompany(int $companyUserId): array
+    {
+        return FleetRoute::whereHas('fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $companyUserId))->pluck('route_id')->unique()->values()->all();
     }
 
     public function listByRoute(int $routeId): Collection
@@ -40,7 +49,7 @@ class FleetRouteRepository
             ->where('status', 'active')
             ->get()
             ->pluck('fleet')
-            ->filter(fn($fleet) => $fleet && $fleet->status === 'active')
+            ->filter(fn ($fleet) => $fleet && $fleet->status === 'active')
             ->values();
     }
 
@@ -48,10 +57,20 @@ class FleetRouteRepository
     {
         return FleetRoute::with(['fleet', 'route'])
             ->where('status', 'active')
-            ->whereHas('fleet', function ($q) use ($companyUserId) {
-                $q->where('company_user_id', $companyUserId)
-                    ->where('status', 'active');
-            })
+            ->whereHas('fleet', fn ($q) => CompanyScope::whereFleetOfCompany($q, $companyUserId)->where('fleets.status', 'active'))
+            ->orderBy('fleet_route_id', 'asc')
+            ->get();
+    }
+
+    /**
+     * Return all active fleet routes regardless of company. Batch 46: only for the Admin; an Operator gets
+     * listActiveByOperator (their company's buses).
+     */
+    public function listAll(): Collection
+    {
+        return FleetRoute::with(['fleet', 'route'])
+            ->where('status', 'active')
+            ->whereHas('fleet', fn ($q) => $q->where('status', 'active'))
             ->orderBy('fleet_route_id', 'asc')
             ->get();
     }

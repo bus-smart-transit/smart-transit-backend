@@ -1,0 +1,735 @@
+<?php
+
+namespace App\Services;
+
+use App\Repositories\DiscountClaimRepository;
+use App\Support\BusLabel;
+use App\Support\ClockTime;
+use App\Support\CompanyScope;
+use App\Support\FinancialClock;
+use App\Support\RefundStatus;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * Batch 29, Stage 2: the Operator's (and Admin's) money figures, from stored amounts only.
+ *
+ *  - Revenue = tickets whose payment is PAID and valid (an online payment the signed webhook confirmed, or a cash ticket
+ *    that was issued). Pending, failed and expired payments never count. A rebooked ticket is counted once, through its
+ *    replacement. Every amount is the stored ticket amount; nothing is priced here.
+ *  - Refunds = ticket_resolutions of kind "refund" that SUCCEEDED, at the stored amount, shown separately and
+ *    subtracted to get net. A refund counts on the Manila day it was completed (cash-flow view), so it can belong to a
+ *    ticket sold before the chosen range. A pending or under-review refund is not subtracted yet.
+ *  - Time: App\Support\FinancialClock is the only place the mixed timestamp conventions are handled.
+ *  - Scope: an Operator sees only the fleets (and so routes, trips and tickets) they own; an Admin sees everything.
+ *
+ * The screen, the paginated log and the CSV export all read the same rows from here.
+ */
+class FinancialReportService
+{
+    public const SORTS = ['paid_at', 'amount', 'route', 'bus', 'status', 'method', 'trip_date'];
+
+    // ------------------------------------------------------------------ filters
+
+    /** @return array{from: string, to: string, route_id: ?int, fleet_id: ?int, trip_id: ?int, payment_method: ?string, channel: ?string, sort: string, dir: string, page: int, per_page: int} */
+    public function normalize(array $input): array
+    {
+        $today = FinancialClock::today();
+        $from = $input['from'] ?? $today;
+        $to = $input['to'] ?? $from;
+        if ($to < $from) {
+            throw ValidationException::withMessages(['to' => ['The end date cannot be before the start date.']]);
+        }
+        $max = (int) config('financial.max_range_days');
+        if ($max > 0 && FinancialClock::startOfDay($from)->diffInDays(FinancialClock::startOfDay($to)) + 1 > $max) {
+            throw ValidationException::withMessages(['to' => ["Choose a range of at most {$max} days."]]);
+        }
+
+        $perPage = (int) ($input['per_page'] ?? config('financial.default_per_page'));
+
+        return [
+            'from' => $from,
+            'to' => $to,
+            'route_id' => isset($input['route_id']) ? (int) $input['route_id'] : null,
+            'fleet_id' => isset($input['fleet_id']) ? (int) $input['fleet_id'] : null,
+            'trip_id' => isset($input['trip_id']) ? (int) $input['trip_id'] : null,
+            'payment_method' => $input['payment_method'] ?? null,
+            'channel' => $input['channel'] ?? null,
+            // How refunds are dated: by the day the refund COMPLETED (daily cash reconciliation: when the money actually moved,
+            // so a closed day is never rewritten) or by the day of the original SALE (profitability by sale period).
+            'refund_basis' => ($input['refund_basis'] ?? 'completed') === 'sale' ? 'sale' : 'completed',
+            'sort' => in_array($input['sort'] ?? 'paid_at', self::SORTS, true) ? ($input['sort'] ?? 'paid_at') : 'paid_at',
+            'dir' => ($input['dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc',
+            'page' => max(1, (int) ($input['page'] ?? 1)),
+            'per_page' => max(1, min((int) config('financial.max_per_page'), $perPage)),
+        ];
+    }
+
+    // ------------------------------------------------------------------ the screen
+
+    /** @return array<string, mixed> */
+    public function report(?int $ownerCompanyUserId, array $filters): array
+    {
+        [$allSales, $allRefunds] = $this->load($ownerCompanyUserId, $filters);
+        $sales = $this->applyFilters($allSales, $filters);
+        $refunds = $this->applyFilters($allRefunds, $filters);
+
+        $gross = $sales->sum('cents');
+        $refunded = $refunds->sum('cents');
+
+        return [
+            'filters' => Arr::only($filters, ['from', 'to', 'route_id', 'fleet_id', 'trip_id', 'payment_method', 'channel', 'refund_basis']),
+            'currency' => 'PHP',
+            'kpis' => [
+                'gross' => $this->money($gross),
+                'refunds' => $this->money($refunded),
+                'net' => $this->money($gross - $refunded),
+                // Batch 45 Feature A: online booking fees, apart from the fares (they are not the Operator's revenue).
+                'booking_fees' => [
+                    'collected' => $this->money($sales->sum('fee_cents')),
+                    'refunded' => $this->money($refunds->sum('fee_cents')),
+                    'net' => $this->money($sales->sum('fee_cents') - $refunds->sum('fee_cents')),
+                ],
+                'tickets' => $sales->count(),
+                'average_fare' => $sales->count() > 0 ? $this->money((int) round($gross / $sales->count())) : 0.0,
+                // "Boarded" = the ticket has a boarded_at time (set when the ticket is scanned on board).
+                'boarded' => $sales->filter(fn ($s) => $s['boarded'])->count(),
+                'cash' => $this->split($sales, $refunds, 'cash', $gross),
+                'online' => $this->split($sales, $refunds, 'online', $gross),
+            ],
+            'discounts' => $this->discounts($sales),
+            'channels' => $this->channels($sales, $refunds, $gross),
+            'by_route' => $this->groupBy($sales, $refunds, fn ($r) => (string) $r['route_id'], fn ($r) => ['route_id' => $r['route_id'], 'route_name' => $r['route_name']]),
+            'by_bus' => $this->groupBy($sales, $refunds, fn ($r) => (string) $r['fleet_id'], fn ($r) => ['fleet_id' => $r['fleet_id'], 'plate_number' => $r['plate_number'], 'bus_label' => $r['bus_label']]),
+            'by_trip' => $this->groupBy($sales, $refunds, fn ($r) => (string) $r['trip_id'], fn ($r) => [
+                'trip_id' => $r['trip_id'], 'trip_date' => $r['trip_date'], 'departure_time' => $r['departure_time'], 'route_name' => $r['route_name'],
+                'plate_number' => $r['plate_number'], 'shift_block_id' => $r['shift_block_id'], 'direction' => $r['direction'],
+            ]),
+            'by_hour' => $this->byHour($sales),
+            'daily' => $this->daily($sales, $refunds),
+            'options' => $this->options($allSales, $ownerCompanyUserId),
+        ];
+    }
+
+    /** One page of the transaction log. @return array{data: array<int, array<string, mixed>>, meta: array<string, mixed>} */
+    public function transactions(?int $ownerCompanyUserId, array $filters): array
+    {
+        $page = $filters['page'];
+        $perPage = $filters['per_page'];
+        $query = $this->transactionLogQuery($ownerCompanyUserId, $filters);
+        $total = (clone $query)->distinct()->count('tickets.ticket_id');
+        $rows = $query
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get()
+            ->map(fn ($row) => $this->presentTransaction($this->mapSale($row)))
+            ->all();
+
+        return [
+            'data' => $rows,
+            'meta' => [
+                'page' => $page, 'per_page' => $perPage, 'total' => $total,
+                'last_page' => max(1, (int) ceil($total / $perPage)),
+                'sort' => $filters['sort'], 'dir' => $filters['dir'],
+            ],
+        ];
+    }
+
+    /** Build one filtered, deterministically ordered SQL page for the transaction screen. */
+    private function transactionLogQuery(?int $owner, array $filters): Builder
+    {
+        $start = FinancialClock::startOfDay($filters['from']);
+        $end = FinancialClock::endOfDay($filters['to']);
+        $driver = DB::getDriverName();
+        $paidAtExpression = $driver === 'sqlite'
+            ? "CASE WHEN payments.payment_method = 'cash' AND onsite_payment.issued_at IS NOT NULL THEN datetime(onsite_payment.issued_at, '+8 hours') ELSE COALESCE(first_t.first_ticket_at, payments.payment_created) END"
+            : "CASE WHEN payments.payment_method = 'cash' AND onsite_payment.issued_at IS NOT NULL THEN timezone('".str_replace("'", "''", FinancialClock::tz())."', onsite_payment.issued_at AT TIME ZONE 'UTC') ELSE COALESCE(first_t.first_ticket_at, payments.payment_created) END";
+
+        $query = $this->base($owner)
+            ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
+            ->leftJoin('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
+            ->where('tickets.status', '!=', 'rebooked')
+            ->whereBetween(DB::raw($paidAtExpression), [FinancialClock::wallString($start), FinancialClock::wallString($end)]);
+
+        if ($filters['route_id'] !== null) {
+            $query->where('routes.route_id', $filters['route_id']);
+        }
+        if ($filters['fleet_id'] !== null) {
+            $query->where('fleets.fleet_id', $filters['fleet_id']);
+        }
+        if ($filters['trip_id'] !== null) {
+            $query->where('trips.trip_id', $filters['trip_id']);
+        }
+        if ($filters['payment_method'] !== null) {
+            $filters['payment_method'] === 'cash'
+                ? $query->where('payments.payment_method', 'cash')
+                : $query->where('payments.payment_method', '!=', 'cash');
+        }
+        if ($filters['channel'] !== null) {
+            $query->where('payments.payment_channel', $filters['channel']);
+        }
+
+        $query->select($this->columns())
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'first_t.first_ticket_id', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at');
+
+        $direction = $filters['dir'];
+        match ($filters['sort']) {
+            'paid_at' => $query->orderByRaw($paidAtExpression.' '.$direction),
+            'amount' => $query->orderBy('tickets.amount', $direction),
+            'route' => $query->orderByRaw('LOWER(routes.route_name) '.$direction),
+            'bus' => $query->orderByRaw('LOWER(fleets.plate_number) '.$direction),
+            'status' => $query->orderByRaw("CASE WHEN res.resolution = 'refund' AND res.status = 'succeeded' AND res.amount IS NOT NULL AND res.amount >= tickets.amount THEN 'refunded' WHEN res.resolution = 'refund' AND res.status = 'succeeded' AND res.amount IS NOT NULL AND res.amount > 0 THEN 'partially_refunded' WHEN res.resolution = 'refund' AND res.status IN ('pending', 'needs_review') THEN 'refund_pending' ELSE 'paid' END ".$direction),
+            'method' => $query->orderBy('payments.payment_method', $direction)->orderBy('payments.payment_channel', $direction),
+            'trip_date' => $query->orderBy('trips.trip_date', $direction)->orderBy('trips.departure_time', $direction),
+            default => null,
+        };
+
+        return $query->orderByDesc('tickets.ticket_id');
+    }
+
+    // ------------------------------------------------------------------ CSV
+
+    /** The filtered log as CSV text (same rows as the screen, all pages). */
+    public function transactionsCsv(?int $ownerCompanyUserId, array $filters): string
+    {
+        $rows = $this->logRows($ownerCompanyUserId, $filters)->map(fn ($r) => $this->presentTransaction($r));
+
+        return $this->csv(
+            ['Transaction ID', 'Ticket ID', 'Paid at', 'Bus (plate)', 'Bus label', 'Route', 'Direction', 'Trip ID', 'Trip date', 'Payment method', 'Channel', 'Service type', 'Seat type', 'Fare (PHP)', 'Refunded (PHP)', 'Status', 'Refund completed', 'Transaction fee (PHP)'],
+            $rows->map(fn ($t) => [
+                $t['transaction_id'], $t['ticket_id'], $t['paid_at'], $t['plate_number'], $t['bus_label'], $t['route_name'], $t['direction_label'],
+                $t['trip_id'], $t['trip_date'], $t['method_label'], $t['channel_label'], $t['service_type'], $t['seat_type'],
+                number_format($t['amount'], 2, '.', ''), number_format($t['refunded'], 2, '.', ''), $t['status_label'], $t['refund_completed_at'] ?? '', number_format($t['booking_fee'], 2, '.', ''),
+            ])->all(),
+        );
+    }
+
+    /**
+     * The refund lines of the range, each linked to its original sale (transaction and ticket id, sale time). The range
+     * follows the chosen basis: the day the refund completed (cash reconciliation) or the day of the original sale.
+     */
+    public function refundsCsv(?int $ownerCompanyUserId, array $filters): string
+    {
+        [, $allRefunds] = $this->load($ownerCompanyUserId, $filters);
+        $refunds = $this->applyFilters($allRefunds, $filters)->sortBy(fn ($r) => $r['refunded_at']->getTimestamp())->values();
+
+        return $this->csv(
+            ['Refund completed', 'Refund (PHP)', 'Refund method', 'Original transaction ID', 'Original ticket ID', 'Original sale', 'Original payment', 'Bus (plate)', 'Route', 'Trip ID', 'Trip date', 'Transaction fee refunded (PHP)'],
+            $refunds->map(fn ($r) => [
+                $r['refunded_at']->format('Y-m-d H:i:s'), number_format($r['cents'] / 100, 2, '.', ''), $r['refund_method'] === 'cash' ? 'Cash' : 'Back to the original payment',
+                $r['transaction_id'], $r['ticket_id'], $r['sold_at']?->format('Y-m-d H:i:s') ?? '', $this->channelLabel($r['channel'], $r['method']),
+                $r['plate_number'], $r['route_name'], $r['trip_id'], $r['trip_date'], number_format($r['fee_cents'] / 100, 2, '.', ''),
+            ])->all(),
+        );
+    }
+
+    /** The daily summary as CSV text. */
+    public function dailyCsv(?int $ownerCompanyUserId, array $filters): string
+    {
+        $report = $this->report($ownerCompanyUserId, $filters);
+
+        return $this->csv(
+            ['Date', 'Gross (PHP)', 'Refunds (PHP)', 'Net (PHP)', 'Paid tickets', 'Cash (PHP)', 'Online (PHP)'],
+            collect($report['daily'])->map(fn ($d) => [
+                $d['date'], number_format($d['gross'], 2, '.', ''), number_format($d['refunds'], 2, '.', ''), number_format($d['net'], 2, '.', ''),
+                $d['tickets'], number_format($d['cash'], 2, '.', ''), number_format($d['online'], 2, '.', ''),
+            ])->all(),
+        );
+    }
+
+    /**
+     * Batch 51 item 4 (user, 2026-11-09): who downloaded the export, their company and when, as label/value lines above
+     * the table (then a blank line). The website's PDF shows the same lines from this text.
+     *
+     * @param  array<int, array{0: string, 1: string}>  $lines
+     */
+    public function withDetails(string $csv, array $lines): string
+    {
+        $out = fopen('php://temp', 'r+');
+        foreach ($lines as [$label, $value]) {
+            fputcsv($out, [$label, $this->safeCell($value)]);
+        }
+        fwrite($out, "\n");
+        rewind($out);
+        $head = stream_get_contents($out);
+        fclose($out);
+        $body = str_starts_with($csv, "\xEF\xBB\xBF") ? substr($csv, 3) : $csv;
+
+        return "\xEF\xBB\xBF".$head.$body;
+    }
+
+    /** @param array<int, string> $header @param array<int, array<int, mixed>> $rows */
+    private function csv(array $header, array $rows): string
+    {
+        $out = fopen('php://temp', 'r+');
+        fputcsv($out, $header);
+        foreach ($rows as $row) {
+            fputcsv($out, array_map([$this, 'safeCell'], $row));
+        }
+        rewind($out);
+        $text = stream_get_contents($out);
+        fclose($out);
+
+        return "\xEF\xBB\xBF".$text; // a BOM so Excel reads UTF-8
+    }
+
+    /** A cell that starts like a formula is neutralised (CSV injection). */
+    private function safeCell(mixed $value): mixed
+    {
+        if (is_string($value) && $value !== '' && in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'".$value;
+        }
+
+        return $value;
+    }
+
+    // ------------------------------------------------------------------ rows
+
+    /** Sale rows of the range (after the filters), sorted for the log. */
+    private function logRows(?int $owner, array $filters): Collection
+    {
+        [$allSales] = $this->load($owner, $filters);
+        $sales = $this->applyFilters($allSales, $filters);
+
+        $keyed = [
+            'paid_at' => fn ($r) => $r['paid_at']->getTimestamp(),
+            'amount' => fn ($r) => $r['cents'],
+            'route' => fn ($r) => Str::lower((string) $r['route_name']),
+            'bus' => fn ($r) => Str::lower((string) $r['plate_number']),
+            'status' => fn ($r) => $r['status'],
+            'method' => fn ($r) => $r['method'].'/'.$r['channel'],
+            'trip_date' => fn ($r) => $r['trip_date'].' '.$r['departure_time'],
+        ][$filters['sort']];
+
+        $direction = $filters['dir'] === 'asc' ? 1 : -1;
+
+        return $sales->sort(function (array $a, array $b) use ($keyed, $direction) {
+            $compare = $keyed($a) <=> $keyed($b);
+
+            return $compare !== 0 ? $compare * $direction : $b['ticket_id'] <=> $a['ticket_id'];
+        })->values();
+    }
+
+    /** @return array{0: Collection, 1: Collection} sale rows and refund rows inside the Manila range (ownership applied, no other filter) */
+    private function load(?int $owner, array $filters): array
+    {
+        $start = FinancialClock::startOfDay($filters['from']);
+        $end = FinancialClock::endOfDay($filters['to']);
+
+        $sales = $this->base($owner)
+            ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
+            ->leftJoin('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
+            ->where('tickets.status', '!=', 'rebooked')
+            // Wide enough for either clock; the exact Manila range is applied in PHP below.
+            ->whereBetween('payments.payment_created', [FinancialClock::wallString($start->copy()->subDay()), FinancialClock::wallString($end->copy()->addDay())])
+            ->select($this->columns())
+            ->addSelect('onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at', 'first_t.first_ticket_id', 'res.resolution', 'res.status as res_status', 'res.amount as res_amount', 'res.completed_at as res_completed_at')
+            ->get()
+            ->unique('ticket_id')
+            ->map(fn ($r) => $this->mapSale($r))
+            ->filter(fn ($r) => $r['paid_at'] && $r['paid_at']->between($start, $end, true))
+            ->values();
+
+        $byCompletion = $filters['refund_basis'] !== 'sale';
+        $refundQuery = $this->base($owner)
+            ->join('ticket_resolutions as res', 'res.ticket_id', '=', 'tickets.ticket_id')
+            ->leftJoin('onsite_payment', 'onsite_payment.payment_id', '=', 'payments.payment_id')
+            ->leftJoinSub($this->firstTicketPerPayment(), 'first_t', 'first_t.payment_id', '=', 'payments.payment_id')
+            ->where('res.resolution', 'refund')
+            ->where('res.status', 'succeeded')
+            ->whereNotNull('res.amount');
+        if ($byCompletion) {
+            $refundQuery->whereBetween('res.completed_at', [FinancialClock::utcString($start->copy()->subDay()), FinancialClock::utcString($end->copy()->addDay())]);
+        } else {
+            // By sale: the refund follows its original sale, whenever it completed.
+            $refundQuery->whereBetween('payments.payment_created', [FinancialClock::wallString($start->copy()->subDay()), FinancialClock::wallString($end->copy()->addDay())]);
+        }
+        $refunds = $refundQuery
+            ->select($this->columns())
+            ->addSelect('res.amount as res_amount', 'res.completed_at as res_completed_at', 'res.method as res_method', 'res.fee_amount as res_fee_amount', 'onsite_payment.issued_at as onsite_issued_at', 'first_t.first_ticket_at')
+            ->get()
+            ->map(fn ($r) => $this->mapRefund($r, $byCompletion))
+            ->filter(fn ($r) => $r['at'] && $r['at']->between($start, $end, true))
+            ->values();
+
+        return [$sales, $refunds];
+    }
+
+    /** The earliest ticket of each payment (when its tickets were minted = when an online payment was confirmed). */
+    private function firstTicketPerPayment(): Builder
+    {
+        return DB::table('tickets')->select('payment_id', DB::raw('MIN(created_at) as first_ticket_at'), DB::raw('MIN(ticket_id) as first_ticket_id'))->groupBy('payment_id');
+    }
+
+    /** Tickets of paid, valid payments on the owner's fleets, with the dimensions every figure groups by. */
+    private function base(?int $owner): Builder
+    {
+        $q = DB::table('tickets')
+            ->join('payments', 'payments.payment_id', '=', 'tickets.payment_id')
+            ->join('trips', 'trips.trip_id', '=', 'tickets.trip_id')
+            ->join('fleets_routes', 'fleets_routes.fleet_route_id', '=', 'trips.fleet_route_id')
+            ->join('fleets', 'fleets.fleet_id', '=', 'fleets_routes.fleet_id')
+            ->join('routes', 'routes.route_id', '=', 'fleets_routes.route_id')
+            ->where('payments.status', 'paid')
+            ->where('payments.is_valid', true);
+
+        if ($owner !== null) {
+            // Batch 46 step 2: every bus of the Operator's company.
+            CompanyScope::whereFleetOfCompany($q, $owner);
+        }
+
+        return $q;
+    }
+
+    /** @return array<int, string> */
+    private function columns(): array
+    {
+        return [
+            'tickets.ticket_id', 'tickets.ticket_uuid', 'tickets.amount', 'tickets.status as ticket_status', 'tickets.seat_type', 'tickets.boarded_at',
+            'tickets.discount_type_key', 'tickets.discount_label', 'tickets.discount_rate', 'tickets.original_amount', 'tickets.discount_amount',
+            'trips.trip_id', 'trips.trip_date', 'trips.departure_time', 'trips.leg_direction', 'trips.service_type', 'trips.shift_block_id',
+            'fleets.fleet_id', 'fleets.plate_number', 'fleets.bus_company_name', 'fleets.body_no',
+            'routes.route_id', 'routes.route_name', 'routes.origin', 'routes.destination',
+            'payments.payment_id', 'payments.transaction_reference', 'payments.payment_method', 'payments.payment_channel', 'payments.payment_created', 'payments.fee_amount',
+        ];
+    }
+
+    private function dims(object $r): array
+    {
+        $reverse = $r->leg_direction === 'reverse';
+        $method = $r->payment_method === 'cash' ? 'cash' : 'online';
+
+        return [
+            'ticket_id' => (int) $r->ticket_id,
+            'trip_id' => (int) $r->trip_id,
+            'trip_date' => substr((string) $r->trip_date, 0, 10),
+            'departure_time' => $r->departure_time ? substr((string) $r->departure_time, 0, 5) : null,
+            'direction' => $reverse ? 'reverse' : 'outbound',
+            'direction_label' => $reverse ? "{$r->destination} to {$r->origin}" : "{$r->origin} to {$r->destination}",
+            'service_type' => $r->service_type,
+            'shift_block_id' => $r->shift_block_id ? (int) $r->shift_block_id : null,
+            'fleet_id' => (int) $r->fleet_id,
+            'plate_number' => $r->plate_number,
+            'bus_label' => BusLabel::compose($r->bus_company_name, $r->body_no),
+            'route_id' => (int) $r->route_id,
+            'route_name' => $r->route_name,
+            'method' => $method,
+            'channel' => (string) $r->payment_channel,
+        ];
+    }
+
+    private function mapSale(object $r): array
+    {
+        $paidAt = FinancialClock::paidAt((string) $r->payment_method, $r->onsite_issued_at, $r->first_ticket_at, $r->payment_created);
+        $cents = (int) round(((float) $r->amount) * 100);
+
+        $refundCents = ($r->resolution === 'refund' && $r->res_status === 'succeeded' && $r->res_amount !== null) ? (int) round(((float) $r->res_amount) * 100) : 0;
+        $status = RefundStatus::of($cents, $refundCents, $r->resolution === 'refund' && in_array($r->res_status, RefundStatus::IN_PROGRESS, true));
+
+        return $this->dims($r) + [
+            'transaction_id' => (string) $r->transaction_reference,
+            'payment_id' => (int) $r->payment_id,
+            'cents' => $cents,
+            // Batch 45 Feature A: the purchase's booking fee, counted once, on its first ticket.
+            'fee_cents' => (int) $r->ticket_id === (int) ($r->first_ticket_id ?? 0) ? (int) round(((float) ($r->fee_amount ?? 0)) * 100) : 0,
+            'refund_cents' => $refundCents,
+            'seat_type' => $r->seat_type,
+            'boarded' => $r->boarded_at !== null,
+            'paid_at' => $paidAt,
+            'refund_completed_at' => $refundCents > 0 ? FinancialClock::fromUtc($r->res_completed_at) : null,
+            'status' => $status,
+            // 2026-10-27: the onsite discount snapshot on the ticket (null without one).
+            'discount_type_key' => $r->discount_type_key,
+            'discount_label' => $r->discount_label,
+            'discount_rate' => $r->discount_rate !== null ? (float) $r->discount_rate : null,
+            'original_cents' => $r->original_amount !== null ? (int) round(((float) $r->original_amount) * 100) : null,
+            'discount_cents' => $r->discount_amount !== null ? (int) round(((float) $r->discount_amount) * 100) : 0,
+        ];
+    }
+
+    /** A refund line: dated by its completion or by its original sale, and always linked back to that sale. */
+    private function mapRefund(object $r, bool $byCompletion): array
+    {
+        $refundedAt = FinancialClock::fromUtc($r->res_completed_at);
+        $soldAt = FinancialClock::paidAt((string) $r->payment_method, $r->onsite_issued_at, $r->first_ticket_at, $r->payment_created);
+
+        return $this->dims($r) + [
+            'cents' => (int) round(((float) $r->res_amount) * 100),
+            'refunded_at' => $refundedAt,
+            'sold_at' => $soldAt,
+            'at' => $byCompletion ? $refundedAt : $soldAt,
+            'transaction_id' => (string) $r->transaction_reference,
+            'payment_id' => (int) $r->payment_id,
+            'refund_method' => (string) $r->res_method,
+            'fee_cents' => (int) round(((float) ($r->res_fee_amount ?? 0)) * 100),
+        ];
+    }
+
+    /** The route / bus / trip / method / channel filters. Ownership is already in the query, so a foreign id matches nothing. */
+    private function applyFilters(Collection $rows, array $f): Collection
+    {
+        return $rows->filter(function ($r) use ($f) {
+            return ($f['route_id'] === null || $r['route_id'] === $f['route_id'])
+                && ($f['fleet_id'] === null || $r['fleet_id'] === $f['fleet_id'])
+                && ($f['trip_id'] === null || $r['trip_id'] === $f['trip_id'])
+                && ($f['payment_method'] === null || $r['method'] === $f['payment_method'])
+                && ($f['channel'] === null || $r['channel'] === $f['channel']);
+        })->values();
+    }
+
+    // ------------------------------------------------------------------ figures
+
+    /**
+     * 2026-10-27: the onsite discounts given in the range, from the ticket snapshots (the type's current setting plays
+     * no part).
+     *
+     * @return array{total: float, tickets: int, by_type: list<array<string, mixed>>}
+     */
+    private function discounts(Collection $sales): array
+    {
+        $discounted = $sales->filter(fn ($s) => $s['discount_type_key'] !== null && $s['discount_cents'] > 0);
+
+        return [
+            'total' => $this->money($discounted->sum('discount_cents')),
+            'tickets' => $discounted->count(),
+            'by_type' => $discounted->groupBy('discount_type_key')->map(fn (Collection $rows, $key) => [
+                'type_key' => (string) $key,
+                'label' => $rows->first()['discount_label'],
+                'rate' => $rows->first()['discount_rate'],
+                'tickets' => $rows->count(),
+                'amount' => $this->money($rows->sum('discount_cents')),
+            ])->sortByDesc('amount')->values()->all(),
+        ];
+    }
+
+    private function money(int $cents): float
+    {
+        return round($cents / 100, 2);
+    }
+
+    private function channelLabel(string $channel, string $method): string
+    {
+        $labels = (array) config('financial.channel_labels');
+
+        return $labels[$channel] ?? ($method === 'cash' ? 'Cash' : Str::headline($channel));
+    }
+
+    private function split(Collection $sales, Collection $refunds, string $method, int $gross): array
+    {
+        $g = $sales->where('method', $method)->sum('cents');
+        $r = $refunds->where('method', $method)->sum('cents');
+
+        return [
+            'gross' => $this->money($g),
+            'refunds' => $this->money($r),
+            'net' => $this->money($g - $r),
+            'tickets' => $sales->where('method', $method)->count(),
+            'percent' => $gross > 0 ? round($g / $gross * 100, 1) : 0.0,
+        ];
+    }
+
+    private function channels(Collection $sales, Collection $refunds, int $gross): array
+    {
+        $keys = $sales->map(fn ($r) => $r['method'].'|'.$r['channel'])->merge($refunds->map(fn ($r) => $r['method'].'|'.$r['channel']))->unique()->values();
+
+        return $keys->map(function (string $key) use ($sales, $refunds, $gross) {
+            [$method, $channel] = explode('|', $key, 2);
+            $s = $sales->filter(fn ($r) => $r['method'] === $method && $r['channel'] === $channel);
+            $rf = $refunds->filter(fn ($r) => $r['method'] === $method && $r['channel'] === $channel);
+
+            return [
+                'method' => $method,
+                'channel' => $channel,
+                'label' => $this->channelLabel($channel, $method),
+                'tickets' => $s->count(),
+                'gross' => $this->money($s->sum('cents')),
+                'refunds' => $this->money($rf->sum('cents')),
+                'net' => $this->money($s->sum('cents') - $rf->sum('cents')),
+                'percent' => $gross > 0 ? round($s->sum('cents') / $gross * 100, 1) : 0.0,
+            ];
+        })->sortByDesc('gross')->values()->all();
+    }
+
+    /** @param callable(array): string $key @param callable(array): array $meta */
+    private function groupBy(Collection $sales, Collection $refunds, callable $key, callable $meta): array
+    {
+        $out = [];
+        foreach ($sales as $r) {
+            $k = $key($r);
+            $out[$k] ??= $meta($r) + ['tickets' => 0, 'gross_c' => 0, 'refunds_c' => 0];
+            $out[$k]['tickets']++;
+            $out[$k]['gross_c'] += $r['cents'];
+        }
+        foreach ($refunds as $r) {
+            $k = $key($r);
+            $out[$k] ??= $meta($r) + ['tickets' => 0, 'gross_c' => 0, 'refunds_c' => 0];
+            $out[$k]['refunds_c'] += $r['cents'];
+        }
+
+        return collect($out)->map(function (array $row) {
+            $gross = $row['gross_c'];
+            $refunds = $row['refunds_c'];
+            unset($row['gross_c'], $row['refunds_c']);
+
+            return $row + ['gross' => $this->money($gross), 'refunds' => $this->money($refunds), 'net' => $this->money($gross - $refunds)];
+        })->sortByDesc('gross')->values()->all();
+    }
+
+    /** Revenue (gross) by Manila hour of the sale, all 24 hours so a chart has a stable axis. */
+    private function byHour(Collection $sales): array
+    {
+        $hours = array_fill(0, 24, ['tickets' => 0, 'cents' => 0]);
+        foreach ($sales as $r) {
+            $h = (int) $r['paid_at']->format('G');
+            $hours[$h]['tickets']++;
+            $hours[$h]['cents'] += $r['cents'];
+        }
+
+        return collect($hours)->map(fn ($v, $h) => ['hour' => $h, 'label' => ClockTime::label(sprintf('%02d:00', $h)), 'tickets' => $v['tickets'], 'gross' => $this->money($v['cents'])])->values()->all();
+    }
+
+    /** Per Manila day: sales on the day they were paid, refunds on the day they were completed. */
+    private function daily(Collection $sales, Collection $refunds): array
+    {
+        $days = [];
+        $blank = fn () => ['gross_c' => 0, 'refunds_c' => 0, 'tickets' => 0, 'cash_c' => 0, 'online_c' => 0, 'fees_c' => 0];
+        foreach ($sales as $r) {
+            $d = $r['paid_at']->toDateString();
+            $days[$d] ??= $blank();
+            $days[$d]['gross_c'] += $r['cents'];
+            $days[$d]['fees_c'] += $r['fee_cents'];
+            $days[$d]['tickets']++;
+            $days[$d][$r['method'] === 'cash' ? 'cash_c' : 'online_c'] += $r['cents'];
+        }
+        foreach ($refunds as $r) {
+            $d = $r['at']->toDateString();
+            $days[$d] ??= $blank();
+            $days[$d]['refunds_c'] += $r['cents'];
+            $days[$d]['fees_c'] -= $r['fee_cents'];
+        }
+        ksort($days);
+
+        return collect($days)->map(fn ($v, $d) => [
+            'date' => $d,
+            'gross' => $this->money($v['gross_c']),
+            'refunds' => $this->money($v['refunds_c']),
+            'net' => $this->money($v['gross_c'] - $v['refunds_c']),
+            'tickets' => $v['tickets'],
+            'cash' => $this->money($v['cash_c']),
+            'online' => $this->money($v['online_c']),
+            // Batch 48 Phase 5: that day's booking fees kept, net of fees given back (the platform's, not the fare).
+            'booking_fees' => $this->money($v['fees_c']),
+        ])->values()->all();
+    }
+
+    /** What the filter controls offer: only things that exist in the owner's data for the chosen dates. */
+    private function options(Collection $allSales, ?int $owner): array
+    {
+        $routes = DB::table('fleets_routes')
+            ->join('routes', 'routes.route_id', '=', 'fleets_routes.route_id')
+            ->join('fleets', 'fleets.fleet_id', '=', 'fleets_routes.fleet_id')
+            ->when($owner !== null, fn ($q) => CompanyScope::whereFleetOfCompany($q, $owner))
+            ->select('routes.route_id', 'routes.route_name')->distinct()->orderBy('routes.route_name')->get()
+            ->map(fn ($r) => ['route_id' => (int) $r->route_id, 'route_name' => $r->route_name])->all();
+
+        $fleets = DB::table('fleets')
+            ->when($owner !== null, fn ($q) => CompanyScope::whereFleetOfCompany($q, $owner))
+            ->orderBy('plate_number')->get(['fleet_id', 'plate_number', 'bus_company_name', 'body_no'])
+            ->map(fn ($f) => ['fleet_id' => (int) $f->fleet_id, 'plate_number' => $f->plate_number, 'bus_label' => BusLabel::compose($f->bus_company_name, $f->body_no)])->all();
+
+        $trips = $allSales->unique('trip_id')->sortByDesc(fn ($r) => $r['trip_date'].' '.$r['departure_time'])->map(fn ($r) => [
+            'trip_id' => $r['trip_id'], 'label' => trim($r['trip_date'].' '.ClockTime::label($r['departure_time']).' '.$r['route_name'].' '.$r['plate_number']),
+        ])->values()->all();
+
+        $channels = $allSales->map(fn ($r) => ['method' => $r['method'], 'channel' => $r['channel'], 'label' => $this->channelLabel($r['channel'], $r['method'])])->unique(fn ($c) => $c['method'].'|'.$c['channel'])->values()->all();
+
+        return ['routes' => $routes, 'fleets' => $fleets, 'trips' => $trips, 'channels' => $channels];
+    }
+
+    private function presentTransaction(array $r): array
+    {
+        $labels = ['paid' => 'Paid', 'refunded' => 'Refunded', 'partially_refunded' => 'Partially refunded', 'refund_pending' => 'Refund pending'];
+
+        return [
+            'ticket_id' => $r['ticket_id'],
+            'transaction_id' => $r['transaction_id'],
+            'paid_at' => $r['paid_at']->format('Y-m-d H:i:s'),
+            'plate_number' => $r['plate_number'],
+            'bus_label' => $r['bus_label'],
+            'route_name' => $r['route_name'],
+            'direction' => $r['direction'],
+            'direction_label' => $r['direction_label'],
+            'trip_id' => $r['trip_id'],
+            'trip_date' => $r['trip_date'],
+            'method' => $r['method'],
+            'method_label' => $r['method'] === 'cash' ? 'Cash' : 'Online',
+            'channel' => $r['channel'],
+            'channel_label' => $this->channelLabel($r['channel'], $r['method']),
+            'service_type' => $r['service_type'],
+            'seat_type' => $r['seat_type'],
+            'amount' => $this->money($r['cents']),
+            'refunded' => $this->money($r['refund_cents']),
+            'booking_fee' => $this->money($r['fee_cents']),
+            'status' => $r['status'],
+            'status_label' => $labels[$r['status']] ?? $r['status'],
+            'refund_completed_at' => $r['refund_completed_at']?->format('Y-m-d H:i:s'),
+            'discount_type_key' => $r['discount_type_key'],
+            'discount_label' => $r['discount_label'],
+            'discount_rate' => $r['discount_rate'],
+            'original_amount' => $r['original_cents'] !== null ? $this->money($r['original_cents']) : null,
+            'discount_amount' => $this->money($r['discount_cents']),
+        ];
+    }
+
+    // ------------------------------------------------------------------ discount claims
+
+    /**
+     * Batch 81 (user, 2026-11-19): Finance > Discounts. The online discount claims (Batch 75) on trips in the range: who
+     * claimed what, what the Chauffeur decided and the refund of the difference; with counts per outcome and the money
+     * given back. Onsite discounts (already in the fare) are the report's `discounts` part.
+     *
+     * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>}
+     */
+    public function discountClaims(?int $ownerCompanyUserId, array $filters): array
+    {
+        $claims = app(DiscountClaimRepository::class)->forCompanyBetween($ownerCompanyUserId, $filters['from'], $filters['to']);
+        $rows = $claims->map(fn ($c) => [
+            'id' => (int) $c->id,
+            'ticket_id' => (int) $c->ticket_id,
+            'ticket_code' => strtoupper(substr((string) $c->ticket_uuid, 0, 8)),
+            'trip_id' => (int) $c->trip_id,
+            'trip_date' => substr((string) $c->trip_date, 0, 10),
+            'departure_time' => ClockTime::label(substr((string) $c->departure_time, 0, 5)),
+            'route_name' => $c->route_name,
+            'label' => $c->discount_label,
+            'rate' => (float) $c->discount_rate,
+            'status' => (string) $c->status,
+            'fare' => (float) $c->fare,
+            'refund_amount' => $c->refund_amount !== null ? (float) $c->refund_amount : null,
+            'refund_status' => $c->refund_status,
+            'reviewed_at' => $c->reviewed_at ? Carbon::parse($c->reviewed_at, 'UTC')->setTimezone('Asia/Manila')->format('Y-m-d H:i') : null,
+        ])->values()->all();
+
+        $count = fn (string $status) => $claims->where('status', $status)->count();
+
+        return [
+            'rows' => $rows,
+            'totals' => [
+                'claims' => $claims->count(),
+                'claimed' => $count('claimed'),
+                'approved' => $count('approved'),
+                'rejected' => $count('rejected'),
+                'lapsed' => $count('lapsed'),
+                'refunded' => round((float) $claims->where('refund_status', 'succeeded')->sum('refund_amount'), 2),
+                'refund_pending' => round((float) $claims->where('status', 'approved')->whereIn('refund_status', ['pending', 'failed'])->sum('refund_amount'), 2),
+            ],
+        ];
+    }
+}

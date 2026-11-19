@@ -1,12 +1,18 @@
 <?php
 
+use App\Http\Requests\ScanGroupRequest;
+use App\Http\Requests\ScanTicketRequest;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
+use App\Models\PassengerUser;
+use App\Models\Payment;
 use App\Models\Route;
 use App\Models\StaffUser;
+use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
@@ -14,8 +20,8 @@ uses(RefreshDatabase::class);
 function makeConductorWithProfileQr(): User
 {
     $user = User::create([
-        'username' => 'conductor_' . uniqid(),
-        'email' => 'conductor+' . uniqid() . '@smarttransit.test',
+        'username' => 'conductor_'.uniqid(),
+        'email' => 'conductor+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'conductor',
     ]);
@@ -34,8 +40,8 @@ function makeConductorWithProfileQr(): User
 function makeDriverWithProfileQr(): User
 {
     $user = User::create([
-        'username' => 'driver_' . uniqid(),
-        'email' => 'driver+' . uniqid() . '@smarttransit.test',
+        'username' => 'driver_'.uniqid(),
+        'email' => 'driver+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'driver',
     ]);
@@ -54,8 +60,8 @@ function makeDriverWithProfileQr(): User
 function makeOperatorWithProfileQr(): User
 {
     $user = User::create([
-        'username' => 'operator_' . uniqid(),
-        'email' => 'operator+' . uniqid() . '@smarttransit.test',
+        'username' => 'operator_'.uniqid(),
+        'email' => 'operator+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'operator',
     ]);
@@ -74,26 +80,26 @@ function makeOperatorWithProfileQr(): User
 function makeFleetRouteFixtureQr(int $operatorCompanyUserId): FleetRoute
 {
     $route = Route::create([
-        'route_name'  => 'QR Validation Route',
-        'origin'      => 'Stop A',
+        'route_name' => 'QR Validation Route',
+        'origin' => 'Stop A',
         'destination' => 'Stop B',
     ]);
 
     $fleet = Fleet::create([
-        'company_user_id'   => $operatorCompanyUserId,
-        'plate_number'      => 'QRV-' . fake()->unique()->numerify('###'),
-        'capacity'          => 50,
-        'seated_capacity'   => 40,
+        'company_user_id' => $operatorCompanyUserId,
+        'plate_number' => 'QRV-'.fake()->unique()->numerify('###'),
+        'capacity' => 50,
+        'seated_capacity' => 40,
         'standing_capacity' => 10,
-        'status'            => 'active',
+        'status' => 'active',
     ]);
 
     return FleetRoute::create([
-        'fleet_id'   => $fleet->fleet_id,
-        'route_id'   => $route->route_id,
+        'fleet_id' => $fleet->fleet_id,
+        'route_id' => $route->route_id,
         'start_time' => '06:00',
-        'end_time'   => '22:00',
-        'status'     => 'active',
+        'end_time' => '22:00',
+        'status' => 'active',
     ]);
 }
 
@@ -106,18 +112,18 @@ describe('QR Code & Occupancy Monitoring System', function () {
         $fleetRoute = makeFleetRouteFixtureQr($operator->companyProfile->company_user_id);
 
         Trip::create([
-            'fleet_route_id'            => $fleetRoute->fleet_route_id,
-            'company_user_id'           => $operator->companyProfile->company_user_id,
-            'driver_id'                 => $driver->companyProfile->company_user_id,
-            'conductor_id'              => $conductor->companyProfile->company_user_id,
-            'trip_date'                 => now()->toDateString(),
-            'status'                    => 'boarding',
-            'current_seated_capacity'   => 0,
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'company_user_id' => $operator->companyProfile->company_user_id,
+            'driver_id' => $driver->companyProfile->company_user_id,
+            'conductor_id' => $conductor->companyProfile->company_user_id,
+            'trip_date' => now()->toDateString(),
+            'status' => 'boarding',
+            'current_seated_capacity' => 0,
             'current_standing_capacity' => 0,
-            'total_occupancy'           => 0,
+            'total_occupancy' => 0,
         ]);
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -141,7 +147,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can retrieve current trip occupancy metrics', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -158,7 +164,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can get occupancy breakdown by stop', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -175,7 +181,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can view current passengers on trip', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -192,7 +198,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can scan QR code to board passenger', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -211,7 +217,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('conductor can record passenger alighting', function () {
         $conductor = makeConductorWithProfileQr();
 
-        $conductorLogin = $this->postJson('/api/staff/login', [
+        $conductorLogin = $this->postJson('/api/auth/login', ['portal' => 'staff',
             'email' => $conductor->email,
             'password' => 'password123',
         ]);
@@ -228,7 +234,7 @@ describe('QR Code & Occupancy Monitoring System', function () {
     it('passenger can generate QR code for ticket', function () {
         $registerResponse = $this->postJson('/api/passengers/register', [
             'name' => 'Test Passenger',
-            'email' => 'test.passenger.' . uniqid() . '@test.com',
+            'email' => 'test.passenger.'.uniqid().'@test.com',
             'password' => 'password123',
             'password_confirmation' => 'password123',
             'phone_num' => '09999999999',
@@ -238,12 +244,176 @@ describe('QR Code & Occupancy Monitoring System', function () {
 
         $registerResponse->assertStatus(201);
 
-        $token = $registerResponse->json('data.token');
+        // 2026-10-28: sign-up gives no token until the email is verified; this test is about QR codes, so the
+        // passenger is verified and signed in directly.
+        $user = PassengerUser::where('passenger_uuid', $registerResponse->json('data.account_uuid'))->firstOrFail()->user;
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $token = $user->createToken('test-token')->plainTextToken;
 
         $response = $this->withHeader('Authorization', "Bearer $token")
-            ->getJson('/api/passengers/tickets/' . Str::uuid() . '/qr');
+            ->getJson('/api/passengers/tickets/'.Str::uuid().'/qr');
 
         expect($response->status())->toBe(404);
+    });
+
+    it('passenger qr payload includes custom origin and destination labels', function () {
+        $user = User::create([
+            'username' => 'passenger_'.uniqid(),
+            'email' => 'passenger+'.uniqid().'@smarttransit.test',
+            'password' => bcrypt('password123'),
+            'role' => 'passenger',
+        ]);
+
+        $passenger = PassengerUser::create([
+            'user_id' => $user->user_id,
+            'passenger_uuid' => (string) Str::uuid(),
+            'name' => 'QR Passenger',
+            'phone_num' => '09999999999',
+            'address' => 'Test Address',
+            'birthdate' => '2000-01-01',
+            'reward_points' => 0,
+        ]);
+
+        $operator = makeOperatorWithProfileQr();
+        $driver = makeDriverWithProfileQr();
+        $conductor = makeConductorWithProfileQr();
+        $fleetRoute = makeFleetRouteFixtureQr($operator->companyProfile->company_user_id);
+
+        $trip = Trip::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'company_user_id' => $operator->companyProfile->company_user_id,
+            'driver_id' => $driver->companyProfile->company_user_id,
+            'conductor_id' => $conductor->companyProfile->company_user_id,
+            'trip_date' => now()->toDateString(),
+            'status' => 'scheduled',
+            'current_seated_capacity' => 0,
+            'current_standing_capacity' => 0,
+            'total_occupancy' => 0,
+        ]);
+
+        $payment = Payment::create([
+            'amount' => 42.5,
+            'payment_created' => now(),
+            'transaction_reference' => 'TXN-QR-'.strtoupper(substr((string) Str::uuid(), 0, 8)),
+            'payment_method' => 'online',
+            'payment_channel' => 'gcash',
+            'status' => 'paid',
+            'payment_uuid' => (string) Str::uuid(),
+            'is_valid' => true,
+            'items_payload' => [[
+                'trip_id' => $trip->trip_id,
+                'seat_type' => 'seated',
+                'origin_lat' => 7.101234,
+                'origin_lng' => 125.601234,
+                'destination_lat' => 7.151234,
+                'destination_lng' => 125.651234,
+                'origin_label' => 'SM Ecoland Entrance',
+                'destination_label' => 'Bankerohan Public Market',
+                'amount' => 42.5,
+            ]],
+        ]);
+
+        $ticket = Ticket::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'trip_id' => $trip->trip_id,
+            'payment_id' => $payment->payment_id,
+            'passenger_id' => $passenger->passenger_id,
+            'ticket_uuid' => (string) Str::uuid(),
+            'status' => 'valid',
+            'seat_type' => 'seated',
+            'amount' => 42.5,
+            'origin_lat' => 7.101234,
+            'origin_lng' => 125.601234,
+            'destination_lat' => 7.151234,
+            'destination_lng' => 125.651234,
+        ]);
+
+        $token = $user->createToken('passenger-qr-test')->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/passengers/tickets/'.$ticket->ticket_uuid.'/qr');
+
+        $response
+            ->assertSuccessful()
+            ->assertJsonPath('data.origin', 'SM Ecoland Entrance')
+            ->assertJsonPath('data.destination', 'Bankerohan Public Market');
+    });
+
+    it('qr payload is unchanged (uuid / grp:ref), scannable by the validator, and carries no third-party image url', function () {
+        $user = User::create([
+            'username' => 'passenger_'.uniqid(),
+            'email' => 'passenger+'.uniqid().'@smarttransit.test',
+            'password' => bcrypt('password123'),
+            'role' => 'passenger',
+        ]);
+        $passenger = PassengerUser::create([
+            'user_id' => $user->user_id,
+            'passenger_uuid' => (string) Str::uuid(),
+            'name' => 'QR Payload Passenger',
+            'phone_num' => '09999999998',
+            'address' => 'Test Address',
+            'birthdate' => '2000-01-01',
+            'reward_points' => 0,
+        ]);
+        $operator = makeOperatorWithProfileQr();
+        $fleetRoute = makeFleetRouteFixtureQr($operator->companyProfile->company_user_id);
+        $trip = Trip::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'company_user_id' => $operator->companyProfile->company_user_id,
+            'driver_id' => makeDriverWithProfileQr()->companyProfile->company_user_id,
+            'conductor_id' => makeConductorWithProfileQr()->companyProfile->company_user_id,
+            'trip_date' => now()->toDateString(),
+            'departure_time' => '06:30:00',
+            'status' => 'scheduled',
+            'current_seated_capacity' => 0,
+            'current_standing_capacity' => 0,
+            'total_occupancy' => 0,
+        ]);
+        $payment = Payment::create([
+            'amount' => 40,
+            'payment_created' => now(),
+            'transaction_reference' => 'TXN-PAYLOAD-1',
+            'payment_method' => 'online',
+            'payment_channel' => 'gcash',
+            'status' => 'paid',
+            'payment_uuid' => (string) Str::uuid(),
+            'is_valid' => true,
+            'items_payload' => [],
+        ]);
+        $ticket = Ticket::create([
+            'fleet_route_id' => $fleetRoute->fleet_route_id,
+            'trip_id' => $trip->trip_id,
+            'payment_id' => $payment->payment_id,
+            'passenger_id' => $passenger->passenger_id,
+            'ticket_uuid' => (string) Str::uuid(),
+            'status' => 'valid',
+            'seat_type' => 'seated',
+            'amount' => 40,
+        ]);
+
+        $token = $user->createToken('passenger-qr-payload')->plainTextToken;
+        $response = $this->withHeader('Authorization', "Bearer $token")
+            ->getJson('/api/passengers/tickets/'.$ticket->ticket_uuid.'/qr')
+            ->assertSuccessful();
+        $data = $response->json('data');
+
+        // Same payload strings the conductor scanner has always read.
+        expect($data['qr_content'])->toBe($ticket->ticket_uuid)
+            ->and($data['group_qr_content'])->toBe('grp:TXN-PAYLOAD-1');
+
+        // The validator accepts the payload exactly as the scanner posts it.
+        $rules = (new ScanTicketRequest)->rules();
+        expect(Validator::make(['ticket_uuid' => $data['qr_content']], ['ticket_uuid' => $rules['ticket_uuid']])->passes())->toBeTrue();
+        $groupRules = (new ScanGroupRequest)->rules();
+        expect(Validator::make(['transaction_reference' => substr($data['group_qr_content'], 4)], ['transaction_reference' => $groupRules['transaction_reference']])->passes())->toBeTrue();
+
+        // No third-party image URL: nothing in the response points at an external QR service.
+        expect($data)->not->toHaveKeys(['qr_url', 'group_qr_url'])
+            ->and($response->getContent())->not->toContain('qrserver');
+
+        // Manila wall-clock departure for the saved image.
+        expect($data['trip_date'])->toBe(now()->toDateString())
+            ->and($data['departure_time'])->toBe('06:30');
     });
 
 });

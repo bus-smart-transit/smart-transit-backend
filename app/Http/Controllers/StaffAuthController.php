@@ -1,54 +1,346 @@
 <?php
+
 namespace App\Http\Controllers;
-use App\Services\StaffService;
-use App\Http\Requests\LoginRequest;
+
 use App\Http\Requests\CreateStaffAccountRequest;
+use App\Mail\PassengerOtpMail;
+use App\Services\AuditLogger;
+use App\Services\FcmService;
+use App\Services\Sms\SmsNotifier;
+use App\Services\StaffService;
+use App\Services\StepUpService;
+use App\Services\UserService;
 use App\Traits\ApiResponse;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class StaffAuthController extends Controller
 {
     use ApiResponse;
-    public function __construct(private StaffService $staffService)
-    {
-    }
 
-    public function login(LoginRequest $request)
-    {
-        // Bug 2 fix: only count FAILED attempts toward the rate limit.
-        $key = 'staff-login:' . $request->ip();
+    public function __construct(
+        private StaffService $staffService,
+        private StepUpService $stepUpService,
+    ) {}
 
-        if (RateLimiter::tooManyAttempts($key, 5)) {
-            $seconds = RateLimiter::availableIn($key);
+    public function verifyOtp(Request $request)
+    {
+        // 2026-10-29: the account is named by its uuid from step 1, never by the numeric user id.
+        $request->validate([
+            'account_uuid' => 'required|uuid',
+            'otp' => 'required|string|size:6',
+        ]);
+
+        $otpKey = 'staff-otp-verify:'.$request->ip().':'.$request->input('account_uuid');
+
+        if (RateLimiter::tooManyAttempts($otpKey, 5)) {
+            $seconds = RateLimiter::availableIn($otpKey);
             throw ValidationException::withMessages([
-                'email' => ["Too many failed login attempts. Please wait {$seconds} seconds and try again."],
+                'otp' => ["Too many incorrect attempts. Please wait {$seconds} seconds."],
             ]);
         }
 
         try {
-            $response = $this->staffService->loginStaff($request->validated());
+            $result = $this->staffService->verifyStaffLoginOtp(
+                (string) $request->input('account_uuid'),
+                (string) $request->input('otp')
+            );
         } catch (ValidationException $e) {
-            RateLimiter::hit($key, 900); // decay: 15 minutes
+            RateLimiter::hit($otpKey, 900);
             throw $e;
         }
 
-        RateLimiter::clear($key);
+        RateLimiter::clear($otpKey);
 
-        return $this->success($response, 'Logged in successfully');
+        return $this->success([
+            'token' => $result['token'],
+            'user' => $result['user'],
+        ], 'Logged in successfully.');
     }
 
     public function profile(Request $request)
     {
         $profile = $this->staffService->getStaffProfile($request->user());
+        // Batch 46: whether to offer the one-time "change the password your Operator gave you" step.
+        $profile?->setAttribute('offer_password_change', StaffService::offersPasswordChange($request->user()));
+        // Batch 67: whether this person said yes to text messages (Account page switch).
+        $profile?->setAttribute('sms_opt_in', (bool) $request->user()->sms_opt_in);
+
         return $this->success($profile, 'Profile retrieved successfully');
+    }
+
+    /** Batch 46: POST staff/password. Any staff role changes their own password with the current one. */
+    public function changePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'max:255', 'regex:/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/', 'confirmed'],
+        ], [
+            'password.regex' => 'Use at least one uppercase letter, one lowercase letter and one number.',
+            'password.confirmed' => 'The two new passwords do not match.',
+        ]);
+
+        $this->staffService->changePassword(
+            $request->user(),
+            $validated['current_password'],
+            $validated['password'],
+            ($token = $request->user()->currentAccessToken()) instanceof PersonalAccessToken ? (int) $token->id : null,
+        );
+        AuditLogger::log('staff.password_change', 'User', (int) $request->user()->user_id);
+
+        return $this->success(null, 'Password changed. Other devices were signed out.');
+    }
+
+    /** Batch 46: POST staff/password/skip. The crew member keeps the password their Operator gave them, for now. */
+    public function skipPasswordPrompt(Request $request)
+    {
+        $this->staffService->skipPasswordPrompt($request->user());
+
+        return $this->success(null, 'Okay. You can change your password any time on your profile.');
     }
 
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();
+
         return $this->success(null, 'Logged out successfully');
+    }
+
+    public function updateTwoFactorPreference(Request $request)
+    {
+        $validated = $request->validate([
+            'enabled' => 'required|boolean',
+        ]);
+
+        // Operator and Admin MFA is mandatory — cannot be disabled.
+        if (! $validated['enabled'] && in_array($request->user()?->role, ['operator', 'admin'])) {
+            return $this->error('Two-factor authentication cannot be disabled for operator and admin accounts.', 403);
+        }
+
+        $request->user()->forceFill([
+            'two_factor_enabled' => (bool) $validated['enabled'],
+        ])->save();
+
+        return $this->success([
+            'two_factor_enabled' => (bool) $request->user()->two_factor_enabled,
+        ], 'Extra login security updated.');
+    }
+
+    // Batch 15, Items 4/9: "Available" toggle — distinct from shift/pairing
+    // state. A Driver or Conductor can mark themselves available for
+    // extra/ad-hoc assignment independent of whether they're currently
+    // on-shift or paired. Visible to Operators via listDrivers()/
+    // listConductors() (is_available and available_since are part of the
+    // scheduling fields StaffService::presentStaff returns to Operators).
+    public function updateAvailability(Request $request)
+    {
+        $companyUser = $request->user()?->companyProfile;
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
+
+        if (! in_array($request->user()->role, ['driver', 'conductor'], true)) {
+            return $this->error('Availability status only applies to drivers and conductors.', 403);
+        }
+
+        $validated = $request->validate([
+            'available' => 'required|boolean',
+        ]);
+
+        $companyUser->forceFill([
+            'is_available' => $validated['available'],
+            'available_since' => $validated['available'] ? now() : null,
+        ])->save();
+        // Batch 46: availability now decides who can be assigned, so each change is recorded.
+        AuditLogger::log('staff.availability', 'StaffUser', (int) $companyUser->company_user_id, ['available' => (bool) $validated['available']]);
+
+        return $this->success([
+            'is_available' => (bool) $companyUser->is_available,
+            'available_since' => $companyUser->available_since,
+        ], 'Availability status updated successfully.');
+    }
+
+    // Batch 15, Items 2/3: register/overwrite this user's FCM device token.
+    public function registerFcmToken(Request $request, FcmService $fcmService)
+    {
+        $validated = $request->validate([
+            'token' => 'required|string|max:4096',
+        ]);
+
+        $fcmService->registerToken($request->user(), $validated['token']);
+
+        return $this->success(null, 'Push notification token registered.');
+    }
+
+    // ── Step-up re-authentication ─────────────────────────────────────────
+
+    /**
+     * POST /step-up/initiate
+     * Send a fresh OTP to the authenticated user's email for step-up verification.
+     */
+    public function stepUpInitiate(Request $request)
+    {
+        $user = $request->user();
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
+
+        $rateLimitKey = 'step-up-initiate:'.$user->user_id;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 3)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+
+            return $this->error("Too many requests. Try again in {$seconds} seconds.", 429);
+        }
+        RateLimiter::hit($rateLimitKey, 300);
+
+        $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $cacheKey = 'step-up-otp:'.$user->user_id;
+        Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(UserService::loginCodeMinutes()));
+
+        $name = $user->username ?? explode('@', $user->email)[0];
+        Mail::to($user->email)->send(new PassengerOtpMail($otp, $name));
+        app(SmsNotifier::class)->loginCode($user, $otp, UserService::loginCodeMinutes()); // Batch 64
+
+        return $this->success([
+            'email_masked' => $this->maskEmailLocal($user->email),
+        ], 'A security code was sent to your email.');
+    }
+
+    /**
+     * POST /step-up/verify
+     * Validate the OTP and issue a 15-minute step-up token.
+     */
+    public function stepUpVerify(Request $request)
+    {
+        $validated = $request->validate([
+            'otp' => 'required|string|size:6',
+        ]);
+
+        $user = $request->user();
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
+
+        $rateLimitKey = 'step-up-verify:'.$user->user_id;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+
+            return $this->error("Too many incorrect attempts. Wait {$seconds} seconds.", 429);
+        }
+
+        $cacheKey = 'step-up-otp:'.$user->user_id;
+        $stored = Cache::get($cacheKey);
+
+        if (! $stored || ! Hash::check($validated['otp'], $stored)) {
+            RateLimiter::hit($rateLimitKey, 900);
+            throw ValidationException::withMessages(['otp' => ['Incorrect or expired OTP.']]);
+        }
+
+        Cache::forget($cacheKey);
+        RateLimiter::clear($rateLimitKey);
+
+        $rawToken = $this->stepUpService->issueToken($user->user_id);
+
+        return $this->success([
+            'step_up_token' => $rawToken,
+            'expires_in' => $this->stepUpService->ttlSeconds(),
+        ], 'Identity check complete. It stays valid for 15 minutes.');
+    }
+
+    /**
+     * POST /step-up/verify-password
+     * Re-authenticate with the account password and issue a 15-minute
+     * step-up token (same token the OTP flow issues).
+     *
+     * A wrong password answers 422 (not 401): the frontend treats 401 as an
+     * expired session and signs the user out.
+     */
+    public function stepUpVerifyPassword(Request $request)
+    {
+        $validated = $request->validate([
+            'password' => 'required|string|max:255',
+        ]);
+
+        $user = $request->user();
+        if (! $user) {
+            return $this->error('Unauthenticated.', 401);
+        }
+
+        $rateLimitKey = 'step-up-password:'.$user->user_id;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+
+            return $this->error("Too many incorrect attempts. Wait {$seconds} seconds.", 429);
+        }
+
+        if (! Hash::check($validated['password'], (string) $user->password)) {
+            RateLimiter::hit($rateLimitKey, 900);
+            throw ValidationException::withMessages(['password' => ['Incorrect password.']]);
+        }
+
+        RateLimiter::clear($rateLimitKey);
+
+        $rawToken = $this->stepUpService->issueToken($user->user_id);
+
+        return $this->success([
+            'step_up_token' => $rawToken,
+            'expires_in' => $this->stepUpService->ttlSeconds(),
+        ], 'Identity check complete. It stays valid for 15 minutes.');
+    }
+
+    private function maskEmailLocal(string $email): string
+    {
+        [$local, $domain] = explode('@', $email, 2);
+        $visible = substr($local, 0, min(2, strlen($local)));
+        $masked = str_repeat('*', max(0, strlen($local) - 2));
+
+        return $visible.$masked.'@'.$domain;
+    }
+
+    public function forgotPassword(Request $request)
+    {
+        // Accounts are stored and logged in with a lower-case email (LoginRequest), so a reset is looked up the same way.
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
+        $request->validate(['email' => 'required|email']);
+
+        // Always return a generic message to prevent email enumeration.
+        Password::sendResetLink($request->only('email'));
+
+        return $this->success(null, 'If that email is registered, a reset link has been sent.');
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
+        $request->validate([
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
+            'password_confirmation' => 'required|string',
+        ]);
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function ($user, $password) {
+                $user->forceFill(['password' => $password])->save();
+                // Invalidate all active sessions on password reset.
+                $user->tokens()->delete();
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return $this->success(null, 'Password reset successfully. Please log in again.');
+        }
+
+        return $this->error('Invalid or expired password reset token. Please request a new one.', 422);
     }
 
     // Admin hits POST /admin/accounts   → creates operator
@@ -58,18 +350,51 @@ class StaffAuthController extends Controller
     {
         $result = $this->staffService->createStaffAccount(
             $request->validated(),
-            $request->user()->role
+            $request->user()->role,
+            $request->user()->companyProfile?->company_id,
         );
+        // 2026-11-06: who added which staff account, and as what role (no email or phone in the log).
+        AuditLogger::log('staff.create', 'StaffUser', (int) $result['profile']->company_user_id, ['role' => $result['user']->role]);
+
         return $this->success($result, 'Account created successfully');
     }
 
-    public function listDrivers()
+    public function listDrivers(Request $request)
     {
-        return $this->success($this->staffService->listDrivers(), 'Drivers retrieved successfully');
+        $validated = $request->validate([
+            'trip_date' => ['sometimes', 'date_format:Y-m-d'],
+            'include_busy' => ['sometimes', 'boolean'],
+        ]);
+
+        return $this->success(
+            $this->staffService->listDrivers(
+                $validated['trip_date'] ?? null,
+                $request->user()?->role === 'admin',
+                $this->crewScopeOf($request),
+                (bool) ($validated['include_busy'] ?? false),
+            ),
+            'Drivers retrieved successfully',
+        );
     }
 
-    public function listConductors()
+    public function listConductors(Request $request)
     {
-        return $this->success($this->staffService->listConductors(), 'Conductors retrieved successfully');
+        return $this->success(
+            $this->staffService->listConductors($request->user()?->role === 'admin', $this->crewScopeOf($request)),
+            'Conductors retrieved successfully',
+        );
+    }
+
+    /**
+     * Batch 46 (least privilege): an Operator sees only their company's crew. The Admin sees everyone (null). An
+     * Operator without a company gets 0, which matches nobody.
+     */
+    private function crewScopeOf(Request $request): ?int
+    {
+        if ($request->user()?->role === 'admin') {
+            return null;
+        }
+
+        return (int) ($request->user()?->companyProfile?->company_id ?? 0);
     }
 }

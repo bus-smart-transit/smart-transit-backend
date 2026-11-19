@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Repositories\PassengerRepository;
@@ -10,8 +11,7 @@ class PassengerService
     public function __construct(
         private PassengerRepository $passengerRepository,
         private UserRepository $userRepository,
-    ) {
-    }
+    ) {}
 
     public function listPassenger(int $perPage = 15)
     {
@@ -30,21 +30,23 @@ class PassengerService
                 'phone_num' => $payload['phone_num'],
                 'address' => $payload['address'] ?? '',
                 'birthdate' => $payload['birthdate'],
+                'gender' => $payload['gender'] ?? null,
             ]);
         });
     }
 
     /**
-     * Register a new passenger and issue their first API token.
-     * Returns ['passenger' => PassengerUser, 'token' => string].
+     * Register a new passenger. 2026-10-28: no session yet; a code is emailed to verify the address, and entering it
+     * (passengers/verify-otp) verifies the email and signs the passenger in.
+     *
+     * @return array{passenger: object, verification: array<string, mixed>}
      */
     public function registerPassenger(array $payload): array
     {
         $passenger = $this->createPassenger($payload);
         $passenger->load('user');
-        $token = $passenger->user->createToken('passenger-token')->plainTextToken;
 
-        return ['passenger' => $passenger, 'token' => $token];
+        return ['passenger' => $passenger, 'verification' => app(UserService::class)->sendPassengerCode($passenger->user, true)];
     }
 
     public function getPassenger(string $uuid): ?object
@@ -61,11 +63,6 @@ class PassengerService
     public function updatePassenger(string $uuid, array $payload): object
     {
         return $this->passengerRepository->update($uuid, $payload);
-    }
-
-    public function deletePassenger(string $uuid): bool
-    {
-        return $this->passengerRepository->delete($uuid);
     }
 
     public function restorePassenger(string $uuid): object
