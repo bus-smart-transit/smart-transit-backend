@@ -1,9 +1,12 @@
 <?php
 
 use App\Models\User;
+use App\Repositories\UserRepository;
 use App\Services\FcmService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Kreait\Firebase\Contract\Messaging;
+use Kreait\Firebase\Exception\Messaging\NotFound;
 
 uses(RefreshDatabase::class);
 
@@ -17,8 +20,8 @@ uses(RefreshDatabase::class);
 function makeUserForFcmTest(?string $token = null): User
 {
     return User::create([
-        'username' => 'fcm_user_' . uniqid(),
-        'email' => 'fcm+' . uniqid() . '@smarttransit.test',
+        'username' => 'fcm_user_'.uniqid(),
+        'email' => 'fcm+'.uniqid().'@smarttransit.test',
         'password' => bcrypt('password123'),
         'role' => 'driver',
         'fcm_token' => $token,
@@ -50,7 +53,7 @@ test('sendToUser catches a messaging exception and returns false instead of thro
     // A plain exception exercises the same fail-soft path as a real
     // MessagingException would (FcmService's broader \Throwable catch
     // handles both identically — logs and returns false, never throws).
-    $messaging->shouldReceive('send')->once()->andThrow(new \RuntimeException('token expired'));
+    $messaging->shouldReceive('send')->once()->andThrow(new RuntimeException('token expired'));
 
     $service = new FcmService($messaging);
     $user = makeUserForFcmTest('stale-token');
@@ -73,4 +76,25 @@ test('registerToken persists the token and clearToken removes it', function () {
 test('isEnabled reflects whether a Messaging instance is available', function () {
     $enabled = new FcmService(Mockery::mock(Messaging::class));
     expect($enabled->isEnabled())->toBeTrue();
+});
+
+// 2026-11-19 (user: "phone notifications having problem"): a token Firebase no longer knows is the person's device, not
+// a system fault. It is forgotten (only if still the saved one) and the health check stays green.
+test('sendToUser forgets a token Firebase no longer knows and keeps the health check green', function () {
+    $messaging = Mockery::mock(Messaging::class);
+    $messaging->shouldReceive('send')->once()->andThrow(new NotFound('Requested entity was not found.'));
+
+    $user = makeUserForFcmTest('stale-token');
+    $service = new FcmService($messaging);
+
+    expect($service->sendToUser($user, 'Title', 'Body'))->toBeFalse()
+        ->and($user->fresh()->fcm_token)->toBeNull()
+        ->and(Cache::get('health:push'))->toMatchArray(['ok' => true, 'detail' => 'stale token removed']);
+});
+
+test('a fresh token saved meanwhile is kept when an old one is reported unknown', function () {
+    $user = makeUserForFcmTest('new-token');
+
+    expect(app(UserRepository::class)->clearFcmTokenIfUnchanged((int) $user->user_id, 'old-token'))->toBeFalse()
+        ->and($user->fresh()->fcm_token)->toBe('new-token');
 });

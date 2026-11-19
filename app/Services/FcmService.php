@@ -4,11 +4,14 @@ namespace App\Services;
 
 use App\Models\User;
 use App\Repositories\UserNotificationRepository;
+use App\Repositories\UserRepository;
 use App\Support\FirebaseCredentials;
 use App\Support\HealthBeat;
 use App\Support\LiveUpdates;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Messaging;
+use Kreait\Firebase\Exception\Messaging\NotFound;
+use Kreait\Firebase\Exception\Messaging\SenderIdMismatch;
 use Kreait\Firebase\Exception\MessagingException;
 use Kreait\Firebase\Factory;
 use Kreait\Firebase\Messaging\CloudMessage;
@@ -125,6 +128,15 @@ class FcmService
             HealthBeat::record('push', true);
 
             return true;
+        } catch (NotFound|SenderIdMismatch $e) {
+            // 2026-11-19: Firebase no longer knows this token (the app or browser data was cleared, or notifications were
+            // turned off). That is the person's device, not a fault in the system: forget the token so it is not tried
+            // again, and keep the health check green. A new token is saved when they sign in and allow notifications.
+            app(UserRepository::class)->clearFcmTokenIfUnchanged((int) $user->user_id, (string) $token);
+            Log::info("FcmService: removed a token Firebase no longer knows for user {$user->user_id}.");
+            HealthBeat::record('push', true, 'stale token removed');
+
+            return false;
         } catch (MessagingException $e) {
             Log::warning("FcmService: send failed for user {$user->user_id} — ".$e->getMessage());
             HealthBeat::record('push', false, 'refused');

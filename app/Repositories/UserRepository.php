@@ -29,6 +29,15 @@ class UserRepository
         $user->forceFill(['sms_opt_in' => $enabled])->save();
     }
 
+    /**
+     * 2026-11-19: forget a phone/browser notification token Firebase no longer knows. Only when it is still the saved
+     * one, so a fresh token saved meanwhile (the person signed in again) is kept.
+     */
+    public function clearFcmTokenIfUnchanged(int $userId, string $token): bool
+    {
+        return User::whereKey($userId)->where('fcm_token', $token)->update(['fcm_token' => null]) > 0;
+    }
+
     public function findByField(string $field, mixed $value): ?User
     {
         return User::where($field, $value)->first();

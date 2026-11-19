@@ -7,17 +7,20 @@ use App\Support\Database\RlsContext;
 use App\Support\HealthBeat;
 use App\Support\PlaceGroups;
 use App\Support\RateLimiting\ToggleableRateLimiter;
+use App\Support\ReservedEmailDomain;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Request;
+use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
@@ -78,6 +81,15 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         Event::listen(MessageSent::class, fn () => HealthBeat::record('mail', true));
+        // 2026-11-19: an email only to TEST addresses (example.com, .test, ...) is skipped instead of failing at Resend.
+        Event::listen(MessageSending::class, function (MessageSending $event) {
+            if (! ReservedEmailDomain::onlyReservedRecipients($event->message)) {
+                return null;
+            }
+            Log::info('Mail skipped: every recipient is on a reserved test domain.', ['subject' => $event->message->getSubject()]);
+
+            return false;
+        });
         Queue::after(fn (JobProcessed $event) => HealthBeat::record('queue', true));
         Queue::failing(fn (JobFailed $event) => HealthBeat::record('queue', false, 'a job failed'));
     }
