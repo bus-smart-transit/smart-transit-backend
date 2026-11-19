@@ -1,0 +1,49 @@
+# Continuous integration (2026-11-19): every push and pull request runs the whole Pest suite.
+# It uses the same test setup as on a PC (phpunit.xml: SQLite in memory, mail and queue faked), so it needs no secret:
+# the app key is a throwaway generated per run, and no PayMongo, SMS, Firebase or routing key is used.
+# Deploys stay manual (backup first, then deploy; docs/VPS_DEPLOY.md in the root repository).
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # composer's package:discover boots the app; on SQLite RlsContext does nothing, so no PostgreSQL is needed.
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, sqlite3, gd, mbstring, zip, bcmath
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Throwaway app key for this run
+        run: echo "APP_KEY=base64:$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Run the test suite
+        run: php -d memory_limit=512M vendor/bin/pest --compact
