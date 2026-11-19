@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\DropoffOptionsShowRequest;
 use App\Repositories\TripRepository;
 use App\Services\CustomDropoffService;
 use App\Support\ServiceType;
 use App\Traits\ApiResponse;
-use Illuminate\Http\Request;
 
 /**
  * Batch 28 Stage 3, item 10: public, read-only. What a drop-off screen needs for one trip: the route's drop-off mode,
@@ -20,12 +20,9 @@ class DropoffOptionsController extends Controller
 
     public function __construct(private CustomDropoffService $dropoff, private TripRepository $trips) {}
 
-    public function show(Request $request, int $tripId)
+    public function show(DropoffOptionsShowRequest $request, int $tripId)
     {
-        $data = $request->validate([
-            'boarding_stop_id' => 'nullable|integer|min:1',
-            'boarding_along_m' => 'nullable|numeric|min:0',
-        ]);
+        $data = $request->validated();
 
         $trip = $this->trips->findById($tripId);
         if (! $trip || ! $trip->fleetRoute) {

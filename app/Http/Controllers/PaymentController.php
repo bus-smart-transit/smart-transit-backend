@@ -8,6 +8,8 @@ use App\Exceptions\PayMongoNotConfigured;
 use App\Http\Requests\OnlineCheckoutRequest;
 use App\Http\Requests\OnsiteCheckoutRequest;
 use App\Http\Requests\OnsiteQuoteRequest;
+use App\Http\Requests\PageRequest;
+use App\Http\Requests\PaymentOnlineStatusRequest;
 use App\Services\AuditLogger;
 use App\Services\ConductorShiftService;
 use App\Services\LegProgressionService;
@@ -16,7 +18,6 @@ use App\Services\TripService;
 use App\Traits\ApiResponse;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -30,9 +31,9 @@ class PaymentController extends Controller
     ) {}
 
     // C4: read-only payment state for the checkout return page (webhook-recorded, never client-set).
-    public function onlineStatus(Request $request)
+    public function onlineStatus(PaymentOnlineStatusRequest $request)
     {
-        $data = $request->validate(['ref' => 'required|string|max:64']);
+        $data = $request->validated();
         $status = $this->paymentService->onlineStatus($data['ref']);
 
         return $status
@@ -183,7 +184,7 @@ class PaymentController extends Controller
         }
     }
 
-    public function passengerHistory(Request $request)
+    public function passengerHistory(PageRequest $request)
     {
         $passengerId = $request->user()?->passengerProfile?->passenger_id;
 
@@ -191,10 +192,7 @@ class PaymentController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
-        $pagination = $request->validate([
-            'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-        ]);
+        $pagination = $request->validated();
         $history = $this->paymentService->getPassengerHistoryFromPayments(
             $passengerId,
             (int) ($pagination['page'] ?? 1),

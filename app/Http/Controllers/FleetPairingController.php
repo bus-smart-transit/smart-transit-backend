@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\PairWithCrewRequest;
 use App\Models\Trip;
 use App\Services\FleetDailyPinService;
 use App\Services\FleetPairingService;
@@ -34,7 +35,7 @@ class FleetPairingController extends Controller
     }
 
     /** POST /api/driver/pair  body: { token: "..." } */
-    public function pairAsDriver(Request $request)
+    public function pairAsDriver(PairWithCrewRequest $request)
     {
         return $this->pair($request, 'driver');
     }
@@ -54,7 +55,7 @@ class FleetPairingController extends Controller
     }
 
     /** POST /api/conductor/pair  body: { token: "..." } */
-    public function pairAsConductor(Request $request)
+    public function pairAsConductor(PairWithCrewRequest $request)
     {
         return $this->pair($request, 'conductor');
     }
@@ -116,13 +117,8 @@ class FleetPairingController extends Controller
         ], 'Pairing token generated');
     }
 
-    private function pair(Request $request, string $role): JsonResponse
+    private function pair(PairWithCrewRequest $request, string $role): JsonResponse
     {
-        $request->validate([
-            'token' => 'nullable|string|required_without:pin_code',
-            'pin_code' => 'nullable|string|required_without:token',
-        ]);
-
         $companyUser = $request->user()->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);

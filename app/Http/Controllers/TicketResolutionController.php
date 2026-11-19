@@ -2,6 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ChooseTicketResolutionRequest;
+use App\Http\Requests\TicketResolutionRecordCashRequest;
+use App\Http\Requests\TicketResolutionRefundHistoryRequest;
+use App\Http\Requests\TicketResolutionReviewRequest;
+use App\Http\Requests\TicketResolutionStaffChooseRequest;
 use App\Models\Ticket;
 use App\Models\TicketResolution;
 use App\Services\AuditLogger;
@@ -41,17 +46,14 @@ class TicketResolutionController extends Controller
         return $this->success($this->resolutions->view($ticket), 'Ticket options retrieved successfully');
     }
 
-    public function choose(Request $request, string $ticketUuid)
+    public function choose(ChooseTicketResolutionRequest $request, string $ticketUuid)
     {
         $ticket = $this->passengerTicket($request, $ticketUuid);
         if (! $ticket) {
             return $this->error('Ticket not found.', 404);
         }
 
-        $data = $request->validate([
-            'choice' => 'required|string|in:rebook,refund',
-            'trip_id' => 'nullable|integer',
-        ]);
+        $data = $request->validated();
 
         $resolution = $this->resolutions->choose($ticket, $data, ['user' => $request->user(), 'role' => 'passenger', 'on_behalf' => false]);
         AuditLogger::log('ticket.passenger_choice', 'Ticket', (int) $ticket->ticket_id, ['choice' => $data['choice'], 'resolution_id' => $resolution->id]);
@@ -99,13 +101,13 @@ class TicketResolutionController extends Controller
     }
 
     /** 2026-11-08 (user): every cancelled-trip ticket refund (in progress, done or failed), for the Refunds tab. */
-    public function refundHistory(Request $request)
+    public function refundHistory(TicketResolutionRefundHistoryRequest $request)
     {
         $companyUserId = $this->operatorScope($request);
         if ($companyUserId === false) {
             return $this->error('Staff profile not found.', 404);
         }
-        $page = (int) ($request->validate(['page' => 'nullable|integer|min:1'])['page'] ?? 1);
+        $page = (int) ($request->validated()['page'] ?? 1);
 
         return $this->success($this->resolutions->refundHistory($companyUserId, $page), 'Cancelled-trip refunds retrieved successfully');
     }
@@ -120,19 +122,14 @@ class TicketResolutionController extends Controller
         return $this->success($this->resolutions->view($ticket), 'Ticket options retrieved successfully');
     }
 
-    public function staffChoose(Request $request, string $ticketUuid)
+    public function staffChoose(TicketResolutionStaffChooseRequest $request, string $ticketUuid)
     {
         $ticket = $this->staffTicket($request, $ticketUuid);
         if ($ticket instanceof JsonResponse) {
             return $ticket;
         }
 
-        $data = $request->validate([
-            'choice' => 'required|string|in:rebook,refund',
-            'trip_id' => 'nullable|integer',
-            'note' => 'nullable|string|max:255',
-            'method' => 'nullable|string|in:gateway,cash',
-        ]);
+        $data = $request->validated();
 
         $resolution = $this->resolutions->choose($ticket, $data, ['user' => $request->user(), 'role' => (string) $request->user()->role, 'on_behalf' => true]);
         AuditLogger::log('ticket.staff_choice', 'Ticket', (int) $ticket->ticket_id, ['choice' => $data['choice'], 'resolution_id' => $resolution->id, 'role' => $request->user()->role]);
@@ -141,31 +138,28 @@ class TicketResolutionController extends Controller
     }
 
     /** Record the cash refund of a cash ticket (who, when, how much). */
-    public function recordCash(Request $request, int $resolutionId)
+    public function recordCash(TicketResolutionRecordCashRequest $request, int $resolutionId)
     {
         $resolution = $this->staffResolution($request, $resolutionId);
         if ($resolution instanceof JsonResponse) {
             return $resolution;
         }
 
-        $data = $request->validate(['note' => 'nullable|string|max:255']);
+        $data = $request->validated();
         $done = $this->resolutions->recordCashRefund($resolution, $request->user(), (string) $request->user()->role, $data['note'] ?? null);
 
         return $this->success($this->resolutions->presentResolution($done), 'Cash refund recorded.');
     }
 
     /** Set the refund of a ticket whose travelled part could not be priced (the reason is required and recorded). */
-    public function review(Request $request, int $resolutionId)
+    public function review(TicketResolutionReviewRequest $request, int $resolutionId)
     {
         $resolution = $this->staffResolution($request, $resolutionId);
         if ($resolution instanceof JsonResponse) {
             return $resolution;
         }
 
-        $data = $request->validate([
-            'amount' => 'required|numeric|min:0',
-            'note' => 'required|string|max:255',
-        ]);
+        $data = $request->validated();
         $done = $this->resolutions->setReviewedAmount($resolution, (float) $data['amount'], $request->user(), (string) $request->user()->role, $data['note']);
 
         return $this->success($this->resolutions->presentResolution($done), 'Refund amount set.');

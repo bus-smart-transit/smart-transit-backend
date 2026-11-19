@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\PlaceSearchSearchRequest;
 use App\Services\PlaceSearchService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 /** 2026-11-06 (Batch 47 part A): GET operator/places?q=...&mode=suggest|search, for "Add stop". Staff only. */
 class PlaceSearchController extends Controller
@@ -14,12 +14,9 @@ class PlaceSearchController extends Controller
 
     public function __construct(private PlaceSearchService $places) {}
 
-    public function search(Request $request): JsonResponse
+    public function search(PlaceSearchSearchRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'q' => ['required', 'string', 'max:120'],
-            'mode' => ['sometimes', 'in:suggest,search'],
-        ]);
+        $validated = $request->validated();
 
         $found = $this->places->search($validated['q'], $validated['mode'] ?? 'suggest');
 

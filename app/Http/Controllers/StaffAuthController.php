@@ -3,6 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\CreateStaffAccountRequest;
+use App\Http\Requests\ForgotPasswordRequest;
+use App\Http\Requests\RegisterFcmTokenRequest;
+use App\Http\Requests\ResetPasswordRequest;
+use App\Http\Requests\StaffAuthChangePasswordRequest;
+use App\Http\Requests\StaffAuthListDriversRequest;
+use App\Http\Requests\StaffAuthStepUpVerifyPasswordRequest;
+use App\Http\Requests\StaffAuthStepUpVerifyRequest;
+use App\Http\Requests\StaffAuthUpdateAvailabilityRequest;
+use App\Http\Requests\StaffAuthUpdateTwoFactorPreferenceRequest;
+use App\Http\Requests\VerifyLoginCodeRequest;
 use App\Mail\PassengerOtpMail;
 use App\Services\AuditLogger;
 use App\Services\FcmService;
@@ -30,13 +40,10 @@ class StaffAuthController extends Controller
         private StepUpService $stepUpService,
     ) {}
 
-    public function verifyOtp(Request $request)
+    public function verifyOtp(VerifyLoginCodeRequest $request)
     {
         // 2026-10-29: the account is named by its uuid from step 1, never by the numeric user id.
-        $request->validate([
-            'account_uuid' => 'required|uuid',
-            'otp' => 'required|string|size:6',
-        ]);
+        $request->validated();
 
         $otpKey = 'staff-otp-verify:'.$request->ip().':'.$request->input('account_uuid');
 
@@ -77,15 +84,9 @@ class StaffAuthController extends Controller
     }
 
     /** Batch 46: POST staff/password. Any staff role changes their own password with the current one. */
-    public function changePassword(Request $request)
+    public function changePassword(StaffAuthChangePasswordRequest $request)
     {
-        $validated = $request->validate([
-            'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:8', 'max:255', 'regex:/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/', 'confirmed'],
-        ], [
-            'password.regex' => 'Use at least one uppercase letter, one lowercase letter and one number.',
-            'password.confirmed' => 'The two new passwords do not match.',
-        ]);
+        $validated = $request->validated();
 
         $this->staffService->changePassword(
             $request->user(),
@@ -113,11 +114,9 @@ class StaffAuthController extends Controller
         return $this->success(null, 'Logged out successfully');
     }
 
-    public function updateTwoFactorPreference(Request $request)
+    public function updateTwoFactorPreference(StaffAuthUpdateTwoFactorPreferenceRequest $request)
     {
-        $validated = $request->validate([
-            'enabled' => 'required|boolean',
-        ]);
+        $validated = $request->validated();
 
         // Operator and Admin MFA is mandatory — cannot be disabled.
         if (! $validated['enabled'] && in_array($request->user()?->role, ['operator', 'admin'])) {
@@ -139,7 +138,7 @@ class StaffAuthController extends Controller
     // on-shift or paired. Visible to Operators via listDrivers()/
     // listConductors() (is_available and available_since are part of the
     // scheduling fields StaffService::presentStaff returns to Operators).
-    public function updateAvailability(Request $request)
+    public function updateAvailability(StaffAuthUpdateAvailabilityRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
@@ -150,9 +149,7 @@ class StaffAuthController extends Controller
             return $this->error('Availability status only applies to drivers and conductors.', 403);
         }
 
-        $validated = $request->validate([
-            'available' => 'required|boolean',
-        ]);
+        $validated = $request->validated();
 
         $companyUser->forceFill([
             'is_available' => $validated['available'],
@@ -168,11 +165,9 @@ class StaffAuthController extends Controller
     }
 
     // Batch 15, Items 2/3: register/overwrite this user's FCM device token.
-    public function registerFcmToken(Request $request, FcmService $fcmService)
+    public function registerFcmToken(RegisterFcmTokenRequest $request, FcmService $fcmService)
     {
-        $validated = $request->validate([
-            'token' => 'required|string|max:4096',
-        ]);
+        $validated = $request->validated();
 
         $fcmService->registerToken($request->user(), $validated['token']);
 
@@ -217,11 +212,9 @@ class StaffAuthController extends Controller
      * POST /step-up/verify
      * Validate the OTP and issue a 15-minute step-up token.
      */
-    public function stepUpVerify(Request $request)
+    public function stepUpVerify(StaffAuthStepUpVerifyRequest $request)
     {
-        $validated = $request->validate([
-            'otp' => 'required|string|size:6',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         if (! $user) {
@@ -262,11 +255,9 @@ class StaffAuthController extends Controller
      * A wrong password answers 422 (not 401): the frontend treats 401 as an
      * expired session and signs the user out.
      */
-    public function stepUpVerifyPassword(Request $request)
+    public function stepUpVerifyPassword(StaffAuthStepUpVerifyPasswordRequest $request)
     {
-        $validated = $request->validate([
-            'password' => 'required|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         if (! $user) {
@@ -304,11 +295,11 @@ class StaffAuthController extends Controller
         return $visible.$masked.'@'.$domain;
     }
 
-    public function forgotPassword(Request $request)
+    public function forgotPassword(ForgotPasswordRequest $request)
     {
         // Accounts are stored and logged in with a lower-case email (LoginRequest), so a reset is looked up the same way.
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
-        $request->validate(['email' => 'required|email']);
+        $request->validated();
 
         // Always return a generic message to prevent email enumeration.
         Password::sendResetLink($request->only('email'));
@@ -316,15 +307,10 @@ class StaffAuthController extends Controller
         return $this->success(null, 'If that email is registered, a reset link has been sent.');
     }
 
-    public function resetPassword(Request $request)
+    public function resetPassword(ResetPasswordRequest $request)
     {
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
-        $request->validate([
-            'token' => 'required|string',
-            'email' => 'required|email',
-            'password' => 'required|string|min:8|confirmed',
-            'password_confirmation' => 'required|string',
-        ]);
+        $request->validated();
 
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
@@ -359,12 +345,9 @@ class StaffAuthController extends Controller
         return $this->success($result, 'Account created successfully');
     }
 
-    public function listDrivers(Request $request)
+    public function listDrivers(StaffAuthListDriversRequest $request)
     {
-        $validated = $request->validate([
-            'trip_date' => ['sometimes', 'date_format:Y-m-d'],
-            'include_busy' => ['sometimes', 'boolean'],
-        ]);
+        $validated = $request->validated();
 
         return $this->success(
             $this->staffService->listDrivers(

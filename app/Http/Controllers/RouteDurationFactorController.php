@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\OptionalRouteFilterRequest;
+use App\Http\Requests\RouteDurationFactorPlanLegsRequest;
+use App\Http\Requests\RouteDurationFactorRequest;
 use App\Models\RouteDurationFactor;
 use App\Repositories\FleetRouteRepository;
 use App\Services\AuditLogger;
@@ -9,7 +12,6 @@ use App\Services\FleetService;
 use App\Services\LegPlanningService;
 use App\Services\OperatorRouteAccess;
 use App\Services\RouteDurationFactorService;
-use App\Support\ServiceType;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -29,9 +31,9 @@ class RouteDurationFactorController extends Controller
         private FleetRouteRepository $fleetRoutes,
     ) {}
 
-    public function index(Request $request)
+    public function index(OptionalRouteFilterRequest $request)
     {
-        $data = $request->validate(['route_id' => 'nullable|integer']);
+        $data = $request->validated();
         $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
@@ -47,9 +49,9 @@ class RouteDurationFactorController extends Controller
         return $this->success($windows, 'Duration factors retrieved successfully');
     }
 
-    public function store(Request $request)
+    public function store(RouteDurationFactorRequest $request)
     {
-        $data = $this->validated($request);
+        $data = $request->validated();
         if ($denied = $this->assertRoute($request, (int) $data['route_id'])) {
             return $denied;
         }
@@ -61,7 +63,7 @@ class RouteDurationFactorController extends Controller
         return $this->success($this->present($window->load('route:route_id,route_name')), 'Duration factor saved', 201);
     }
 
-    public function update(Request $request, int $id)
+    public function update(RouteDurationFactorRequest $request, int $id)
     {
         $window = $this->factors->findWindow($id);
         if (! $window) {
@@ -71,7 +73,7 @@ class RouteDurationFactorController extends Controller
             return $denied;
         }
 
-        $data = $this->validated($request) + [];
+        $data = $request->validated() + [];
         $data['route_id'] = $window->route_id; // a window never moves to another route
         $clean = $this->factors->validateWindow($data, (int) $window->id);
         $window = $this->factors->updateWindow($window, $clean);
@@ -97,9 +99,9 @@ class RouteDurationFactorController extends Controller
     }
 
     /** Read-only: median actual leg duration per route, direction and hour, and whether there is enough data to propose a factor. */
-    public function report(Request $request)
+    public function report(OptionalRouteFilterRequest $request)
     {
-        $data = $request->validate(['route_id' => 'nullable|integer']);
+        $data = $request->validated();
         $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
@@ -109,16 +111,9 @@ class RouteDurationFactorController extends Controller
     }
 
     /** Suggested start times for the legs of a shift block (a suggestion the operator can override). */
-    public function planLegs(Request $request)
+    public function planLegs(RouteDurationFactorPlanLegsRequest $request)
     {
-        $data = $request->validate([
-            'fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id',
-            'scheduled_date' => 'required|date_format:Y-m-d',
-            'first_departure_time' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
-            'service_type' => 'nullable|string|in:'.implode(',', ServiceType::ALL),
-            // 2026-10-27 (§4.2): without leg_count the planner decides how many legs fit from the route's travel time.
-            'leg_count' => 'nullable|integer|min:1|max:'.LegPlanningService::maxLegs(),
-        ]);
+        $data = $request->validated();
 
         $fleetRoute = $this->fleetRoutes->findWithRoute((int) $data['fleet_route_id']);
         if (! $fleetRoute) {
@@ -142,21 +137,6 @@ class RouteDurationFactorController extends Controller
     }
 
     // ----------------------------------------------------------------
-
-    /** @return array<string, mixed> */
-    private function validated(Request $request): array
-    {
-        return $request->validate([
-            'route_id' => 'required|integer|exists:routes,route_id',
-            'direction' => 'nullable|string|in:outbound,reverse',
-            'day_type' => 'nullable|string|in:'.implode(',', RouteDurationFactorService::DAY_TYPES),
-            'start_time' => 'required|string',
-            'end_time' => 'required|string',
-            'factor' => 'required|numeric',
-            'source' => 'nullable|string|in:manual,measured',
-            'note' => 'nullable|string|max:255',
-        ]);
-    }
 
     /** @return array<string, mixed> */
     private function present(RouteDurationFactor $window): array

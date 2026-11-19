@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\UnfulfilledPaymentListRequest;
+use App\Http\Requests\UnfulfilledPaymentReconcileCheckoutNotPaidRequest;
+use App\Http\Requests\UnfulfilledPaymentRecordRefundRequest;
+use App\Http\Requests\UnfulfilledPaymentRefundsRequest;
 use App\Services\RefundListService;
 use App\Services\UnfulfilledPaymentService;
 use App\Traits\ApiResponse;
@@ -19,13 +23,9 @@ class UnfulfilledPaymentController extends Controller
     public function __construct(private UnfulfilledPaymentService $payments) {}
 
     /** GET /operator/payments/needs-refund?status=needs_refund|refunded|all&page= */
-    public function index(Request $request)
+    public function index(UnfulfilledPaymentListRequest $request)
     {
-        $data = $request->validate([
-            'status' => ['nullable', 'in:needs_refund,refunded,outcome_unknown,all'],
-            'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
+        $data = $request->validated();
 
         return $this->success($this->payments->paginate($this->ownerId($request), $data), 'Payments retrieved successfully');
     }
@@ -34,34 +34,25 @@ class UnfulfilledPaymentController extends Controller
      * 2026-11-08 (user): the Refunds tab's one table: payment refunds and cancelled-trip ticket refunds together, with
      * one status filter and one set of pages (RefundListService). Read only; own company only.
      */
-    public function refunds(Request $request, RefundListService $refunds)
+    public function refunds(UnfulfilledPaymentRefundsRequest $request, RefundListService $refunds)
     {
-        $data = $request->validate([
-            'status' => ['nullable', 'in:'.implode(',', RefundListService::STATUSES)],
-            'page' => ['nullable', 'integer', 'min:1'],
-        ]);
+        $data = $request->validated();
 
         return $this->success($refunds->paginate($this->ownerId($request), $data['status'] ?? 'all', (int) ($data['page'] ?? 1)), 'Refunds retrieved successfully');
     }
 
     /** Batch 48 Phase 5: GET /admin/payments/needs-refund, the same list across every company, read only. */
-    public function adminIndex(Request $request)
+    public function adminIndex(UnfulfilledPaymentListRequest $request)
     {
-        $data = $request->validate([
-            'status' => ['nullable', 'in:needs_refund,refunded,outcome_unknown,all'],
-            'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
+        $data = $request->validated();
 
         return $this->success($this->payments->paginate(null, $data), 'Payments retrieved successfully');
     }
 
     /** POST /operator/payments/{id}/refunded  { note } (the PayMongo refund id or reference; required) */
-    public function recordRefund(Request $request, int $id)
+    public function recordRefund(UnfulfilledPaymentRecordRefundRequest $request, int $id)
     {
-        $data = $request->validate([
-            'note' => ['required', 'string', 'min:3', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         try {
             $row = $this->payments->recordRefund($id, $this->ownerId($request), $request->user(), $data['note']);
@@ -73,11 +64,9 @@ class UnfulfilledPaymentController extends Controller
     }
 
     /** POST /operator/payments/{id}/checkout-reconciled-not-paid { note } */
-    public function reconcileCheckoutNotPaid(Request $request, int $id)
+    public function reconcileCheckoutNotPaid(UnfulfilledPaymentReconcileCheckoutNotPaidRequest $request, int $id)
     {
-        $data = $request->validate([
-            'note' => ['required', 'string', 'min:12', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         try {
             $payment = $this->payments->recordCheckoutNotCharged(

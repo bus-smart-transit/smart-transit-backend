@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\CalendarSummaryDayRequest;
+use App\Http\Requests\CalendarSummaryDaysRequest;
 use App\Services\CalendarSummaryService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -34,17 +36,14 @@ class CalendarSummaryController extends Controller
     }
 
     // The days in a range that have trips or shifts: the calendar widget's markers.
-    public function days(Request $request)
+    public function days(CalendarSummaryDaysRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $data = $request->validate([
-            'from' => 'required|date_format:Y-m-d',
-            'to' => 'required|date_format:Y-m-d|after_or_equal:from',
-        ]);
+        $data = $request->validated();
         $maxDays = (int) config('calendar.max_range_days');
         if (Carbon::parse($data['from'])->diffInDays(Carbon::parse($data['to'])) > $maxDays) {
             throw ValidationException::withMessages(['to' => ["Ask for at most $maxDays days at a time."]]);
@@ -57,18 +56,14 @@ class CalendarSummaryController extends Controller
     }
 
     // The trips and shift legs of one day, paginated: the day list in the modal and on the calendar page.
-    public function day(Request $request)
+    public function day(CalendarSummaryDayRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $data = $request->validate([
-            'date' => 'required|date_format:Y-m-d',
-            'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:'.(int) config('calendar.day_max_per_page'),
-        ]);
+        $data = $request->validated();
 
         return $this->success(
             $this->service->dayFor(

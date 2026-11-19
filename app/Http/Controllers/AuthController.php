@@ -2,6 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\AuthResendVerificationRequest;
+use App\Http\Requests\ForgotPasswordRequest;
+use App\Http\Requests\RegisterFcmTokenRequest;
+use App\Http\Requests\ResetPasswordRequest;
+use App\Http\Requests\ToggleTwoFactorRequest;
+use App\Http\Requests\VerifyLoginCodeRequest;
 use App\Http\Resources\PassengerResource;
 use App\Services\FcmService;
 use App\Services\UserService;
@@ -22,12 +28,9 @@ class AuthController extends Controller
      * Step 2: verify OTP and issue Sanctum token.
      * POST /passengers/verify-otp  { account_uuid, otp } (2026-10-29: the uuid from step 1, never the numeric user id)
      */
-    public function verifyOtp(Request $request)
+    public function verifyOtp(VerifyLoginCodeRequest $request)
     {
-        $request->validate([
-            'account_uuid' => 'required|uuid',
-            'otp' => 'required|string|size:6',
-        ]);
+        $request->validated();
 
         // Separate rate limit for OTP guessing — max 5 wrong codes per 15 min.
         $otpKey = 'passenger-otp-verify:'.$request->ip().':'.$request->input('account_uuid');
@@ -58,9 +61,9 @@ class AuthController extends Controller
     }
 
     /** 2026-10-28: POST passengers/verify-email/resend { account_uuid }. A new code for an account not verified yet. */
-    public function resendVerification(Request $request)
+    public function resendVerification(AuthResendVerificationRequest $request)
     {
-        $data = $request->validate(['account_uuid' => 'required|uuid']);
+        $data = $request->validated();
         $this->userService->resendVerificationCode((string) $data['account_uuid']);
 
         return $this->success(null, 'If this account still needs verifying, a new code was sent.');
@@ -101,9 +104,9 @@ class AuthController extends Controller
      * Passenger: toggle two-factor authentication on/off.
      * PATCH /passengers/two-factor
      */
-    public function updateTwoFactor(Request $request)
+    public function updateTwoFactor(ToggleTwoFactorRequest $request)
     {
-        $request->validate(['enabled' => 'required|boolean']);
+        $request->validated();
 
         $request->user()->forceFill([
             'two_factor_enabled' => (bool) $request->input('enabled'),
@@ -117,22 +120,20 @@ class AuthController extends Controller
 
     // Passenger: register/overwrite this user's FCM device token, so trip
     // cancellation / payment failure / auto-delay pushes can reach them.
-    public function registerFcmToken(Request $request, FcmService $fcmService)
+    public function registerFcmToken(RegisterFcmTokenRequest $request, FcmService $fcmService)
     {
-        $validated = $request->validate([
-            'token' => 'required|string|max:4096',
-        ]);
+        $validated = $request->validated();
 
         $fcmService->registerToken($request->user(), $validated['token']);
 
         return $this->success(null, 'Push notification token registered.');
     }
 
-    public function forgotPassword(Request $request)
+    public function forgotPassword(ForgotPasswordRequest $request)
     {
         // Accounts are stored and logged in with a lower-case email (LoginRequest), so a reset is looked up the same way.
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
-        $request->validate(['email' => 'required|email']);
+        $request->validated();
 
         // Always the same answer, whether or not the email is registered or the mail could be sent (no account probing).
         Password::broker('passengers')->sendResetLink(
@@ -142,15 +143,10 @@ class AuthController extends Controller
         return $this->success(null, 'If that email is registered, a reset link has been sent.');
     }
 
-    public function resetPassword(Request $request)
+    public function resetPassword(ResetPasswordRequest $request)
     {
         $request->merge(['email' => strtolower(trim((string) $request->input('email', '')))]);
-        $request->validate([
-            'token' => 'required|string',
-            'email' => 'required|email',
-            'password' => 'required|string|min:8|confirmed',
-            'password_confirmation' => 'required|string',
-        ]);
+        $request->validated();
 
         $status = Password::broker('passengers')->reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),

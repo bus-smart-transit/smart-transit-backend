@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ConfirmDropOffGroupRequest;
 use App\Http\Requests\GuestTicketLookupRequest;
+use App\Http\Requests\PageRequest;
 use App\Http\Requests\ReviewDiscountClaimRequest;
 use App\Http\Requests\ScanGroupRequest;
 use App\Http\Requests\ScanTicketRequest;
@@ -41,7 +42,7 @@ class TicketController extends Controller
     ) {}
 
     // Passenger: view their own ticket history
-    public function myTickets(Request $request)
+    public function myTickets(PageRequest $request)
     {
         $passenger = $request->user()->passengerProfile;
 
@@ -49,10 +50,7 @@ class TicketController extends Controller
             return $this->error('Passenger profile not found.', 404);
         }
 
-        $pagination = $request->validate([
-            'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-        ]);
+        $pagination = $request->validated();
 
         return $this->success(
             $this->ticketService->getPassengerTickets(

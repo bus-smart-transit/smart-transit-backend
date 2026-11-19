@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\DeclineAssignmentRequest;
 use App\Services\AuditLogger;
 use App\Services\ShiftBlockAssignmentService;
-use App\Services\TripAssignmentRequestService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -40,12 +40,12 @@ class AssignmentController extends Controller
         return $this->accept($request, $key, 'conductor');
     }
 
-    public function declineAsDriver(Request $request, string $key)
+    public function declineAsDriver(DeclineAssignmentRequest $request, string $key)
     {
         return $this->decline($request, $key, 'driver');
     }
 
-    public function declineAsConductor(Request $request, string $key)
+    public function declineAsConductor(DeclineAssignmentRequest $request, string $key)
     {
         return $this->decline($request, $key, 'conductor');
     }
@@ -83,17 +83,14 @@ class AssignmentController extends Controller
         return $this->success($card, 'Assignment accepted.');
     }
 
-    private function decline(Request $request, string $key, string $role)
+    private function decline(DeclineAssignmentRequest $request, string $key, string $role)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $validated = $request->validate([
-            'reason_code' => ['nullable', 'string', 'in:'.implode(',', TripAssignmentRequestService::REASON_CODES)],
-            'reason_text' => ['nullable', 'string', 'max:'.TripAssignmentRequestService::REASON_TEXT_MAX, 'required_if:reason_code,other'],
-        ]);
+        $validated = $request->validated();
 
         $card = $this->assignments->decline($key, $role, $companyUser->company_user_id, $validated['reason_code'] ?? null, $validated['reason_text'] ?? null);
         AuditLogger::log('assignment.decline_requested', 'Assignment', null, ['key' => $key, 'role' => $role, 'reason_code' => $validated['reason_code'] ?? null]);

@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\GoogleSignInStoreRequest;
 use App\Services\AuditLogger;
 use App\Services\GoogleSignInService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 /** 2026-11-07: POST /api/auth/google { id_token }, passengers only (see GoogleSignInService). */
 class GoogleSignInController extends Controller
@@ -15,9 +15,9 @@ class GoogleSignInController extends Controller
 
     public function __construct(private GoogleSignInService $google) {}
 
-    public function store(Request $request): JsonResponse
+    public function store(GoogleSignInStoreRequest $request): JsonResponse
     {
-        $validated = $request->validate(['id_token' => ['required', 'string', 'max:8192']]);
+        $validated = $request->validated();
         $result = $this->google->signIn($validated['id_token']);
         AuditLogger::logAs('passenger', $result['user_id'], $result['is_new'] ? 'auth.google_signup' : 'auth.google_login', 'User', $result['user_id']);
         unset($result['user_id']);

@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ConductorShiftEndRequest;
+use App\Http\Requests\ConductorShiftStartRequest;
 use App\Services\ConductorShiftService;
+use App\Services\ShiftCashService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -15,7 +18,9 @@ class ConductorShiftController extends Controller
     public function status(Request $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
         $status = $this->conductorShiftService->getStatusForConductor($companyUser->company_user_id);
 
@@ -26,16 +31,18 @@ class ConductorShiftController extends Controller
             'end_blocked_reason' => $status['end_blocked_reason'],
             // Batch 29: the cash of the open shift (opening + cash sales - cash refunds). It does not depend on a trip being
             // active, so the End Shift dialog can show it when every leg is already finished.
-            'shift_cash' => $status['open_shift'] ? app(\App\Services\ShiftCashService::class)->summary((int) $status['open_shift']->shift_log_id) : null,
+            'shift_cash' => $status['open_shift'] ? app(ShiftCashService::class)->summary((int) $status['open_shift']->shift_log_id) : null,
         ], 'Conductor shift status retrieved');
     }
 
-    public function start(Request $request)
+    public function start(ConductorShiftStartRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
-        $data = $request->validate(['opening_cash' => ['nullable', 'numeric', 'min:0', 'max:100000']]);
+        $data = $request->validated();
 
         $shift = $this->conductorShiftService->startShiftForConductor($companyUser->company_user_id, 'dashboard', (float) ($data['opening_cash'] ?? 0));
 
@@ -44,13 +51,15 @@ class ConductorShiftController extends Controller
         ], 'Conductor shift started');
     }
 
-    public function end(Request $request)
+    public function end(ConductorShiftEndRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
-        if (!$companyUser) return $this->error('Staff profile not found.', 404);
+        if (! $companyUser) {
+            return $this->error('Staff profile not found.', 404);
+        }
 
         // Batch 29: the cash the Chauffeur counts and hands over (declared before the Operator confirms; optional for older clients).
-        $data = $request->validate(['closing_cash' => ['nullable', 'numeric', 'min:0', 'max:1000000']]);
+        $data = $request->validated();
 
         $shift = $this->conductorShiftService->endShiftForConductor($companyUser->company_user_id, 'dashboard', isset($data['closing_cash']) ? (float) $data['closing_cash'] : null);
 
@@ -61,7 +70,9 @@ class ConductorShiftController extends Controller
 
     private function formatShift(?object $shift): ?array
     {
-        if (!$shift) return null;
+        if (! $shift) {
+            return null;
+        }
 
         return [
             'shift_log_id' => $shift->shift_log_id,

@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\RemittanceConfirmRequest;
+use App\Http\Requests\RemittanceIndexRequest;
+use App\Http\Requests\RemittanceResolveRequest;
 use App\Services\CashRemittanceService;
 use App\Traits\ApiResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -18,24 +21,17 @@ class RemittanceController extends Controller
     public function __construct(private CashRemittanceService $remittances) {}
 
     /** GET /operator/remittances?status=pending|confirmed|flagged|resolved|all&page= */
-    public function index(Request $request)
+    public function index(RemittanceIndexRequest $request)
     {
-        $data = $request->validate([
-            'status' => ['nullable', 'in:pending,confirmed,flagged,resolved,all'],
-            'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
-        ]);
+        $data = $request->validated();
 
         return $this->success($this->remittances->paginate($this->ownerId($request), $data), 'Remittances retrieved successfully');
     }
 
     /** POST /operator/remittances/{id}/confirm  { counted_amount?, note? } */
-    public function confirm(Request $request, int $id)
+    public function confirm(RemittanceConfirmRequest $request, int $id)
     {
-        $data = $request->validate([
-            'counted_amount' => ['nullable', 'numeric', 'min:0', 'max:1000000'],
-            'note' => ['nullable', 'string', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         try {
             $row = $this->remittances->confirm($id, $this->ownerId($request), $request->user(), isset($data['counted_amount']) ? (float) $data['counted_amount'] : null, $data['note'] ?? null);
@@ -47,11 +43,9 @@ class RemittanceController extends Controller
     }
 
     /** POST /operator/remittances/{id}/resolve  { resolution_note } (a flagged batch only; the explanation is required) */
-    public function resolve(Request $request, int $id)
+    public function resolve(RemittanceResolveRequest $request, int $id)
     {
-        $data = $request->validate([
-            'resolution_note' => ['required', 'string', 'max:255'],
-        ]);
+        $data = $request->validated();
 
         try {
             $row = $this->remittances->resolve($id, $this->ownerId($request), $request->user(), $data['resolution_note']);

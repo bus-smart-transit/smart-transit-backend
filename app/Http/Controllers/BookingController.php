@@ -2,7 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\BookingAddressSearchRequest;
+use App\Http\Requests\BookingDeparturesRequest;
 use App\Http\Requests\BookingDiscountTypesRequest;
+use App\Http\Requests\BookingResolveRequest;
+use App\Http\Requests\BookingStopsRequest;
+use App\Http\Requests\BookingTripsRequest;
 use App\Services\AddressSearchService;
 use App\Services\BookingLinkService;
 use App\Services\BookingStopsService;
@@ -42,9 +47,9 @@ class BookingController extends Controller
         );
     }
 
-    public function stops(Request $request)
+    public function stops(BookingStopsRequest $request)
     {
-        $data = $request->validate(['origin_stop_id' => 'nullable|integer|min:1']);
+        $data = $request->validated();
 
         $result = $this->bookingStopsService->list(isset($data['origin_stop_id']) ? (int) $data['origin_stop_id'] : null);
         // What the date picker needs: today in Manila and how far ahead a date may be chosen.
@@ -77,22 +82,9 @@ class BookingController extends Controller
     // Available trips for a Manila date (default today), optionally for one journey, paginated.
     // The journey is given as readable stop codes (never ids) and is optional so the home preview
     // can list today's buses before anything is chosen. Bad codes or dates answer a friendly 422.
-    public function trips(Request $request, TripAreaService $areas)
+    public function trips(BookingTripsRequest $request, TripAreaService $areas)
     {
-        $data = $request->validate([
-            // Batch 52 item 1: the passenger's town (or province), and the stop ids nearest first as measured on the device.
-            'town' => 'nullable|string|max:100',
-            'province' => 'nullable|string|max:100',
-            'prefer' => ['nullable', 'string', 'max:2000', 'regex:/^\d+(,\d+)*$/'],
-            'from' => 'nullable|string|max:64',
-            'to' => 'nullable|string|max:64',
-            'date' => 'nullable|string|max:10',
-            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
-            // Batch 54 (user): the trips page's bus type filter (Ordinary or Aircon, the classes in config/fares.php).
-            'bus_type' => 'nullable|string|in:'.implode(',', VehicleClass::keys()),
-            'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:'.(int) config('booking.trips_max_per_page'),
-        ]);
+        $data = $request->validated();
 
         $journey = $this->bookingLinkService->resolveJourney($data);
         $area = null;
@@ -115,35 +107,23 @@ class BookingController extends Controller
     }
 
     // Book Later: the departures of one Manila date that fit the journey, to choose from.
-    public function departures(Request $request)
+    public function departures(BookingDeparturesRequest $request)
     {
-        $data = $request->validate([
-            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
-            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
-            'date' => 'required|date_format:Y-m-d',
-            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
-        ]);
+        $data = $request->validated();
 
         return $this->success($this->tripResolverService->departures($data), 'Departures retrieved');
     }
 
-    public function resolve(Request $request)
+    public function resolve(BookingResolveRequest $request)
     {
-        $data = $request->validate([
-            'mode' => 'required|in:now,later',
-            'origin_stop_id' => 'required|integer|exists:stops,stop_id',
-            'destination_stop_id' => 'required|integer|different:origin_stop_id|exists:stops,stop_id',
-            'date' => 'nullable|date_format:Y-m-d|required_if:mode,later',
-            'time' => 'nullable|date_format:H:i|required_if:mode,later',
-            'seat_type' => 'nullable|in:seated', // online booking is for seats; standing is sold on the bus
-        ]);
+        $data = $request->validated();
 
         return $this->success($this->tripResolverService->resolve($data), 'Trip resolved');
     }
 
-    public function addressSearch(Request $request)
+    public function addressSearch(BookingAddressSearchRequest $request)
     {
-        $data = $request->validate(['q' => 'required|string|min:'.(int) config('timeline.address_search.min_query_length').'|max:120']);
+        $data = $request->validated();
 
         $results = $this->addressSearchService->search($data['q']);
         if ($results === null) {

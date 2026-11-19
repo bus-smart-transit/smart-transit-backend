@@ -3,6 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\AddCompanyAdminRequest;
+use App\Http\Requests\AdminAccountsAuditLogRequest;
+use App\Http\Requests\AdminAccountsSetCompanyAdminRequest;
+use App\Http\Requests\AdminAccountsUsersRequest;
+use App\Http\Requests\CompanyNameRequest;
 use App\Services\AdminAuditService;
 use App\Services\AdminCompanyService;
 use App\Services\AdminUserService;
@@ -29,18 +33,18 @@ class AdminAccountsController extends Controller
         return $this->success($this->companies->list(), 'Companies retrieved');
     }
 
-    public function storeCompany(Request $request): JsonResponse
+    public function storeCompany(CompanyNameRequest $request): JsonResponse
     {
-        $validated = $request->validate(['company_name' => ['required', 'string', 'min:2', 'max:120']]);
+        $validated = $request->validated();
         $company = $this->companies->create($validated['company_name']);
         AuditLogger::log('company.create', 'Company', $company['company_id'], ['name' => $company['company_name']]);
 
         return $this->success($company, 'Company added.');
     }
 
-    public function renameCompany(Request $request, int $companyId): JsonResponse
+    public function renameCompany(CompanyNameRequest $request, int $companyId): JsonResponse
     {
-        $validated = $request->validate(['company_name' => ['required', 'string', 'min:2', 'max:120']]);
+        $validated = $request->validated();
         $company = $this->companies->rename($companyId, $validated['company_name']);
         AuditLogger::log('company.rename', 'Company', $companyId, ['from' => $company['old_name'], 'to' => $company['company_name']]);
 
@@ -55,13 +59,9 @@ class AdminAccountsController extends Controller
         return $this->success($made, 'Company Admin added. Give them their username and first password.');
     }
 
-    public function users(Request $request): JsonResponse
+    public function users(AdminAccountsUsersRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'search' => ['sometimes', 'nullable', 'string', 'max:100'],
-            'role' => ['sometimes', 'nullable', 'in:passenger,driver,conductor,operator,admin'],
-            'page' => ['sometimes', 'integer', 'min:1', 'max:10000'],
-        ]);
+        $validated = $request->validated();
 
         return $this->success(
             $this->users->page($validated['search'] ?? null, $validated['role'] ?? null, (int) ($validated['page'] ?? 1), $this->actor($request)),
@@ -85,9 +85,9 @@ class AdminAccountsController extends Controller
         return $this->success($user, 'Account turned on again. They can sign in.');
     }
 
-    public function setCompanyAdmin(Request $request, int $userId): JsonResponse
+    public function setCompanyAdmin(AdminAccountsSetCompanyAdminRequest $request, int $userId): JsonResponse
     {
-        $validated = $request->validate(['is_company_admin' => ['required', 'boolean']]);
+        $validated = $request->validated();
         $user = $this->users->setCompanyAdmin($userId, (bool) $validated['is_company_admin'], $this->actor($request));
         AuditLogger::log($user['is_company_admin'] ? 'company.admin_on' : 'company.admin_off', 'User', $userId);
 
@@ -95,15 +95,9 @@ class AdminAccountsController extends Controller
     }
 
     /** Batch 48 Phase 4: the Audit log page (read only). */
-    public function auditLog(Request $request, AdminAuditService $audit): JsonResponse
+    public function auditLog(AdminAccountsAuditLogRequest $request, AdminAuditService $audit): JsonResponse
     {
-        $validated = $request->validate([
-            'action' => ['sometimes', 'nullable', 'string', 'max:80'],
-            'role' => ['sometimes', 'nullable', 'in:passenger,driver,conductor,operator,admin,system'],
-            'from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
-            'to' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
-            'page' => ['sometimes', 'integer', 'min:1', 'max:10000'],
-        ]);
+        $validated = $request->validated();
 
         return $this->success($audit->page($validated, (int) ($validated['page'] ?? 1)), 'Audit log retrieved');
     }

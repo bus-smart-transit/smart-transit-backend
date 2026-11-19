@@ -1,0 +1,33 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+/**
+ * Phase 4 (2026-11-19): the input rules of `ShiftBlockController::store`, moved out of the controller unchanged.
+ */
+class ShiftBlockStoreRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function rules(): array
+    {
+        return [
+            'fleet_route_id' => ['required', 'integer'],
+            'driver_id' => ['required', 'integer'],
+            'conductor_id' => ['required', 'integer'],
+            'block_type' => ['required', 'string'],
+            'scheduled_date' => ['required', 'date'],
+            'service_type' => ['sometimes', 'in:regular,express'],
+            'leg_departure_times' => ['required', 'array'],
+            'leg_departure_times.*' => ['required', 'date_format:H:i'],
+        ];
+    }
+}

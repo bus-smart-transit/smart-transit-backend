@@ -4,9 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\AssignConductorRequest;
 use App\Http\Requests\AssignDriverRequest;
+use App\Http\Requests\DeclineAssignmentRequest;
+use App\Http\Requests\PageRequest;
 use App\Http\Requests\SaveDispatchDecisionRequest;
 use App\Http\Requests\StoreTripRequest;
+use App\Http\Requests\TripCancelRequest;
+use App\Http\Requests\TripChangeFleetRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
+use App\Http\Requests\WidePageRequest;
 use App\Models\FleetRoute;
 use App\Repositories\TicketRepository;
 use App\Services\AuditLogger;
@@ -49,13 +54,13 @@ class TripController extends Controller
     }
 
     // Operator / Admin: move a trip that has not started onto another bus of the same route (passengers are told)
-    public function changeFleet(Request $request, int $tripId)
+    public function changeFleet(TripChangeFleetRequest $request, int $tripId)
     {
         if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
             return $denied;
         }
 
-        $data = $request->validate(['fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id']);
+        $data = $request->validated();
         $user = $request->user();
         if ($user?->role === 'operator') {
             $fleetId = FleetRoute::where('fleet_route_id', $data['fleet_route_id'])->value('fleet_id');
@@ -190,13 +195,13 @@ class TripController extends Controller
 
     // Operator / Admin (Batch 28 Stage 3, item 6): cancel one trip, before or during it. Every paid, unused ticket becomes
     // "trip cancelled, awaiting choice" and its passenger is told; nothing is refunded automatically.
-    public function cancel(Request $request, int $tripId)
+    public function cancel(TripCancelRequest $request, int $tripId)
     {
         if ($denied = $this->assertOperatorOwnsTrip($request, $tripId)) {
             return $denied;
         }
 
-        $data = $request->validate(['reason' => 'nullable|string|max:255']);
+        $data = $request->validated();
         [$trip, $previousStatus] = $this->tripService->cancelTrip($tripId, $request->user(), $data['reason'] ?? null);
 
         AuditLogger::log('trip.cancel', 'Trip', $tripId, ['from' => $previousStatus, 'reason' => $data['reason'] ?? null, 'role' => $request->user()->role ?? null]);
@@ -207,27 +212,24 @@ class TripController extends Controller
     // Driver/Chauffeur: ask to be released from an assigned trip. The request
     // goes to the Operator as "For Approval" (assignment-level status, D6); the
     // assignment itself only changes when the Operator approves.
-    public function declineAsDriver(Request $request, int $tripId)
+    public function declineAsDriver(DeclineAssignmentRequest $request, int $tripId)
     {
         return $this->requestDecline($request, $tripId, 'driver');
     }
 
-    public function declineAsConductor(Request $request, int $tripId)
+    public function declineAsConductor(DeclineAssignmentRequest $request, int $tripId)
     {
         return $this->requestDecline($request, $tripId, 'conductor');
     }
 
-    private function requestDecline(Request $request, int $tripId, string $role)
+    private function requestDecline(DeclineAssignmentRequest $request, int $tripId, string $role)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $validated = $request->validate([
-            'reason_code' => ['nullable', 'string', 'in:'.implode(',', TripAssignmentRequestService::REASON_CODES)],
-            'reason_text' => ['nullable', 'string', 'max:'.TripAssignmentRequestService::REASON_TEXT_MAX, 'required_if:reason_code,other'],
-        ]);
+        $validated = $request->validated();
 
         $trip = $this->assignmentRequestService->requestDecline(
             $tripId,
@@ -273,17 +275,14 @@ class TripController extends Controller
     }
 
     // Driver: see today's assigned trips
-    public function myTrips(Request $request)
+    public function myTrips(WidePageRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $pagination = $request->validate([
-            'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
-        ]);
+        $pagination = $request->validated();
 
         return $this->paginated(
             $this->tripService->getDriverTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all'), (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 100)),
@@ -292,17 +291,14 @@ class TripController extends Controller
     }
 
     // Conductor: see assigned trips (scheduled/current)
-    public function myConductorTrips(Request $request)
+    public function myConductorTrips(WidePageRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
             return $this->error('Staff profile not found.', 404);
         }
 
-        $pagination = $request->validate([
-            'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:200'],
-        ]);
+        $pagination = $request->validated();
 
         return $this->paginated(
             $this->tripService->getConductorTrips($companyUser->company_user_id, (string) $request->query('status_filter', 'all'), (int) ($pagination['page'] ?? 1), (int) ($pagination['per_page'] ?? 100)),
@@ -311,7 +307,7 @@ class TripController extends Controller
     }
 
     // Operator: see all upcoming trips scheduled under this operator
-    public function operatorTrips(Request $request)
+    public function operatorTrips(PageRequest $request)
     {
         $companyUser = $request->user()?->companyProfile;
         if (! $companyUser) {
@@ -320,10 +316,7 @@ class TripController extends Controller
 
         $statusFilter = $request->query('status_filter');
         $resolvedFilter = $statusFilter !== null ? (string) $statusFilter : 'upcoming';
-        $pagination = $request->validate([
-            'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
-        ]);
+        $pagination = $request->validated();
 
         $page = $this->tripService->getOperatorUpcomingTrips(
             $companyUser->company_user_id,

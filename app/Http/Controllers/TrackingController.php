@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\TrackingByCodeRequest;
 use App\Services\TicketTrackingService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
@@ -24,9 +25,9 @@ class TrackingController extends Controller
      * longer be tracked, get the same answer. The reply is the ticket's tracking link token, which opens the same
      * tracking page (one tracking flow); it shows only that ticket's bus.
      */
-    public function byCode(Request $request)
+    public function byCode(TrackingByCodeRequest $request)
     {
-        $data = $request->validate(['code' => 'required|string|max:20']);
+        $data = $request->validated();
         $missKey = 'tracking-miss:'.$request->ip();
         if (RateLimiter::tooManyAttempts($missKey, (int) config('tracking.miss_limit'))) {
             return $this->error('Too many attempts. Please wait a few minutes.', 429);

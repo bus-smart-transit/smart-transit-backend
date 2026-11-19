@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StaffDirectoryIndexRequest;
 use App\Http\Requests\UpdateCrewMemberRequest;
 use App\Services\AuditLogger;
 use App\Services\StaffDirectoryService;
@@ -19,13 +20,9 @@ class StaffDirectoryController extends Controller
 
     public function __construct(private StaffDirectoryService $directory) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(StaffDirectoryIndexRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'search' => ['sometimes', 'nullable', 'string', 'max:100'],
-            'role' => ['sometimes', 'nullable', 'in:driver,conductor,operator'],
-            'page' => ['sometimes', 'integer', 'min:1', 'max:10000'],
-        ]);
+        $validated = $request->validated();
 
         return $this->success(
             $this->directory->page($this->companyId($request), $validated['search'] ?? null, $validated['role'] ?? null, (int) ($validated['page'] ?? 1), $this->actorId($request)),

@@ -7,6 +7,7 @@ use App\Http\Requests\FareFleetQuoteRequest;
 use App\Http\Requests\FareListRequest;
 use App\Http\Requests\FareQuoteFromCoordinatesRequest;
 use App\Http\Requests\FareQuoteRequest;
+use App\Http\Requests\FareRuleListRulesRequest;
 use App\Http\Requests\StoreFareRuleRequest;
 use App\Http\Requests\UpdateFareRuleRequest;
 use App\Models\FareRule;
@@ -113,18 +114,10 @@ class FareRuleController extends Controller
     }
 
     // Admin and Operator: the fare screen's list. An Operator sees general rules (read only) and the rules of their own fleets.
-    public function listRules(Request $request)
+    public function listRules(FareRuleListRulesRequest $request)
     {
         $user = $request->user();
-        $filters = $request->validate([
-            'vehicle_class' => 'nullable|string|max:32',
-            'service_type' => 'nullable|string|in:'.implode(',', ServiceType::ALL),
-            'seat_type' => 'nullable|string|in:seated,standing',
-            'route_id' => 'nullable|integer',
-            'fleet_id' => 'nullable|integer',
-            'scope' => 'nullable|string|in:general,fleet',
-            'status' => 'nullable|string|in:active,inactive',
-        ]);
+        $filters = $request->validated();
         if (! empty($filters['vehicle_class'])) {
             $filters['vehicle_class'] = VehicleClass::normalize($filters['vehicle_class']) ?? $filters['vehicle_class'];
         }

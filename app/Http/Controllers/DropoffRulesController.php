@@ -2,6 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\DropoffPointRequest;
+use App\Http\Requests\DropoffRulesPointsRequest;
+use App\Http\Requests\OptionalRouteFilterRequest;
+use App\Http\Requests\StoreDropoffRestrictionRequest;
+use App\Http\Requests\UpdateDropoffRestrictionRequest;
 use App\Models\AlightingPoint;
 use App\Models\CustomDropoffRestriction;
 use App\Services\AlightingPointService;
@@ -10,7 +15,6 @@ use App\Services\DropoffRestrictionService;
 use App\Services\OperatorRouteAccess;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 /**
  * Batch 28 Stage 3, item 10: the operator/admin screen's endpoints for designated alighting points and restricted
@@ -30,13 +34,9 @@ class DropoffRulesController extends Controller
 
     // ---------------------------------------------------------------- alighting points
 
-    public function points(Request $request)
+    public function points(DropoffRulesPointsRequest $request)
     {
-        $data = $request->validate([
-            'route_id' => 'nullable|integer',
-            'municipality' => 'nullable|string|max:100',
-            'is_active' => 'nullable|boolean',
-        ]);
+        $data = $request->validated();
         $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
@@ -49,9 +49,9 @@ class DropoffRulesController extends Controller
         return $this->success($rows, 'Drop-off points retrieved successfully');
     }
 
-    public function storePoint(Request $request)
+    public function storePoint(DropoffPointRequest $request)
     {
-        $data = $this->validatePoint($request);
+        $data = $request->validated();
         if ($denied = $this->assertRoute($request, (int) $data['route_id'])) {
             return $denied;
         }
@@ -62,7 +62,7 @@ class DropoffRulesController extends Controller
         return $this->success($this->presentPoint($point->load('route:route_id,route_name')), 'Drop-off point saved', 201);
     }
 
-    public function updatePoint(Request $request, int $id)
+    public function updatePoint(DropoffPointRequest $request, int $id)
     {
         $point = $this->points->find($id);
         if (! $point) {
@@ -72,7 +72,7 @@ class DropoffRulesController extends Controller
             return $denied;
         }
 
-        $point = $this->points->update($point, $this->validatePoint($request));
+        $point = $this->points->update($point, $request->validated());
         AuditLogger::log('dropoff_point.update', 'AlightingPoint', (int) $point->id, ['route_id' => (int) $point->route_id, 'is_active' => (bool) $point->is_active]);
 
         return $this->success($this->presentPoint($point->load('route:route_id,route_name')), 'Drop-off point updated');
@@ -80,9 +80,9 @@ class DropoffRulesController extends Controller
 
     // ---------------------------------------------------------------- restricted areas
 
-    public function restrictions(Request $request)
+    public function restrictions(OptionalRouteFilterRequest $request)
     {
-        $data = $request->validate(['route_id' => 'nullable|integer']);
+        $data = $request->validated();
         $scope = $this->access->scope($request->user());
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);
@@ -100,9 +100,9 @@ class DropoffRulesController extends Controller
         return $this->success($rows, 'Restricted areas retrieved successfully');
     }
 
-    public function storeRestriction(Request $request)
+    public function storeRestriction(StoreDropoffRestrictionRequest $request)
     {
-        $data = $this->validateRestriction($request);
+        $data = $request->validated();
         if ($denied = $this->assertRoute($request, (int) $data['route_id'])) {
             return $denied;
         }
@@ -113,7 +113,7 @@ class DropoffRulesController extends Controller
         return $this->success($this->presentRestriction($row, $this->restrictions->resolve($row)), 'Restricted area saved', 201);
     }
 
-    public function updateRestriction(Request $request, int $id)
+    public function updateRestriction(UpdateDropoffRestrictionRequest $request, int $id)
     {
         $row = $this->restrictions->find($id);
         if (! $row) {
@@ -123,7 +123,7 @@ class DropoffRulesController extends Controller
             return $denied;
         }
 
-        $data = $this->validateRestriction($request, false);
+        $data = $request->validated();
         $data['route_id'] = $row->route_id; // an area never moves to another route
         $data['from_stop_id'] ??= $row->fromRouteStop?->stop_id;
         $data['to_stop_id'] ??= $row->toRouteStop?->stop_id;
@@ -159,36 +159,6 @@ class DropoffRulesController extends Controller
     }
 
     // ----------------------------------------------------------------
-
-    private function validatePoint(Request $request): array
-    {
-        return $request->validate([
-            'route_id' => 'required|integer|exists:routes,route_id',
-            'name' => 'required|string|max:120',
-            'kind' => ['required', 'string', Rule::in(AlightingPoint::KINDS)],
-            'municipality' => 'nullable|string|max:100',
-            'latitude' => 'required|numeric|between:-90,90',
-            'longitude' => 'required|numeric|between:-180,180',
-            'source' => 'nullable|string|max:120',
-            'note' => 'nullable|string|max:1000',
-            'is_active' => 'nullable|boolean',
-        ]);
-    }
-
-    private function validateRestriction(Request $request, bool $creating = true): array
-    {
-        $required = $creating ? 'required' : 'sometimes';
-
-        return $request->validate([
-            'route_id' => ($creating ? 'required' : 'sometimes').'|integer|exists:routes,route_id',
-            'name' => $required.'|string|max:120',
-            'from_stop_id' => $required.'|integer|exists:stops,stop_id',
-            'to_stop_id' => $required.'|integer|exists:stops,stop_id',
-            'note' => 'nullable|string|max:1000',
-            'source' => 'nullable|string|max:120',
-            'is_active' => 'nullable|boolean',
-        ]);
-    }
 
     private function presentPoint(AlightingPoint $p): array
     {
