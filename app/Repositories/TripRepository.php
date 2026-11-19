@@ -785,4 +785,19 @@ class TripRepository
 
         return $updated;
     }
+
+    /**
+     * Batch 81 (user, 2026-11-19): the company's trips of one Manila date that really left (departed_at is set), for the
+     * dashboard's On-time trips. Cancelled trips are not counted.
+     *
+     * @return Collection<int, Trip>
+     */
+    public function findDepartedForCompanyOnDate(int $operatorCompanyUserId, string $date): Collection
+    {
+        return CompanyScope::whereMadeByCompany(Trip::query(), 'company_user_id', $operatorCompanyUserId)
+            ->whereDate('trip_date', $date)
+            ->whereNotNull('departed_at')
+            ->where('status', '!=', 'cancelled')
+            ->get(['trip_id', 'trip_date', 'departure_time', 'departed_at', 'status']);
+    }
 }

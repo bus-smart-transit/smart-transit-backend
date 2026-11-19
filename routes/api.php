@@ -9,6 +9,7 @@ use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
 use App\Http\Controllers\CrewShiftLogController;
+use App\Http\Controllers\DashboardMetricsController;
 use App\Http\Controllers\DiscountTypeController;
 use App\Http\Controllers\DriverShiftController;
 use App\Http\Controllers\DropoffOptionsController;
@@ -274,6 +275,8 @@ Route::prefix('operator')
 
         // Trip scheduling + staff assignment
         Route::get('trips', [TripController::class, 'operatorTrips']);
+        // Batch 81 (user, 2026-11-19): the dashboard's On-time trips, today and the same weekday last week.
+        Route::get('dashboard/on-time', [DashboardMetricsController::class, 'onTime'])->middleware('throttle:60,1,operator-dashboard-on-time');
         Route::post('trips', [TripController::class, 'store']);
         Route::patch('trips/{tripId}/fleet', [TripController::class, 'changeFleet']);
         Route::patch('trips/{tripId}/driver', [TripController::class, 'assignDriver']);
