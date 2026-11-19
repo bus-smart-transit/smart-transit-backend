@@ -15,6 +15,7 @@ use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\PaymentRepository;
 use App\Services\DiscountClaimService;
+use App\Services\PayMongoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -161,6 +162,44 @@ it('lets the Chauffeur approve: the fare becomes the discounted fare and the dif
     expect($claim->fresh()->refund_status)->toBe('succeeded');
     $row = collect(app(PaymentRepository::class)->findPassengerHistoryFromPayments((int) $passenger->passenger_id)->items())->first();
     expect($row['refund_status'])->toBe('partially_refunded')->and((float) $row['refunded_amount'])->toBe(9.0);
+});
+
+// 2026-11-19 (audit): a refund event that arrives before the refund id is stored still settles the claim, because the
+// payment id is saved before PayMongo is asked; and refunds:reconcile settles a claim whose event never came.
+it('settles a discount refund whose event arrives before the refund id is stored', function () {
+    $f = dcFixture();
+    $ticket = dcTicket($this, dcPassenger(), $f);
+    $claim = app(DiscountClaimService::class)->review($ticket, true, dcBoarding($f), dcStaff('conductor'));
+    expect($claim->gateway_payment_id)->toBe('pay_dc_test');
+    $claim->forceFill(['gateway_refund_id' => null])->save(); // the state while PayMongo has not answered yet
+
+    dcWebhook($this, 'payment.refund.updated', ['id' => 'ref_early', 'type' => 'refund', 'attributes' => [
+        'status' => 'succeeded', 'payment_id' => 'pay_dc_test', 'metadata' => ['discount_claim_id' => (string) $claim->id],
+    ]])->assertOk();
+
+    expect($claim->fresh())->refund_status->toBe('succeeded')->gateway_refund_id->toBe('ref_early');
+});
+
+it('asks PayMongo about a discount refund still pending and settles it, and gives up after the limit', function () {
+    $f = dcFixture();
+    $claim = app(DiscountClaimService::class)->review(dcTicket($this, dcPassenger(), $f), true, dcBoarding($f), dcStaff('conductor'));
+    $other = app(DiscountClaimService::class)->review(dcTicket($this, dcPassenger(), $f), true, $f['trip']->fresh(), dcStaff('conductor'));
+    $other->forceFill(['gateway_refund_id' => 'ref_lost'])->save();
+    $payMongo = Mockery::mock(PayMongoService::class)->makePartial();
+    $payMongo->shouldReceive('retrieveRefund')->with('ref_dc_1')->andReturn(['id' => 'ref_dc_1', 'attributes' => ['status' => 'succeeded']]);
+    $payMongo->shouldReceive('retrieveRefund')->with('ref_lost')->andReturn(null);
+    app()->instance(PayMongoService::class, $payMongo);
+
+    Carbon::setTestNow(now()->addMinutes(5));
+    expect(app(DiscountClaimService::class)->reconcilePending())->toBe(['settled' => 0, 'failed' => 0]); // too soon to ask
+
+    Carbon::setTestNow(now()->addMinutes(15));
+    expect(app(DiscountClaimService::class)->reconcilePending())->toBe(['settled' => 1, 'failed' => 0]);
+    expect($claim->fresh()->refund_status)->toBe('succeeded')->and($other->fresh()->refund_status)->toBe('pending');
+
+    Carbon::setTestNow(now()->addHours(73));
+    $this->artisan('refunds:reconcile')->expectsOutputToContain('Discount refunds: settled 0, failed 1')->assertSuccessful();
+    expect($other->fresh())->refund_status->toBe('failed')->failure_reason->toContain('Check it in PayMongo');
 });
 
 it('lets the Chauffeur reject once, and keeps the full fare', function () {

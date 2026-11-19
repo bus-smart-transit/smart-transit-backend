@@ -305,6 +305,9 @@ class DiscountClaimService
             if ($payment->gateway_payment_id !== $payId) {
                 $payment->forceFill(['gateway_payment_id' => $payId])->save();
             }
+            // 2026-11-19 (audit): saved BEFORE asking for the refund. A refund event can arrive before the answer below
+            // is stored; handleGatewayRefund() then finds this claim by its metadata only if the payment id is known.
+            $claim->update(['gateway_payment_id' => $payId]);
             $refund = $payMongo->createRefund(
                 $payId,
                 (int) round((float) $claim->refund_amount * 100),
@@ -360,5 +363,46 @@ class DiscountClaimService
                 'description' => 'Discount approved: points on the refunded part',
             ]);
         }
+    }
+
+    /**
+     * 2026-11-19 (audit): the same safety net as trip refunds (TicketResolutionService::reconcilePending): asks PayMongo
+     * about discount refunds still pending some minutes after approval, settles them by the same rules as the event, and
+     * marks very old ones failed so the bus company can check them in PayMongo.
+     *
+     * @return array{settled: int, failed: int}
+     */
+    public function reconcilePending(): array
+    {
+        $now = Carbon::now('UTC');
+        $after = $now->copy()->subMinutes(max(0, (int) config('refunds.reconcile.after_minutes', 10)));
+        $giveUp = $now->copy()->subHours(max(1, (int) config('refunds.reconcile.give_up_hours', 72)));
+        $settled = 0;
+        $failed = 0;
+
+        foreach ($this->claims->pendingGatewayRefunds($after) as $claim) {
+            $refund = app(PayMongoService::class)->retrieveRefund((string) $claim->gateway_refund_id);
+            $status = strtolower((string) ($refund['attributes']['status'] ?? ''));
+            if ($refund && in_array($status, ['succeeded', 'failed'], true) && ($refund['id'] ?? null) === $claim->gateway_refund_id) {
+                $this->handleGatewayRefund($refund);
+                $settled++;
+
+                continue;
+            }
+            if ($claim->reviewed_at && $claim->reviewed_at->lte($giveUp)) {
+                $reason = 'The payment provider has not finished this refund after '.(int) config('refunds.reconcile.give_up_hours', 72).' hours. Check it in PayMongo.';
+                DB::transaction(function () use ($claim, $reason, &$failed) {
+                    $locked = $this->claims->findForUpdate((int) $claim->id);
+                    if ($locked->refund_status !== DiscountClaim::REFUND_PENDING) {
+                        return;
+                    }
+                    $locked->update(['refund_status' => DiscountClaim::REFUND_FAILED, 'failure_reason' => $reason]);
+                    AuditLogger::log('discount_claim.refund_failed', 'Ticket', (int) $locked->ticket_id, ['claim_id' => $locked->id, 'source' => 'reconcile_timeout']);
+                    $failed++;
+                });
+            }
+        }
+
+        return ['settled' => $settled, 'failed' => $failed];
     }
 }

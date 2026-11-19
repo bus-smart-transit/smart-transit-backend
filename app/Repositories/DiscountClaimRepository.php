@@ -105,4 +105,19 @@ class DiscountClaimRepository
 
         return $query->get();
     }
+
+    /**
+     * 2026-11-19 (audit): approved claims whose refund was sent to PayMongo but not settled, approved at or before
+     * $approvedBefore (refunds:reconcile asks PayMongo about them).
+     *
+     * @return Collection<int, DiscountClaim>
+     */
+    public function pendingGatewayRefunds(Carbon $approvedBefore): Collection
+    {
+        return DiscountClaim::where('refund_status', DiscountClaim::REFUND_PENDING)
+            ->whereNotNull('gateway_refund_id')
+            ->where('reviewed_at', '<=', $approvedBefore->copy()->utc()->format('Y-m-d H:i:s'))
+            ->orderBy('id')
+            ->get();
+    }
 }

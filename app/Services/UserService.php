@@ -85,7 +85,7 @@ class UserService
         Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(self::loginCodeMinutes()));
 
         $name = $user->username ?? explode('@', $user->email)[0];
-        $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
+        $recipientEmail = config('mail.intercept_email') ?: $user->email; // config(), not env(): env() is empty once the settings are cached
 
         try {
             Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email, $verify));
@@ -259,7 +259,7 @@ class UserService
             Cache::put($cacheKey, Hash::make($otp), now()->addMinutes(self::loginCodeMinutes()));
 
             $name = $user->username ?? explode('@', $user->email)[0];
-            $recipientEmail = env('MAIL_INTERCEPT_EMAIL') ?: $user->email;
+            $recipientEmail = config('mail.intercept_email') ?: $user->email; // config(), not env(): env() is empty once the settings are cached
 
             try {
                 Mail::to($recipientEmail)->send(new PassengerOtpMail($otp, $name, $user->email));
