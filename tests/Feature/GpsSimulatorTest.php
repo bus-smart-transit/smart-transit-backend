@@ -13,6 +13,7 @@ use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Services\FleetLocationService;
 use App\Services\GpsSimulationService;
+use App\Services\RouteSnapService;
 use App\Services\TripProgressService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -152,6 +153,29 @@ it('pauses, jumps to a stop, resumes and stops when told, and each is audit-logg
     $this->patchJson("/api/admin/gps-simulations/{$id}", ['action' => 'pause'])->assertStatus(422);
 
     expect(DB::table('audit_logs')->whereIn('action', ['gps_simulation.pause', 'gps_simulation.jump', 'gps_simulation.resume', 'gps_simulation.stop'])->count())->toBe(4);
+});
+
+// 2026-11-19 (user): "Go off route" puts the bus to the side of its route line (past the on-route limit), it stays off
+// route while it moves, and "Back on route" returns it to the line. Both are audit-logged.
+it('takes the bus off its route and back on, and the off-route position keeps moving with it', function () {
+    $f = gsTrip();
+    $id = gsStart($this, $f)->assertCreated()->json('data.id');
+    $position = fn () => app(FleetLocationRepository::class)->getCurrentForTrip($f['fleet']->fleet_id, $f['trip']->trip_id, includeSimulated: true);
+
+    $this->patchJson("/api/admin/gps-simulations/{$id}", ['action' => 'deviate'])->assertOk()->assertJsonPath('data.off_route', true);
+    // The line runs north along longitude 125.0, so the right-hand side is east: 300 m is about 0.0027 degrees here.
+    expect($position()['longitude'])->toEqualWithDelta(125.0027, 0.0003);
+    $snap = app(RouteSnapService::class)->snap((int) $f['trip']->fleetRoute->route_id, (float) $position()['latitude'], (float) $position()['longitude']);
+    expect($snap['on_route'])->toBeFalse();
+
+    Carbon::setTestNow(now()->addSeconds(3));
+    gsTick(GpsSimulation::findOrFail($id));
+    expect($position()['longitude'])->toEqualWithDelta(125.0027, 0.0003)
+        ->and($position()['latitude'])->toBeGreaterThan(7.0);
+
+    $this->patchJson("/api/admin/gps-simulations/{$id}", ['action' => 'rejoin'])->assertOk()->assertJsonPath('data.off_route', false);
+    expect($position()['longitude'])->toEqualWithDelta(125.0, 0.00001);
+    expect(DB::table('audit_logs')->whereIn('action', ['gps_simulation.deviate', 'gps_simulation.rejoin'])->count())->toBe(2);
 });
 
 it('sets the Driver phone aside while it has control, and lets it back after a stop', function () {

@@ -133,6 +133,9 @@ class GpsSimulationService
                 'stop' => $simulation->fill(['status' => GpsSimulation::STOPPED, 'stopped_at' => now(), 'stop_reason' => 'stopped']),
                 'jump' => $simulation->along_m = $this->stopAlong($simulation->trip, (int) $stopId),
                 'speed' => $simulation->speed = $this->assertSpeed((int) $speed),
+                // 2026-11-19 (user): take the bus off its route, or put it back on the line.
+                'deviate' => $simulation->off_route = true,
+                'rejoin' => $simulation->off_route = false,
                 default => throw ValidationException::withMessages(['action' => ['Unknown action.']]),
             };
             $simulation->save();
@@ -140,7 +143,7 @@ class GpsSimulationService
             return $simulation;
         });
 
-        if ($action === 'jump') {
+        if (in_array($action, ['jump', 'deviate', 'rejoin'], true)) {
             $line = $this->line($simulation->trip);
             if ($line !== null) {
                 $this->writePoint($simulation, $line);
@@ -206,7 +209,7 @@ class GpsSimulationService
     {
         $trip = $simulation->trip;
         $line = $trip ? $this->line($trip) : null;
-        $point = $line ? $this->pointAt($line, $simulation->along_m) : null;
+        $point = $line ? $this->positionFor($simulation, $line) : null;
 
         return [
             'id' => (int) $simulation->id,
@@ -217,6 +220,7 @@ class GpsSimulationService
             'bus_label' => BusLabel::for($trip?->fleetRoute?->fleet),
             'status' => $simulation->status,
             'speed' => (int) $simulation->speed,
+            'off_route' => (bool) $simulation->off_route,
             'progress_percent' => $line ? (int) round($simulation->along_m / max(1.0, GeoLine::lengthM($line)) * 100) : null,
             'position' => $point ? ['latitude' => $point['lat'], 'longitude' => $point['lng']] : null,
             'stops' => $trip ? $this->routeStops->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound')
@@ -326,7 +330,7 @@ class GpsSimulationService
 
     private function writePoint(GpsSimulation $simulation, array $line): void
     {
-        $point = $this->pointAt($line, $simulation->along_m);
+        $point = $this->positionFor($simulation, $line);
         if ($point === null) {
             return;
         }
@@ -340,6 +344,26 @@ class GpsSimulationService
             'accuracy' => 5.0,
             'is_simulated' => true,
         ]);
+    }
+
+    /**
+     * The point the bus reports: on the route line, or (off route) the same point moved sideways, to the right of the
+     * direction of travel, by route_geometry.gps.simulator_off_route_m.
+     *
+     * @return array{lat: float, lng: float, heading: float|null}|null
+     */
+    private function positionFor(GpsSimulation $simulation, array $line): ?array
+    {
+        $point = $this->pointAt($line, $simulation->along_m);
+        if ($point === null || ! $simulation->off_route) {
+            return $point;
+        }
+        $metres = (float) config('route_geometry.gps.simulator_off_route_m', 300);
+        $bearing = deg2rad(fmod(($point['heading'] ?? 0.0) + 90.0, 360.0));
+        $lat = $point['lat'] + ($metres * cos($bearing)) / 111320.0;
+        $lng = $point['lng'] + ($metres * sin($bearing)) / (111320.0 * max(0.01, cos(deg2rad($point['lat']))));
+
+        return ['lat' => $lat, 'lng' => $lng, 'heading' => $point['heading']];
     }
 
     /** @return array{lat: float, lng: float, heading: float|null}|null */

@@ -56,5 +56,7 @@ return [
         'simulator_base_kmh' => (float) env('GPS_SIMULATOR_BASE_KMH', 30),
         'simulator_max_minutes' => (int) env('GPS_SIMULATOR_MAX_MINUTES', 30),
         'simulator_speeds' => [1, 5, 10],
+        // 2026-11-19: how far to the side of the route line "Go off route" puts the bus (well past on_route_threshold_m).
+        'simulator_off_route_m' => (float) env('GPS_SIMULATOR_OFF_ROUTE_M', 300),
     ],
 ];
