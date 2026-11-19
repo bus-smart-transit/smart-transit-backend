@@ -133,15 +133,20 @@ class GpsSimulationService
                 'stop' => $simulation->fill(['status' => GpsSimulation::STOPPED, 'stopped_at' => now(), 'stop_reason' => 'stopped']),
                 'jump' => $simulation->along_m = $this->stopAlong($simulation->trip, (int) $stopId),
                 'speed' => $simulation->speed = $this->assertSpeed((int) $speed),
-                // 2026-11-19 (user): take the bus off its route, or put it back on the line.
-                'deviate' => $simulation->off_route = true,
-                'rejoin' => $simulation->off_route = false,
+                // 2026-11-19 (user): take the bus off its route, or put it back on the line (kept in the cache, below).
+                'deviate', 'rejoin' => null,
                 default => throw ValidationException::withMessages(['action' => ['Unknown action.']]),
             };
             $simulation->save();
 
             return $simulation;
         });
+
+        if ($action === 'deviate') {
+            Cache::put(self::offRouteKey((int) $simulation->id), true, now()->addMinutes((int) config('route_geometry.gps.simulator_max_minutes') + 5));
+        } elseif (in_array($action, ['rejoin', 'stop'], true)) {
+            Cache::forget(self::offRouteKey((int) $simulation->id));
+        }
 
         if (in_array($action, ['jump', 'deviate', 'rejoin'], true)) {
             $line = $this->line($simulation->trip);
@@ -220,7 +225,7 @@ class GpsSimulationService
             'bus_label' => BusLabel::for($trip?->fleetRoute?->fleet),
             'status' => $simulation->status,
             'speed' => (int) $simulation->speed,
-            'off_route' => (bool) $simulation->off_route,
+            'off_route' => self::isOffRoute($simulation),
             'progress_percent' => $line ? (int) round($simulation->along_m / max(1.0, GeoLine::lengthM($line)) * 100) : null,
             'position' => $point ? ['latitude' => $point['lat'], 'longitude' => $point['lng']] : null,
             'stops' => $trip ? $this->routeStops->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound')
@@ -247,6 +252,7 @@ class GpsSimulationService
     private function finish(GpsSimulation $simulation, string $reason): void
     {
         $simulation->fill(['status' => GpsSimulation::STOPPED, 'stopped_at' => now(), 'stop_reason' => $reason])->save();
+        Cache::forget(self::offRouteKey((int) $simulation->id));
         AuditLogger::log('gps_simulation.auto_stop', 'Trip', (int) $simulation->trip_id, ['simulation_id' => $simulation->id, 'reason' => $reason]);
     }
 
@@ -261,6 +267,20 @@ class GpsSimulationService
     private static function chainKey(int $simulationId): string
     {
         return 'gps-simulation-chain:'.$simulationId;
+    }
+
+    /**
+     * 2026-11-19 (user): "Go off route" is remembered in the cache next to the tick chain, not in a column: a simulation
+     * lives at most simulator_max_minutes, and losing the flag only puts the bus back on its line.
+     */
+    private static function offRouteKey(int $simulationId): string
+    {
+        return 'gps-simulation-off-route:'.$simulationId;
+    }
+
+    private static function isOffRoute(GpsSimulation $simulation): bool
+    {
+        return $simulation->status !== GpsSimulation::STOPPED && (bool) Cache::get(self::offRouteKey((int) $simulation->id), false);
     }
 
     /** @throws ValidationException */
@@ -355,7 +375,7 @@ class GpsSimulationService
     private function positionFor(GpsSimulation $simulation, array $line): ?array
     {
         $point = $this->pointAt($line, $simulation->along_m);
-        if ($point === null || ! $simulation->off_route) {
+        if ($point === null || ! self::isOffRoute($simulation)) {
             return $point;
         }
         $metres = (float) config('route_geometry.gps.simulator_off_route_m', 300);

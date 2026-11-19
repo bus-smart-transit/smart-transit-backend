@@ -30,7 +30,7 @@ class GpsSimulation extends Model
     public const STOPPED = 'stopped';
 
     protected $fillable = [
-        'trip_id', 'fleet_id', 'started_by_user_id', 'speed', 'status', 'along_m', 'off_route', 'last_tick_at', 'expires_at', 'stopped_at', 'stop_reason',
+        'trip_id', 'fleet_id', 'started_by_user_id', 'speed', 'status', 'along_m', 'last_tick_at', 'expires_at', 'stopped_at', 'stop_reason',
     ];
 
     protected function casts(): array
@@ -38,7 +38,6 @@ class GpsSimulation extends Model
         return [
             'speed' => 'integer',
             'along_m' => 'float',
-            'off_route' => 'boolean',
             'last_tick_at' => 'datetime',
             'expires_at' => 'datetime',
             'stopped_at' => 'datetime',
