@@ -12,7 +12,6 @@ use App\Http\Requests\TripCancelRequest;
 use App\Http\Requests\TripChangeFleetRequest;
 use App\Http\Requests\UpdateTripStatusRequest;
 use App\Http\Requests\WidePageRequest;
-use App\Models\FleetRoute;
 use App\Repositories\TicketRepository;
 use App\Services\AuditLogger;
 use App\Services\DriverNavigationService;
@@ -63,8 +62,7 @@ class TripController extends Controller
         $data = $request->validated();
         $user = $request->user();
         if ($user?->role === 'operator') {
-            $fleetId = FleetRoute::where('fleet_route_id', $data['fleet_route_id'])->value('fleet_id');
-            if (! $fleetId || ! app(FleetService::class)->isOwnedByOperator((int) $fleetId, (int) $user->companyProfile?->company_user_id)) {
+            if (! app(FleetService::class)->fleetRouteIsOwnedByOperator((int) $data['fleet_route_id'], (int) $user->companyProfile?->company_user_id)) {
                 return $this->error('You do not have permission to use that bus.', 403);
             }
         }

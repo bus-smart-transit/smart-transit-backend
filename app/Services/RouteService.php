@@ -363,4 +363,10 @@ class RouteService
 
         return $earthRadiusKm * $c;
     }
+
+    /** Phase 4 (2026-11-19): a route's custom drop-off settings, as stored. */
+    public function customDropoffSettings(int $routeId): ?Route
+    {
+        return $this->routeRepository->customDropoffSettings($routeId);
+    }
 }

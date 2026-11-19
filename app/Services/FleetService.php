@@ -168,4 +168,20 @@ class FleetService
             ['fleet_id' => $fleetId, 'status' => 'active']
         ));
     }
+
+    /**
+     * Phase 4 (2026-11-19): the ids of every bus of the Operator's company.
+     *
+     * @return array<int, int>
+     */
+    public function fleetIdsOfCompany(int $companyUserId): array
+    {
+        return $this->fleetRepository->idsOfCompany($companyUserId);
+    }
+
+    /** Phase 4 (2026-11-19): does this fleet route run on a bus of the Operator's company? */
+    public function fleetRouteIsOwnedByOperator(int $fleetRouteId, int $companyUserId): bool
+    {
+        return $this->fleetRepository->fleetRouteIsOwnedByOperator($fleetRouteId, $companyUserId);
+    }
 }

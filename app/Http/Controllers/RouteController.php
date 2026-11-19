@@ -153,7 +153,7 @@ class RouteController extends Controller
         $updated = $mode !== null
             ? $this->routeService->setCustomDropoffMode($routeId, (string) $mode)
             : $this->routeService->setAllowCustomDropoff($routeId, (bool) $request->validated('allow_custom_dropoff'));
-        $route = $updated ? Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']) : null;
+        $route = $updated ? $this->routeService->customDropoffSettings($routeId) : null;
 
         return $route
             ? $this->success(['allow_custom_dropoff' => (bool) $route->allow_custom_dropoff, 'custom_dropoff_mode' => $route->custom_dropoff_mode], 'Custom drop-off setting updated')

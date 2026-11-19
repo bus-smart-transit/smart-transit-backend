@@ -12,7 +12,6 @@ use App\Models\TicketResolution;
 use App\Services\AuditLogger;
 use App\Services\TicketResolutionService;
 use App\Services\TicketService;
-use App\Services\TripCancellationService;
 use App\Support\CompanyScope;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -71,14 +70,8 @@ class TicketResolutionController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
 
-        $tickets = Ticket::with(['trip.fleetRoute.route', 'passenger.user', 'payment'])
-            ->whereIn('status', [TripCancellationService::AWAITING_CHOICE, TicketResolutionService::PENDING, TicketResolutionService::REVIEW])
-            ->when($companyUserId !== null, fn ($q) => $q->whereHas('trip', fn ($t) => CompanyScope::whereMadeByCompany($t, 'trips.company_user_id', $companyUserId)))
-            ->orderByDesc('ticket_id')
-            ->limit(200)
-            ->get();
-
-        $resolutions = TicketResolution::whereIn('ticket_id', $tickets->pluck('ticket_id'))->get()->keyBy('ticket_id');
+        $tickets = $this->resolutions->queueTickets($companyUserId);
+        $resolutions = $this->resolutions->resolutionsForTickets($tickets->pluck('ticket_id')->all());
 
         return $this->success($tickets->map(function (Ticket $ticket) use ($resolutions) {
             $resolution = $resolutions->get($ticket->ticket_id);
@@ -204,7 +197,7 @@ class TicketResolutionController extends Controller
 
     private function staffResolution(Request $request, int $resolutionId): TicketResolution|JsonResponse
     {
-        $resolution = TicketResolution::with('ticket.trip')->find($resolutionId);
+        $resolution = $this->resolutions->findForStaff($resolutionId);
         $scope = $this->operatorScope($request);
         if ($scope === false) {
             return $this->error('Staff profile not found.', 404);

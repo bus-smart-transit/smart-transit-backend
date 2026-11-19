@@ -3,7 +3,9 @@
 namespace App\Repositories;
 
 use App\Models\Ticket;
+use App\Support\CompanyScope;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -475,6 +477,23 @@ class TicketRepository
             ->orderByRaw("CASE WHEN status = 'boarded' THEN 0 ELSE 1 END")
             ->orderByDesc('boarded_at')
             ->orderByDesc('created_at')
+            ->get();
+    }
+
+    /**
+     * Phase 4 (2026-11-19): the tickets waiting in the Operator's refund queue (moved from
+     * TicketResolutionController::queue): newest first, at most $limit, only the company's trips when one is given.
+     *
+     * @param  array<int, string>  $statuses
+     * @return EloquentCollection<int, Ticket>
+     */
+    public function awaitingResolution(array $statuses, ?int $companyUserId, int $limit = 200): EloquentCollection
+    {
+        return Ticket::with(['trip.fleetRoute.route', 'passenger.user', 'payment'])
+            ->whereIn('status', $statuses)
+            ->when($companyUserId !== null, fn ($q) => $q->whereHas('trip', fn ($t) => CompanyScope::whereMadeByCompany($t, 'trips.company_user_id', $companyUserId)))
+            ->orderByDesc('ticket_id')
+            ->limit($limit)
             ->get();
     }
 }

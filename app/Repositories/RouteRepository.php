@@ -75,4 +75,10 @@ class RouteRepository
             },
         ])->get();
     }
+
+    /** Phase 4 (2026-11-19): a route's custom drop-off settings only (moved from RouteController::updateCustomDropoff). */
+    public function customDropoffSettings(int $routeId): ?Route
+    {
+        return Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']);
+    }
 }

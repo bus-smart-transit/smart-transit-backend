@@ -232,6 +232,6 @@ class FleetPairingController extends Controller
     {
         $anchorId = $this->legs->pairingScopeTripId((int) $trip->trip_id);
 
-        return $anchorId === (int) $trip->trip_id && $trip instanceof Trip ? $trip : Trip::find($anchorId);
+        return $anchorId === (int) $trip->trip_id && $trip instanceof Trip ? $trip : $this->tripService->getTrip($anchorId);
     }
 }

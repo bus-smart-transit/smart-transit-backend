@@ -10,9 +10,11 @@ use App\Models\Trip;
 use App\Models\TripCancellation;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
+use App\Repositories\TicketResolutionRepository;
 use App\Support\CompanyScope;
 use App\Support\LegDistance;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -61,6 +63,7 @@ class TicketResolutionService
         private RouteStopRepository $routeStops,
         private FcmService $fcm,
         private ShiftCashService $shiftCash,
+        private TicketResolutionRepository $resolutionRows,
     ) {}
 
     /** What the passenger (or the staff member acting for them) sees for one ticket. @return array<string, mixed> */
@@ -901,5 +904,33 @@ class TicketResolutionService
         if ($user) {
             $this->fcm->sendToUser($user, $title, $body, $data);
         }
+    }
+
+    /**
+     * Phase 4 (2026-11-19): the tickets in the Operator's refund queue (awaiting a choice, refund pending or in review),
+     * newest first, at most 200; only the company's trips when $companyUserId is given (null = every company, Admin).
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int, Ticket>
+     */
+    public function queueTickets(?int $companyUserId): \Illuminate\Database\Eloquent\Collection
+    {
+        return $this->tickets->awaitingResolution([TripCancellationService::AWAITING_CHOICE, self::PENDING, self::REVIEW], $companyUserId);
+    }
+
+    /**
+     * Phase 4 (2026-11-19): the resolutions of these tickets, keyed by ticket id.
+     *
+     * @param  array<int, int>  $ticketIds
+     * @return Collection<int, TicketResolution>
+     */
+    public function resolutionsForTickets(array $ticketIds): Collection
+    {
+        return $this->resolutionRows->forTicketIds($ticketIds);
+    }
+
+    /** Phase 4 (2026-11-19): one resolution with its ticket and trip, for the Operator's company check. */
+    public function findForStaff(int $resolutionId): ?TicketResolution
+    {
+        return $this->resolutionRows->findWithTicketTrip($resolutionId);
     }
 }

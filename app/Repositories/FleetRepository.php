@@ -53,4 +53,14 @@ class FleetRepository
             $companyUserId,
         )->exists();
     }
+
+    /**
+     * Phase 4 (2026-11-19): the ids of every bus of the Operator's company (moved from FareRuleController::listRules).
+     *
+     * @return array<int, int>
+     */
+    public function idsOfCompany(int $companyUserId): array
+    {
+        return CompanyScope::whereFleetOfCompany(Fleet::query(), $companyUserId)->pluck('fleet_id')->all();
+    }
 }
