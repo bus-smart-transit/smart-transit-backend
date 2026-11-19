@@ -495,3 +495,26 @@ it('gives each day its booking fees kept, net of fees given back (Batch 48 Phase
     $daily = fnGet($this, $w['operator'], '', ['from' => '2026-10-04', 'to' => '2026-10-05'])->assertSuccessful()->json('data.daily');
     expect(collect($daily)->mapWithKeys(fn ($d) => [$d['date'] => $d['booking_fees']])->all())->toEqual(['2026-10-04' => 10, '2026-10-05' => 0]);
 });
+
+// Batch 81 (user, 2026-11-19): Finance > Discounts lists the online discount claims on the company's trips in the range.
+it('lists the online discount claims on the company trips in the range, with counts and the money given back', function () {
+    $world = fnWorld('Claims Route', 'FN-CLM1');
+    $sale = fnSale($world, [152.0, 152.0, 152.0], '2026-10-05 07:00:00');
+    $claim = fn (int $ticketId, string $status, ?float $refund = null, ?string $refundStatus = null) => DB::table('discount_claims')->insert([
+        'ticket_id' => $ticketId, 'discount_type_key' => 'student', 'discount_label' => 'Student', 'discount_rate' => 0.2, 'status' => $status,
+        'fare' => 152, 'refund_amount' => $refund, 'refund_status' => $refundStatus, 'reviewed_at' => $status === 'claimed' ? null : '2026-10-05 00:30:00',
+        'created_at' => '2026-10-04 23:00:00', 'updated_at' => '2026-10-04 23:00:00',
+    ]);
+    $claim($sale['ticket_ids'][0], 'approved', 30.0, 'succeeded');
+    $claim($sale['ticket_ids'][1], 'rejected');
+    $claim($sale['ticket_ids'][2], 'approved', 30.0, 'pending');
+    $other = fnWorld('Other Co Route', 'FN-CLM2');
+    $claim(fnSale($other, [100.0], '2026-10-05 07:00:00')['ticket_ids'][0], 'approved', 20.0, 'succeeded');
+
+    $data = fnGet($this, $world['operator'], '/discount-claims', ['from' => '2026-10-05', 'to' => '2026-10-05'])->assertOk()->json('data');
+
+    expect($data['totals'])->toMatchArray(['claims' => 3, 'approved' => 2, 'rejected' => 1, 'claimed' => 0, 'refunded' => 30.0, 'refund_pending' => 30.0])
+        ->and($data['rows'][0])->toMatchArray(['label' => 'Student', 'status' => 'approved', 'refund_status' => 'pending', 'route_name' => 'Claims Route', 'departure_time' => '8:00 AM', 'reviewed_at' => '2026-10-05 08:30'])
+        ->and(collect($data['rows'])->pluck('route_name')->unique()->all())->toBe(['Claims Route']);
+    expect(fnGet($this, $world['operator'], '/discount-claims', ['from' => '2026-10-06', 'to' => '2026-10-06'])->json('data.totals.claims'))->toBe(0);
+});

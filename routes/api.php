@@ -345,6 +345,7 @@ Route::prefix('operator')
         // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
         Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1,fin-summary');
         Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1,fin-log');
+        Route::get('financials/discount-claims', [FinancialController::class, 'discountClaims'])->middleware('throttle:60,1,fin-claims');
         Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1,fin-export');
 
         // Batch 29, cash step 3: the remittance batch of each ended Conductor shift; the Operator confirms it. Operator only.
@@ -549,6 +550,7 @@ Route::prefix('admin')
         // their own fleets inside the query; an Admin sees all. Rate limited; the export is the strictest.
         Route::get('financials', [FinancialController::class, 'summary'])->middleware('throttle:30,1,fin-summary');
         Route::get('financials/transactions', [FinancialController::class, 'transactions'])->middleware('throttle:60,1,fin-log');
+        Route::get('financials/discount-claims', [FinancialController::class, 'discountClaims'])->middleware('throttle:60,1,fin-claims');
         Route::get('financials/export', [FinancialController::class, 'export'])->middleware('throttle:10,1,fin-export');
 
         // Stored scheduled reports (nightly generated)

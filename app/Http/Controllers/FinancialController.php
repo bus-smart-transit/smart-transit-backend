@@ -62,6 +62,14 @@ class FinancialController extends Controller
         ]);
     }
 
+    /** Batch 81 (user, 2026-11-19): GET /financials/discount-claims, the online discount claims on trips in the range. */
+    public function discountClaims(FinancialFilterRequest $request)
+    {
+        [$owner, $filters] = $this->scope($request);
+
+        return $this->success($this->reports->discountClaims($owner, $filters), 'Discount claims retrieved successfully');
+    }
+
     /** @return array{0: ?int, 1: array<string, mixed>} the owner's company_user_id (null = Admin, everything) and the normalised filters */
     private function scope(FinancialFilterRequest $request): array
     {

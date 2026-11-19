@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Repositories\DiscountClaimRepository;
 use App\Support\BusLabel;
 use App\Support\ClockTime;
 use App\Support\CompanyScope;
@@ -9,6 +10,7 @@ use App\Support\FinancialClock;
 use App\Support\RefundStatus;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -683,6 +685,51 @@ class FinancialReportService
             'discount_rate' => $r['discount_rate'],
             'original_amount' => $r['original_cents'] !== null ? $this->money($r['original_cents']) : null,
             'discount_amount' => $this->money($r['discount_cents']),
+        ];
+    }
+
+    // ------------------------------------------------------------------ discount claims
+
+    /**
+     * Batch 81 (user, 2026-11-19): Finance > Discounts. The online discount claims (Batch 75) on trips in the range: who
+     * claimed what, what the Chauffeur decided and the refund of the difference; with counts per outcome and the money
+     * given back. Onsite discounts (already in the fare) are the report's `discounts` part.
+     *
+     * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>}
+     */
+    public function discountClaims(?int $ownerCompanyUserId, array $filters): array
+    {
+        $claims = app(DiscountClaimRepository::class)->forCompanyBetween($ownerCompanyUserId, $filters['from'], $filters['to']);
+        $rows = $claims->map(fn ($c) => [
+            'id' => (int) $c->id,
+            'ticket_id' => (int) $c->ticket_id,
+            'ticket_code' => strtoupper(substr((string) $c->ticket_uuid, 0, 8)),
+            'trip_id' => (int) $c->trip_id,
+            'trip_date' => substr((string) $c->trip_date, 0, 10),
+            'departure_time' => ClockTime::label(substr((string) $c->departure_time, 0, 5)),
+            'route_name' => $c->route_name,
+            'label' => $c->discount_label,
+            'rate' => (float) $c->discount_rate,
+            'status' => (string) $c->status,
+            'fare' => (float) $c->fare,
+            'refund_amount' => $c->refund_amount !== null ? (float) $c->refund_amount : null,
+            'refund_status' => $c->refund_status,
+            'reviewed_at' => $c->reviewed_at ? Carbon::parse($c->reviewed_at, 'UTC')->setTimezone('Asia/Manila')->format('Y-m-d H:i') : null,
+        ])->values()->all();
+
+        $count = fn (string $status) => $claims->where('status', $status)->count();
+
+        return [
+            'rows' => $rows,
+            'totals' => [
+                'claims' => $claims->count(),
+                'claimed' => $count('claimed'),
+                'approved' => $count('approved'),
+                'rejected' => $count('rejected'),
+                'lapsed' => $count('lapsed'),
+                'refunded' => round((float) $claims->where('refund_status', 'succeeded')->sum('refund_amount'), 2),
+                'refund_pending' => round((float) $claims->where('status', 'approved')->whereIn('refund_status', ['pending', 'failed'])->sum('refund_amount'), 2),
+            ],
         ];
     }
 }

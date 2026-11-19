@@ -3,8 +3,10 @@
 namespace App\Repositories;
 
 use App\Models\DiscountClaim;
+use App\Support\CompanyScope;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /** Batch 75: every query about discounts claimed online. */
 class DiscountClaimRepository
@@ -72,5 +74,35 @@ class DiscountClaimRepository
             ->whereNotNull('not_before')
             ->where('not_before', '<=', Carbon::now('UTC')->format('Y-m-d H:i:s'))
             ->get();
+    }
+
+    /**
+     * Batch 81 (user, 2026-11-19): the Finance > Discounts list. Online discount claims on the company's trips dated in
+     * the range (every company for the Admin, owner null), newest first, with the trip and route they belong to.
+     *
+     * @return Collection<int, object>
+     */
+    public function forCompanyBetween(?int $operatorCompanyUserId, string $from, string $to, int $limit = 500): Collection
+    {
+        $query = DB::table('discount_claims')
+            ->join('tickets', 'tickets.ticket_id', '=', 'discount_claims.ticket_id')
+            ->join('trips', 'trips.trip_id', '=', 'tickets.trip_id')
+            ->leftJoin('fleets_routes', 'fleets_routes.fleet_route_id', '=', 'trips.fleet_route_id')
+            ->leftJoin('routes', 'routes.route_id', '=', 'fleets_routes.route_id')
+            ->whereDate('trips.trip_date', '>=', $from)
+            ->whereDate('trips.trip_date', '<=', $to)
+            ->select([
+                'discount_claims.id', 'discount_claims.ticket_id', 'discount_claims.discount_label', 'discount_claims.discount_rate',
+                'discount_claims.status', 'discount_claims.fare', 'discount_claims.refund_amount', 'discount_claims.refund_status',
+                'discount_claims.reviewed_at', 'discount_claims.created_at', 'tickets.ticket_uuid', 'trips.trip_id', 'trips.trip_date',
+                'trips.departure_time', 'routes.route_name',
+            ])
+            ->orderByDesc('discount_claims.id')
+            ->limit($limit);
+        if ($operatorCompanyUserId !== null) {
+            CompanyScope::whereMadeByCompany($query, 'trips.company_user_id', $operatorCompanyUserId);
+        }
+
+        return $query->get();
     }
 }
