@@ -260,6 +260,9 @@ Route::prefix('operator')
         Route::put('stops/{stopId}', [StopController::class, 'update'])->middleware(['company.admin', 'throttle:10,1,mgmt-stops-put']);
         Route::delete('stops/{stopId}', [StopController::class, 'destroy'])->middleware('company.admin');
         Route::post('routes/{routeId}/stops', [RouteController::class, 'addStop'])->middleware('company.admin');
+        // 2026-11-20 (user): edit a route's name and its stop order.
+        Route::patch('routes/{routeId}', [RouteController::class, 'update'])->whereNumber('routeId')->middleware(['company.admin', 'throttle:20,1,mgmt-routes-patch']);
+        Route::put('routes/{routeId}/stops/order', [RouteController::class, 'reorderStops'])->whereNumber('routeId')->middleware(['company.admin', 'throttle:20,1,mgmt-routes-stops-order']);
         Route::delete('routes/{routeId}/stops/{routeStopId}', [RouteController::class, 'removeStop'])->middleware('company.admin');
         Route::patch('routes/{routeId}/stops/{routeStopId}/type', [RouteController::class, 'updateStopType'])->middleware('company.admin');
         Route::patch('routes/{routeId}/stops/{routeStopId}/express', [RouteController::class, 'updateStopExpress'])->middleware('company.admin');

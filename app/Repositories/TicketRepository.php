@@ -517,4 +517,21 @@ class TicketRepository
             ->map(fn ($id) => (int) $id)
             ->all();
     }
+
+    /**
+     * 2026-11-20: how many upcoming (today or later, not finished) trips of a route have tickets still to be used. A
+     * route's stop order is not changed under them: their passengers' boarding and drop-off stops would move.
+     */
+    public function upcomingTripsWithTicketsOnRoute(int $routeId, string $today): int
+    {
+        return Ticket::query()
+            ->join('trips', 'trips.trip_id', '=', 'tickets.trip_id')
+            ->join('fleets_routes', 'fleets_routes.fleet_route_id', '=', 'trips.fleet_route_id')
+            ->where('fleets_routes.route_id', $routeId)
+            ->where('trips.trip_date', '>=', $today)
+            ->whereIn('trips.status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->whereIn('tickets.status', ['valid', 'boarded'])
+            ->distinct()
+            ->count('trips.trip_id');
+    }
 }

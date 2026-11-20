@@ -8,10 +8,12 @@ use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
+use App\Repositories\TicketRepository;
 use App\Support\CompanyScope;
 use App\Support\Geo\GeoLine;
 use App\Support\RouteName;
 use App\Support\StopSpacing;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +26,7 @@ class RouteService
         private StopRepository $stopRepository,
         private RouteGeometryRepository $geometryRepository,
         private RouteGeometryGenerator $geometryGenerator,
+        private TicketRepository $ticketRepository,
     ) {}
 
     /**
@@ -285,6 +288,47 @@ class RouteService
             throw ValidationException::withMessages(['route' => ['This route is still in use ('.implode(', ', $reasons).'), so it cannot be deleted.']]);
         }
         $this->routeRepository->delete($routeId);
+    }
+
+    /**
+     * 2026-11-20 (user): the Company Admin renames a route or changes its origin and destination labels.
+     *
+     * @param  array{route_name?: string, origin?: string, destination?: string}  $changes
+     */
+    public function updateRoute(int $routeId, array $changes): ?Route
+    {
+        $changes = array_map(fn ($value) => trim((string) $value), array_intersect_key($changes, array_flip(['route_name', 'origin', 'destination'])));
+        if ($changes !== []) {
+            $this->routeRepository->update($routeId, $changes);
+        }
+
+        return $this->routeRepository->findById($routeId);
+    }
+
+    /**
+     * 2026-11-20 (user): the Company Admin changes the order of a route's stops. Every stop of the route must be listed
+     * once. Refused while upcoming trips of the route have tickets still to be used (their passengers' stops would
+     * move). Like adding or removing a stop, the route line and the stop distances are then drawn again (queued).
+     *
+     * @param  array<int, int>  $routeStopIds
+     *
+     * @throws ValidationException
+     */
+    public function reorderStops(int $routeId, array $routeStopIds): void
+    {
+        $current = $this->routeStopRepository->getOrderedStops($routeId)->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $given = collect($routeStopIds)->map(fn ($id) => (int) $id)->sort()->values()->all();
+        if ($current !== $given) {
+            throw ValidationException::withMessages(['route_stop_ids' => ['List every stop of this route once, in the new order.']]);
+        }
+        $today = Carbon::now(config('app.timezone', 'Asia/Manila'))->toDateString();
+        $busy = $this->ticketRepository->upcomingTripsWithTicketsOnRoute($routeId, $today);
+        if ($busy > 0) {
+            throw ValidationException::withMessages(['route_stop_ids' => [($busy === 1 ? '1 upcoming trip of this route already has' : "{$busy} upcoming trips of this route already have").' tickets sold, so its stop order cannot change now. Change it after those trips run or are cancelled.']]);
+        }
+
+        $this->routeStopRepository->reorder($routeId, array_map('intval', $routeStopIds));
+        $this->geometryGenerator->queueRegeneration($routeId);
     }
 
     public function removeStopFromRoute(int $routeId, int $routeStopId): bool

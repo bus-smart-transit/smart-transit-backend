@@ -155,4 +155,18 @@ class RouteStopRepository
             'last' => $row?->last_order !== null ? (int) $row->last_order : null,
         ];
     }
+
+    /**
+     * 2026-11-20: gives the route's stops the order of $routeStopIds (1, 2, 3, ...), in one transaction.
+     *
+     * @param  array<int, int>  $routeStopIds
+     */
+    public function reorder(int $routeId, array $routeStopIds): void
+    {
+        DB::transaction(function () use ($routeId, $routeStopIds) {
+            foreach (array_values($routeStopIds) as $index => $routeStopId) {
+                DB::table('route_stop')->where('route_id', $routeId)->where('id', $routeStopId)->update(['stop_order' => $index + 1]);
+            }
+        });
+    }
 }

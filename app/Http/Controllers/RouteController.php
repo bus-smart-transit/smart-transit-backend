@@ -3,13 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\AddRouteStopRequest;
+use App\Http\Requests\ReorderRouteStopsRequest;
 use App\Http\Requests\RouteFareTableRequest;
 use App\Http\Requests\StoreRouteRequest;
 use App\Http\Requests\UpdateRouteCustomDropoffRequest;
+use App\Http\Requests\UpdateRouteRequest;
 use App\Http\Requests\UpdateRouteStopExpressRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
 use App\Models\Route;
 use App\Repositories\FleetRouteRepository;
+use App\Services\AuditLogger;
 use App\Services\FleetService;
 use App\Services\RouteFareTableService;
 use App\Services\RouteGeometryGenerator;
@@ -115,6 +118,31 @@ class RouteController extends Controller
     }
 
     // Operator/admin: stop_type is editable per route stop.
+    /** 2026-11-20 (user): PATCH operator/routes/{id}: rename a route or change its origin and destination labels. */
+    public function update(UpdateRouteRequest $request, int $routeId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+        $route = $this->routeService->updateRoute($routeId, $request->validated());
+        AuditLogger::log('route.update', 'Route', $routeId, $request->validated());
+
+        return $this->success($route, 'Route updated');
+    }
+
+    /** 2026-11-20 (user): PUT operator/routes/{id}/stops/order: the route's stops in a new order. */
+    public function reorderStops(ReorderRouteStopsRequest $request, int $routeId)
+    {
+        if ($denied = $this->ownRouteOr404($request, $routeId)) {
+            return $denied;
+        }
+        $order = $request->validated('route_stop_ids');
+        $this->routeService->reorderStops($routeId, $order);
+        AuditLogger::log('route.reorder_stops', 'Route', $routeId, ['route_stop_ids' => $order]);
+
+        return $this->success($this->routeService->getRouteWithStops($routeId, $request->user()), 'Stop order saved. The route line is being drawn again.');
+    }
+
     public function updateStopType(UpdateRouteStopTypeRequest $request, int $routeId, int $routeStopId)
     {
         if ($denied = $this->ownRouteOr404($request, $routeId)) {
