@@ -27,7 +27,7 @@ class StopArrivalsService
     ) {}
 
     /**
-     * @return array{stop: array{stop_code: string, name: string|null, municipality: string|null}, arrivals: list<array<string, mixed>>, total: int, updated_at: string}|null
+     * @return array{stop: array{stop_code: string, name: string|null, municipality: string|null}, arrivals: list<array<string, mixed>>, total: int, later: list<array<string, mixed>>, later_total: int, updated_at: string}|null
      */
     public function forStopCode(string $code, ?int $limit = null): ?array
     {
@@ -41,6 +41,7 @@ class StopArrivalsService
         $delayedAfter = (int) config('tracking.arrivals.delayed_after_minutes', 5);
 
         $arrivals = [];
+        $later = []; // 2026-11-20 (user): buses due after the window but still today, listed apart as "Later today".
         foreach ($this->trips->findOpenOnDateAtStops($members, $now->toDateString()) as $trip) {
             try {
                 $rows = $this->timeline->build((int) $trip->trip_id)['stops'] ?? [];
@@ -54,14 +55,14 @@ class StopArrivalsService
                 continue;
             }
             $eta = Carbon::parse($row['eta'])->setTimezone($now->getTimezone());
-            if ($eta->lt($now->copy()->subMinutes(2)) || $eta->gt($until)) {
+            if ($eta->lt($now->copy()->subMinutes(2)) || ! $eta->isSameDay($now)) {
                 continue;
             }
             $scheduled = ! empty($row['scheduled_at']) ? Carbon::parse($row['scheduled_at'])->setTimezone($now->getTimezone()) : null;
             $lateBy = $scheduled !== null ? (int) round($scheduled->diffInSeconds($eta, false) / 60) : null;
             $destination = collect($rows)->reverse()->first(fn ($r) => ($r['type'] ?? null) !== 'pass_through' && empty($r['custom']));
             $fleet = $trip->fleetRoute?->fleet;
-            $arrivals[] = [
+            $item = [
                 'trip_id' => (int) $trip->trip_id,
                 'fleet_id' => $fleet ? (int) $fleet->fleet_id : null,
                 'bus_company' => $fleet?->bus_company_name,
@@ -80,8 +81,14 @@ class StopArrivalsService
                 'delayed' => $lateBy !== null && $lateBy >= $delayedAfter,
                 'status' => (string) $trip->status,
             ];
+            if ($eta->gt($until)) {
+                $later[] = $item;
+            } else {
+                $arrivals[] = $item;
+            }
         }
         usort($arrivals, fn ($a, $b) => strcmp($a['eta'], $b['eta']));
+        usort($later, fn ($a, $b) => strcmp($a['eta'], $b['eta']));
         $max = max(1, (int) config('tracking.arrivals.max_limit', 20));
         $take = min($max, max(1, $limit ?? (int) config('tracking.arrivals.default_limit', 3)));
 
@@ -93,6 +100,8 @@ class StopArrivalsService
             ],
             'arrivals' => array_slice($arrivals, 0, $take),
             'total' => count($arrivals),
+            'later' => array_slice($later, 0, $max),
+            'later_total' => count($later),
             'updated_at' => $now->toIso8601String(),
         ];
     }

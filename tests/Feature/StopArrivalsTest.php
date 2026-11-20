@@ -101,3 +101,18 @@ it('gives the timetable time beside the estimate and flags a bus running behind 
 it('answers 404 for an unknown stop', function () {
     $this->getJson('/api/stops/no-such-stop/arrivals')->assertNotFound();
 });
+
+// 2026-11-20 (user): a bus due after the next few hours is not dropped; it is listed apart as "Later today".
+it('lists buses due later today apart from the next few hours, and nothing from tomorrow', function () {
+    $f = saFixture();
+    ($f['trip'])('07:30'); // at C 07:50: within the window
+    ($f['trip'])('15:00'); // at C 15:20: later today
+    ($f['trip'])('21:50'); // at C 22:10: later today
+
+    $data = $this->getJson('/api/stops/'.$f['stops']['C']->stop_code.'/arrivals?limit=20')->assertOk()->json('data');
+
+    expect(collect($data['arrivals'])->pluck('eta_time')->all())->toBe(['07:50'])
+        ->and($data['total'])->toBe(1)
+        ->and(collect($data['later'])->pluck('eta_time')->all())->toBe(['15:20', '22:10'])
+        ->and($data['later_total'])->toBe(2);
+});
