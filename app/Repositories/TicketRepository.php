@@ -496,4 +496,25 @@ class TicketRepository
             ->limit($limit)
             ->get();
     }
+
+    /**
+     * 2026-11-20: the user ids of the passenger accounts that hold these tickets (guests have none).
+     *
+     * @param  array<int, int>  $ticketIds
+     * @return array<int, int>
+     */
+    public function passengerUserIds(array $ticketIds): array
+    {
+        if ($ticketIds === []) {
+            return [];
+        }
+
+        return Ticket::query()
+            ->join('passenger_users', 'passenger_users.passenger_id', '=', 'tickets.passenger_id')
+            ->whereIn('tickets.ticket_id', $ticketIds)
+            ->distinct()
+            ->pluck('passenger_users.user_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
 }

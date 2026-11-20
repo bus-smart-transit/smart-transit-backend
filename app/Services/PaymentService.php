@@ -17,6 +17,7 @@ use App\Services\Sms\SmsNotifier;
 use App\Support\BaggageFee;
 use App\Support\BookingFee;
 use App\Support\Database\RlsContext;
+use App\Support\LiveUpdates;
 use App\Support\PriorityBoarding;
 use App\Support\TravellerContact;
 use Illuminate\Database\QueryException;
@@ -843,6 +844,10 @@ class PaymentService
             // failure affect the payment/ticket transaction above, which
             // has already committed by this point.
             $this->notifyOperatorsOfPayment($payment);
+            // 2026-11-20: the crew's screens of each trip reload their ticket list at once (live updates).
+            foreach (collect($payment->items_payload ?? [])->pluck('trip_id')->filter()->unique() as $tripId) {
+                LiveUpdates::tickets($this->tripRepository->crewUserIds((int) $tripId), (int) $tripId);
+            }
 
             // The buyer gets the tracking link of each ticket by email (fail-soft and queued: it never delays or undoes
             // the payment, and it carries no QR code).

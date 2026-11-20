@@ -95,6 +95,20 @@ final class LiveUpdates
             ->with(['type' => $type, 'trip_id' => $data['trip_id'] ?? null, 'alert_id' => $data['alert_id'] ?? null])->sendNow());
     }
 
+    /**
+     * 2026-11-20 (user: live updates on every portal): tickets of a trip changed for these people (a new online booking
+     * for the crew; a scan or a missed ticket for the passenger). Each person's open screens reload their list; only the
+     * trip id is sent, on their own private channel.
+     *
+     * @param  array<int, int>  $userIds
+     */
+    public static function tickets(array $userIds, ?int $tripId): void
+    {
+        foreach (array_unique(array_filter(array_map('intval', $userIds))) as $userId) {
+            self::send('tickets', fn () => Broadcast::private('user.'.$userId)->as('tickets')->with(['trip_id' => $tripId])->sendNow());
+        }
+    }
+
     /** A crew alert was raised, cancelled, handled or passed on to passengers: the Operators' screens reload it. */
     public static function alert(?string $companyKey, array $alert): void
     {

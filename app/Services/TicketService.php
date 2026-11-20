@@ -14,6 +14,7 @@ use App\Repositories\TripRepository;
 use App\Support\BaggageFee;
 use App\Support\BusLabel;
 use App\Support\LegDistance;
+use App\Support\LiveUpdates;
 use App\Support\PlaceGroups;
 use App\Support\PriorityBoarding;
 use App\Support\ServiceType;
@@ -768,6 +769,8 @@ class TicketService
                 'ticket' => ['Ticket is already boarded.'],
             ]);
         }
+        // 2026-11-20: the passenger's open ticket screen shows "Boarded" at once (live updates).
+        LiveUpdates::tickets($this->ticketRepository->passengerUserIds([(int) $ticket->ticket_id]), (int) $ticket->trip_id);
         $boardedTicket = $this->ticketRepository->findByUuid($uuid);
 
         // Destination label — prefer a named stop; fall back to GPS coords for
@@ -960,6 +963,8 @@ class TicketService
 
         $todayStr = now()->toDateString();
         $boardedCount = 0;
+        $boardedIds = [];
+        $boardedTripId = null;
         $results = [];
 
         foreach ($tickets as $ticket) {
@@ -1032,7 +1037,13 @@ class TicketService
                 continue;
             }
             $boardedCount++;
+            $boardedIds[] = (int) $ticket->ticket_id;
+            $boardedTripId = (int) $ticket->trip_id;
             $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => false]);
+        }
+        // 2026-11-20: the passengers' open ticket screens show "Boarded" at once (live updates).
+        if ($boardedIds !== []) {
+            LiveUpdates::tickets($this->ticketRepository->passengerUserIds($boardedIds), $boardedTripId);
         }
 
         return [

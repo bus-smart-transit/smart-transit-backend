@@ -111,6 +111,32 @@ it('tells a person\'s screens about a new notification on their own private chan
         ->and($sent[0]->broadcastWith())->toBe(['type' => 'crew_message', 'trip_id' => 5, 'alert_id' => null]);
 });
 
+it('tells the crew of a trip that its tickets changed, each on their own private channel, with the trip id only', function () {
+    $trip = lvTrip('boarding');
+    $driver = lvStaff('driver');
+    $chauffeur = lvStaff('conductor');
+    $trip->update(['driver_id' => $driver->companyProfile->company_user_id, 'conductor_id' => $chauffeur->companyProfile->company_user_id]);
+
+    $crew = app(TripRepository::class)->crewUserIds($trip->trip_id);
+    LiveUpdates::tickets($crew, $trip->trip_id);
+
+    $sent = lvSent('tickets');
+    expect($crew)->toEqualCanonicalizing([$driver->user_id, $chauffeur->user_id])
+        ->and($sent)->toHaveCount(2)
+        ->and(collect($sent)->flatMap(fn ($event) => lvChannelNames($event))->sort()->values()->all())
+        ->toBe(collect(['private-user.'.$driver->user_id, 'private-user.'.$chauffeur->user_id])->sort()->values()->all())
+        ->and($sent[0]->broadcastWith())->toBe(['trip_id' => $trip->trip_id]);
+});
+
+it('sends no tickets update for a trip without crew or to nobody', function () {
+    $trip = lvTrip('scheduled');
+
+    LiveUpdates::tickets(app(TripRepository::class)->crewUserIds($trip->trip_id), $trip->trip_id);
+    LiveUpdates::tickets([], $trip->trip_id);
+
+    expect(lvSent('tickets'))->toBe([]);
+});
+
 it('sends nothing when broadcasting is not set to Reverb', function () {
     config(['broadcasting.default' => 'null']);
     $trip = lvTrip('scheduled');

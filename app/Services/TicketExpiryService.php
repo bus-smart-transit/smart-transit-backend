@@ -7,6 +7,7 @@ use App\Models\Trip;
 use App\Repositories\DiscountClaimRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Support\LiveUpdates;
 
 /**
  * Batch 60 item 1 (user, 2026-11-11): ONE owner for "this digital ticket can no longer be used". A ticket that was
@@ -87,6 +88,10 @@ class TicketExpiryService
             $missed[] = (int) $ticket->ticket_id;
         }
         $this->claims->lapseOpenForTickets($missed);
+        // 2026-11-20: the passengers' open ticket screens show "Missed" at once (live updates).
+        if ($missed !== []) {
+            LiveUpdates::tickets($this->tickets->passengerUserIds($missed), (int) $tickets[0]->trip_id);
+        }
 
         return count($missed);
     }

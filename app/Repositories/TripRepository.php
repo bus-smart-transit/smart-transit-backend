@@ -800,4 +800,16 @@ class TripRepository
             ->where('status', '!=', 'cancelled')
             ->get(['trip_id', 'trip_date', 'departure_time', 'departed_at', 'status']);
     }
+
+    /**
+     * 2026-11-20: the user ids of a trip's Driver and Chauffeur (for live updates to their screens).
+     *
+     * @return array<int, int>
+     */
+    public function crewUserIds(int $tripId): array
+    {
+        $trip = Trip::with(['driver:company_user_id,user_id', 'conductor:company_user_id,user_id'])->find($tripId);
+
+        return array_values(array_filter([(int) $trip?->driver?->user_id, (int) $trip?->conductor?->user_id]));
+    }
 }
