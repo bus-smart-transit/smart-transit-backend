@@ -63,17 +63,27 @@ class FareRuleRepository
         return $this->inForce($base(), $on)->first();
     }
 
-    /** Steps 2 and 3: a general rule (no fleet) for a class, service type and seat type, for one route or for any route. */
-    public function findGeneral(?int $routeId, string $vehicleClass, string $serviceType, string $seatType, ?string $on = null): ?FareRule
+    /**
+     * Steps 2 and 3: a general rule (no fleet) for a class, service type and seat type, for one route or for any route.
+     * 2026-11-20 (user): a general rule belongs to a company and prices only that company's buses ($companyId is the
+     * bus's company; null only for a bus without a company, which then sees only rules without a company). Like a
+     * bus's own rule, a general rule for the other seat type is used when none is written for this one, so one rule
+     * prices seated and standing unless the Company Admin sets standing apart.
+     */
+    public function findGeneral(?int $routeId, string $vehicleClass, string $serviceType, string $seatType, ?string $on = null, ?int $companyId = null): ?FareRule
     {
-        $query = FareRule::whereNull('fleet_id')
-            ->where('vehicle_class', $vehicleClass)
-            ->where('service_type', $serviceType)
-            ->where('seat_type', $seatType);
+        $base = function () use ($routeId, $vehicleClass, $serviceType, $companyId) {
+            $query = FareRule::whereNull('fleet_id')
+                ->where('vehicle_class', $vehicleClass)
+                ->where('service_type', $serviceType);
+            $companyId === null ? $query->whereNull('company_id') : $query->where('company_id', $companyId);
+            $routeId === null ? $query->whereNull('route_id') : $query->where('route_id', $routeId);
 
-        $routeId === null ? $query->whereNull('route_id') : $query->where('route_id', $routeId);
+            return $query;
+        };
 
-        return $this->inForce($query, $on)->first();
+        return $this->inForce($base()->where('seat_type', $seatType), $on)->first()
+            ?? $this->inForce($base(), $on)->first();
     }
 
     /**
@@ -91,7 +101,7 @@ class FareRuleRepository
             ->where(fn ($q) => $q->whereNull('effective_from')->orWhere('effective_from', '<=', $to ?? '9999-12-31'))
             ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>=', $from ?? '0001-01-01'));
 
-        foreach (['fleet_id', 'route_id', 'vehicle_class'] as $column) {
+        foreach (['fleet_id', 'company_id', 'route_id', 'vehicle_class'] as $column) {
             $value = $key[$column] ?? null;
             $value === null ? $query->whereNull($column) : $query->where($column, $value);
         }
@@ -121,8 +131,12 @@ class FareRuleRepository
             $filters['scope'] === 'general' ? $query->whereNull('fleet_id') : $query->whereNotNull('fleet_id');
         }
         if (isset($filters['fleet_ids'])) {
-            // An operator sees general rules (read only) and the overrides of the fleets they own.
-            $query->where(fn ($q) => $q->whereNull('fleet_id')->orWhereIn('fleet_id', $filters['fleet_ids']));
+            // An operator sees their company's general rules and the rules of their company's buses (2026-11-20: the
+            // general rules of other companies are not theirs to see).
+            $companyId = $filters['company_id'] ?? null;
+            $query->where(fn ($q) => $q
+                ->where(fn ($g) => $g->whereNull('fleet_id')->where(fn ($c) => $companyId === null ? $c->whereNull('company_id') : $c->where('company_id', $companyId)))
+                ->orWhereIn('fleet_id', $filters['fleet_ids']));
         }
 
         return $query->orderBy('vehicle_class')->orderBy('service_type')->orderBy('seat_type')->orderByDesc('effective_from')->get();

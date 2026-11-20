@@ -3,18 +3,21 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperFareRule
+ *
  * @property int $fare_rule_id
  * @property int $fleet_id
  * @property float $base_fare
  * @property float $fare_per_km
  * @property string $status
  * @property string $seat_type
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\Fleet $fleet
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read Fleet $fleet
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule query()
@@ -26,6 +29,7 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereSeatType($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereStatus($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|FareRule whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class FareRule extends Model
@@ -36,11 +40,13 @@ class FareRule extends Model
     protected $table = 'fare_rules';
 
     protected $primaryKey = 'fare_rule_id';
+
     /**
      * The attributes that are mass assignable from structural payloads.
      */
     protected $fillable = [
         'fleet_id',
+        'company_id', // 2026-11-20: the company a general rule belongs to
         'vehicle_class',
         'service_type',
         'route_id',

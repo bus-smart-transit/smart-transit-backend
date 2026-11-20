@@ -270,6 +270,7 @@ class FareRuleService
         if ($this->fareRuleRepository->overlappingRuleExists(
             [
                 'fleet_id' => $payload['fleet_id'] ?? null,
+                'company_id' => $payload['company_id'] ?? null,
                 'route_id' => $payload['route_id'] ?? null,
                 'vehicle_class' => $payload['vehicle_class'],
                 'service_type' => $payload['service_type'],
@@ -322,7 +323,7 @@ class FareRuleService
             throw ValidationException::withMessages(['effective_to' => ['The end date cannot be in the past.']]);
         }
         if (($changes['status'] ?? $rule->status) === 'active' && $this->fareRuleRepository->overlappingRuleExists(
-            ['fleet_id' => $rule->fleet_id, 'route_id' => $rule->route_id, 'vehicle_class' => $rule->vehicle_class, 'service_type' => $rule->service_type, 'seat_type' => $rule->seat_type],
+            ['fleet_id' => $rule->fleet_id, 'company_id' => $rule->company_id, 'route_id' => $rule->route_id, 'vehicle_class' => $rule->vehicle_class, 'service_type' => $rule->service_type, 'seat_type' => $rule->seat_type],
             $newFrom,
             $newTo,
             (int) $rule->fare_rule_id,
@@ -363,6 +364,7 @@ class FareRuleService
 
             return $this->createFareRule(array_filter([
                 'fleet_id' => $rule->fleet_id,
+                'company_id' => $rule->company_id,
                 'route_id' => $rule->route_id,
                 'vehicle_class' => $rule->vehicle_class,
                 'service_type' => $rule->service_type,

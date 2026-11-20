@@ -43,22 +43,22 @@ class FareRuleController extends Controller
             }
 
             $fleetId = (int) $request->validated('fleet_id');
-            // A general rule (no fleet) prices every bus of a class, so only an Admin writes one; an Operator
-            // writes overrides for their own fleets.
-            if (! $fleetId) {
-                return $this->error('Only an Admin can create a general fare rule. Choose one of your fleets for an override.', 403);
+            // 2026-11-20 (user): the Company Admin (route middleware company.admin) writes the company's general rules
+            // (a vehicle class and service type, for every bus of that class in their company) and a bus's own rule.
+            $companyId = $user->companyProfile?->company_id;
+            if (! $fleetId && ! $companyId) {
+                return $this->error('Your account has no company, so it cannot set a general fare. Choose one of your fleets.', 403);
             }
-            $owned = $this->fleetService->isOwnedByOperator($fleetId, $companyUserId);
-
-            if (! $owned) {
+            if ($fleetId && ! $this->fleetService->isOwnedByOperator($fleetId, $companyUserId)) {
                 return $this->error('You do not have permission to manage fare rules for this fleet.', 403);
             }
         }
 
-        $rule = $this->fareRuleService->createFareRule(array_filter(
-            $request->validated(),
-            fn ($value) => $value !== null && $value !== '',
-        ));
+        $payload = array_filter($request->validated(), fn ($value) => $value !== null && $value !== '');
+        if (empty($payload['fleet_id']) && $user?->role === 'operator') {
+            $payload['company_id'] = (int) $user->companyProfile->company_id;
+        }
+        $rule = $this->fareRuleService->createFareRule($payload);
         AuditLogger::log('fare_rule.create', 'FareRule', $rule->fare_rule_id ?? null, $request->validated());
 
         return $this->success($rule, 'Fare rule created successfully');
@@ -93,8 +93,8 @@ class FareRuleController extends Controller
     }
 
     /**
-     * A rule the caller may change: the Admin any rule; an Operator only a rule of a bus of their own company (a
-     * general rule or another company's reads as not found).
+     * A rule the caller may change: the Admin any rule; an Operator a rule of a bus of their own company or (2026-11-20)
+     * their company's general rule. Another company's rule reads as not found.
      */
     private function ownRuleOr404(Request $request, int $fareRuleId): FareRule|JsonResponse
     {
@@ -103,8 +103,11 @@ class FareRuleController extends Controller
             return $this->error('Fare rule not found.', 404);
         }
         if ($request->user()?->role === 'operator') {
-            $companyUserId = (int) ($request->user()->companyProfile?->company_user_id ?? 0);
-            if (! $rule->fleet_id || ! $this->fleetService->isOwnedByOperator((int) $rule->fleet_id, $companyUserId)) {
+            $profile = $request->user()->companyProfile;
+            $companyUserId = (int) ($profile?->company_user_id ?? 0);
+            $ownGeneral = ! $rule->fleet_id && $rule->company_id !== null && (int) $rule->company_id === (int) ($profile?->company_id ?? 0);
+            $ownBus = $rule->fleet_id && $this->fleetService->isOwnedByOperator((int) $rule->fleet_id, $companyUserId);
+            if (! $ownGeneral && ! $ownBus) {
                 return $this->error('Fare rule not found.', 404);
             }
         }
@@ -112,7 +115,7 @@ class FareRuleController extends Controller
         return $rule;
     }
 
-    // Admin and Operator: the fare screen's list. An Operator sees general rules (read only) and the rules of their own fleets.
+    // Admin and Operator: the fare screen's list. An Operator sees their company's general rules and its buses' rules.
     public function listRules(FareRuleListRulesRequest $request)
     {
         $user = $request->user();
@@ -126,8 +129,9 @@ class FareRuleController extends Controller
             if (! $companyUserId) {
                 return $this->error('Staff profile not found.', 404);
             }
-            // Batch 46 step 2: the fares of every bus of the Operator's company.
+            // Batch 46 step 2: the fares of every bus of the Operator's company, and (2026-11-20) its general rules.
             $filters['fleet_ids'] = $this->fleetService->fleetIdsOfCompany((int) $companyUserId);
+            $filters['company_id'] = $user->companyProfile?->company_id;
         }
 
         return $this->success($this->fareRuleService->listRules($filters), 'Fare rules retrieved successfully');

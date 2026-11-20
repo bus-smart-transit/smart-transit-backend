@@ -15,6 +15,10 @@ use App\Support\ServiceType;
  *   3. a general rule for (any route, the fleet's class, the service type, the seat type)
  *   4. nothing: "Fare unavailable"
  *
+ * 2026-11-20 (user): steps 2 and 3 look first at the general rules of the bus's own company (set by its Company
+ * Admin), then at platform-wide ones (no company). Another company's general rule never prices this bus. A general
+ * rule for the other seat type is used when none is written for this one (as a bus's own rule already does).
+ *
  * It never falls back across class or service type: a fleet with no class and no override has no fare, and an
  * express trip is priced only where an express rule exists.
  */
@@ -43,7 +47,15 @@ class FareRuleResolver
             return null;
         }
 
-        return $this->rules->findGeneral($routeId, $class, $service, $seatType, $on)
+        // 2026-11-20 (user): the bus's own company's general rules first (set by its Company Admin; never another
+        // company's), then a platform-wide general rule (no company), as before.
+        $companyId = $fleet->company_id !== null ? (int) $fleet->company_id : null;
+        $company = $companyId === null ? null
+            : ($this->rules->findGeneral($routeId, $class, $service, $seatType, $on, $companyId)
+                ?? $this->rules->findGeneral(null, $class, $service, $seatType, $on, $companyId));
+
+        return $company
+            ?? $this->rules->findGeneral($routeId, $class, $service, $seatType, $on)
             ?? $this->rules->findGeneral(null, $class, $service, $seatType, $on);
     }
 
