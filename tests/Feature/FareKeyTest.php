@@ -271,12 +271,12 @@ it('stores the vehicle class canonically, rejects an unknown one and refuses ove
     $service = app(FareRuleService::class);
 
     // "Deluxe" is part of aircon.
-    $rule = $service->createFareRule(['vehicle_class' => 'Deluxe', 'seat_type' => 'seated', 'base_fare' => 13, 'fare_per_km' => 2.25, 'effective_from' => '2026-10-01']);
+    $rule = $service->createFareRule(['vehicle_class' => 'Deluxe', 'seat_type' => 'seated', 'base_fare' => 13, 'fare_per_km' => 2.25, 'base_distance_km' => 5, 'effective_from' => '2026-10-01']);
     expect($rule->vehicle_class)->toBe('aircon')->and($rule->service_type)->toBe('regular')->and($rule->rounding_mode)->toBe('nearest');
 
     // Same key in force on the same days: refused. A different service type or a later period is fine.
-    expect(fn () => $service->createFareRule(['vehicle_class' => 'aircon', 'seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1, 'effective_from' => '2026-12-01']))->toThrow(ValidationException::class);
-    expect($service->createFareRule(['vehicle_class' => 'aircon', 'service_type' => 'express', 'seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1])->fare_rule_id)->toBeInt();
+    expect(fn () => $service->createFareRule(['vehicle_class' => 'aircon', 'seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1, 'base_distance_km' => 5, 'effective_from' => '2026-12-01']))->toThrow(ValidationException::class);
+    expect($service->createFareRule(['vehicle_class' => 'aircon', 'service_type' => 'express', 'seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1, 'base_distance_km' => 5])->fare_rule_id)->toBeInt();
     // A general rule needs a class.
     expect(fn () => $service->createFareRule(['seat_type' => 'seated', 'base_fare' => 1, 'fare_per_km' => 1]))->toThrow(ValidationException::class);
 

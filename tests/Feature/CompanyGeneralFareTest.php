@@ -43,7 +43,7 @@ function cgfAs($test, User $user)
 function cgfGeneral($test, User $admin, string $class, string $service, float $perKm): int
 {
     return (int) cgfAs($test, $admin)->postJson('/api/operator/fare-rules', [
-        'vehicle_class' => $class, 'service_type' => $service, 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => $perKm,
+        'vehicle_class' => $class, 'service_type' => $service, 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => $perKm, 'base_distance_km' => 5,
     ])->assertSuccessful()->json('data.fare_rule_id');
 }
 
@@ -112,13 +112,23 @@ it('lets only the Company Admin write general fares, and only their own company\
     expect(FareRule::find($ruleId)->status)->toBe('inactive');
 });
 
+it('refuses a general fare without a base distance, and accepts 0 km', function () {
+    $metro = cgfOperator('Davao Metro Shuttle');
+    $body = ['vehicle_class' => 'ordinary', 'service_type' => 'regular', 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => 2.20];
+
+    cgfAs($this, $metro)->postJson('/api/operator/fare-rules', $body)
+        ->assertUnprocessable()->assertJsonValidationErrors('base_distance_km');
+    $this->app['auth']->forgetGuards();
+    cgfAs($this, $metro)->postJson('/api/operator/fare-rules', $body + ['base_distance_km' => 0])->assertSuccessful();
+});
+
 it('refuses two general rules for the same class, service type and seat type in the same company', function () {
     $metro = cgfOperator('Davao Metro Shuttle');
     $other = cgfOperator('Other Bus Co');
     cgfGeneral($this, $metro, 'ordinary', 'regular', 2.20);
 
     $this->app['auth']->forgetGuards();
-    cgfAs($this, $metro)->postJson('/api/operator/fare-rules', ['vehicle_class' => 'ordinary', 'service_type' => 'regular', 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => 2.30])
+    cgfAs($this, $metro)->postJson('/api/operator/fare-rules', ['vehicle_class' => 'ordinary', 'service_type' => 'regular', 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => 2.30, 'base_distance_km' => 5])
         ->assertStatus(422);
 
     // Another company may set its own.

@@ -265,6 +265,11 @@ class FareRuleService
         if (empty($payload['fleet_id']) && $payload['vehicle_class'] === null) {
             throw ValidationException::withMessages(['vehicle_class' => ['A general fare rule needs a vehicle class.']]);
         }
+        // 2026-11-20 (after general rules were saved without one and priced every trip from 0 km): a general rule prices
+        // every bus of a class, so it must say how many km the base fare covers. 0 is allowed (the fare counts at once).
+        if (empty($payload['fleet_id']) && (! array_key_exists('base_distance_km', $payload) || $payload['base_distance_km'] === null || $payload['base_distance_km'] === '')) {
+            throw ValidationException::withMessages(['base_distance_km' => ['A general fare needs a base distance: the km the base fare covers (enter 0 if the fare counts from the start).']]);
+        }
 
         // Two rules with the same key (fleet, route, class, service type, seat type) may not be in force on the same day.
         if ($this->fareRuleRepository->overlappingRuleExists(
