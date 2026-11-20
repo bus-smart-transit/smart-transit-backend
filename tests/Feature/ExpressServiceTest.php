@@ -345,3 +345,21 @@ it('leaves regular trips on a route without express stops unchanged', function (
     $rows = collect($this->getJson("/api/trips/{$regular->trip_id}/timeline")->assertSuccessful()->json('data.stops'))->keyBy('name');
     expect($rows['Reg B']['type'])->toBe('stop')->and($rows['Reg B']['eta_time'])->toBe('08:15');
 });
+
+// 2026-11-20 (user: an express trip did not show on the available trips page): on a route that marks no express stop,
+// the express trip is listed, bookable and priced for its two ends, and not for a journey to a stop it skips.
+it('lists a non-stop express between the route ends on the available trips page when its bus has an express fare', function () {
+    [, $stops, $fleetRoute, $operator] = exRoute('List ', []);
+    FareRule::create(['fleet_id' => $fleetRoute->fleet_id, 'service_type' => 'express', 'seat_type' => 'seated', 'base_fare' => 12, 'fare_per_km' => 2.75, 'status' => 'active']);
+    $express = exTrip($fleetRoute, $operator, 'express', '07:00');
+    $search = fn (string $to) => collect($this->getJson('/api/booking/trips?'.http_build_query([
+        'from' => $stops['A']->fresh()->stop_code, 'to' => $stops[$to]->fresh()->stop_code, 'date' => '2026-10-04',
+    ]))->assertSuccessful()->json('data.trips'));
+
+    $listed = $search('E')->firstWhere('trip_id', $express->trip_id);
+    expect($listed)->not->toBeNull()
+        ->and($listed['bookable'])->toBeTrue()
+        ->and((float) $listed['fare'])->toEqual(122.0); // 12 + 40 km * 2.75
+
+    expect($search('D')->firstWhere('trip_id', $express->trip_id))->toBeNull(); // D is skipped by the non-stop express
+});
