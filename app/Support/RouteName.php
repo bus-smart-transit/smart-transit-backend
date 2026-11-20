@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Support;
+
+/**
+ * 2026-11-20 (user): ONE owner of a route's automatic name. A route created without a name is called
+ * "{origin} to {destination}" (the form most production routes already use), with spaces tidied and at most 255
+ * characters. The Add route form shows the same name as a preview before saving.
+ */
+final class RouteName
+{
+    public static function from(string $origin, string $destination): string
+    {
+        $tidy = fn (string $place): string => trim((string) preg_replace('/\s+/u', ' ', $place));
+
+        return mb_substr($tidy($origin).' to '.$tidy($destination), 0, 255);
+    }
+}

@@ -10,6 +10,7 @@ use App\Repositories\RouteStopRepository;
 use App\Repositories\StopRepository;
 use App\Support\CompanyScope;
 use App\Support\Geo\GeoLine;
+use App\Support\RouteName;
 use App\Support\StopSpacing;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -25,9 +26,15 @@ class RouteService
         private RouteGeometryGenerator $geometryGenerator,
     ) {}
 
-    // $payload = ['origin','destination','route_name']
+    /**
+     * $payload = ['origin', 'destination', 'route_name'?]. 2026-11-20 (user): without a name, the route is named from its
+     * origin and destination (RouteName::from), so the Operator types each place once.
+     */
     public function createRoute(array $payload): object
     {
+        $name = trim((string) ($payload['route_name'] ?? ''));
+        $payload['route_name'] = $name !== '' ? $name : RouteName::from((string) $payload['origin'], (string) $payload['destination']);
+
         return $this->routeRepository->create($payload);
     }
 
