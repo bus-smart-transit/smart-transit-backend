@@ -183,11 +183,11 @@ it('awards reward points from the amount the server priced, once, and records on
     piPaid($this, $payment)->assertOk();
     piPaid($this, $payment)->assertOk();                          // redelivery
 
-    // 47 paid, 1 point per 20 pesos, rounded down: 2 points.
-    expect((int) $pax->fresh()->reward_points)->toBe(2);
+    // 47 paid, 0.1 point per 20 pesos (2026-11-20), two decimals: 0.24 points.
+    expect(round((float) $pax->fresh()->reward_points, 2))->toBe(0.24);
     $rows = DB::table('reward_transactions')->where('passenger_id', $pax->passenger_id)->get();
     expect($rows)->toHaveCount(1);
-    expect([$rows[0]->type, (int) $rows[0]->points, (int) $rows[0]->payment_id])->toBe(['earned', 2, $payment->payment_id]);
+    expect([$rows[0]->type, round((float) $rows[0]->points, 2), (int) $rows[0]->payment_id])->toBe(['earned', 0.24, $payment->payment_id]);
 });
 
 it('awards nothing to a guest and nothing for a payment that failed', function () {
@@ -216,7 +216,7 @@ it('never takes a point value from the client: extra fields in the checkout chan
     piPaid($this, $payment)->assertOk();
 
     expect((float) $payment->fresh()->amount)->toBe(47.0);
-    expect((int) $pax->fresh()->reward_points)->toBe(2);
+    expect(round((float) $pax->fresh()->reward_points, 2))->toBe(0.24);
 });
 
 // ----------------------------------------------------------------- 3. the last seat

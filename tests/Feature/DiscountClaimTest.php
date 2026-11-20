@@ -138,7 +138,7 @@ it('lets the Chauffeur approve: the fare becomes the discounted fare and the dif
     $f = dcFixture();
     $passenger = dcPassenger();
     $ticket = dcTicket($this, $passenger, $f);
-    $pointsBefore = (int) $passenger->fresh()->reward_points;
+    $pointsBefore = (float) $passenger->fresh()->reward_points;
 
     $claim = app(DiscountClaimService::class)->review($ticket, true, dcBoarding($f), dcStaff('conductor'));
 
@@ -154,8 +154,8 @@ it('lets the Chauffeur approve: the fare becomes the discounted fare and the dif
         ->and($ticket->discount_id_checked_at)->not->toBeNull();
     $sent = Http::recorded(fn ($request) => str_contains($request->url(), '/v1/refunds'))->last()[0]->data()['data']['attributes'];
     expect($sent['amount'])->toBe(900)->and($sent['metadata']['discount_claim_id'])->toBe((string) $claim->id);
-    // Points earned on PHP 47 (2) become those on PHP 38 (1).
-    expect((int) $passenger->fresh()->reward_points)->toBe($pointsBefore - 1);
+    // Points earned on PHP 47 (0.24) become those on PHP 38 (0.19): 0.05 comes back off (2026-11-20 rate: 0.1 per PHP 20).
+    expect(round((float) $passenger->fresh()->reward_points, 2))->toBe(round($pointsBefore - 0.05, 2));
 
     // Only the signed refund event settles it; the history then shows a partial refund.
     dcWebhook($this, 'payment.refund.updated', ['id' => 'ref_dc_1', 'type' => 'refund', 'attributes' => ['status' => 'succeeded', 'payment_id' => 'pay_dc_test']])->assertOk();

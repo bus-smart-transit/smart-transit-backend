@@ -349,8 +349,8 @@ class DiscountClaimService
         if (! $ticket->passenger_id || $refund <= 0) {
             return;
         }
-        $perPoint = RewardService::PESOS_PER_POINT;
-        $points = (int) floor($fare / $perPoint) - (int) floor(max(0.0, $fare - $refund) / $perPoint);
+        // 2026-11-20: the same earning rule as RewardService::awardPoints (points have two decimals).
+        $points = round(RewardService::pointsFor($fare) - RewardService::pointsFor(max(0.0, $fare - $refund)), 2);
         if ($points <= 0) {
             return;
         }

@@ -9,7 +9,10 @@ class RewardService
 {
     // Public: ReportingRepository needs this to convert redeemed points back
     // into a peso value for financial reporting (see getPaymentChannelBreakdown()).
-    public const PESOS_PER_POINT = 20; // earning: 1 point per ₱20 spent
+    public const PESOS_PER_POINT = 20; // earning: DECIMAL_RATE points per ₱20 spent
+
+    // 2026-11-20 (user): points earned per PESOS_PER_POINT paid, so ₱130 earns (130 / 20) * 0.1 = 0.65 points.
+    public const DECIMAL_RATE = 0.1;
 
     // Spending: 1 point takes ₱1 off an online checkout. Checkout and the financial report both read this one value
     // (the report used to value a redeemed point at the earning rate, ₱20, which overstated every discount twentyfold).
@@ -23,7 +26,7 @@ class RewardService
      */
     public function awardPoints(int $passengerId, float $amountSpent, ?int $paymentId = null): void
     {
-        $points = (int) floor($amountSpent / self::PESOS_PER_POINT);
+        $points = self::pointsFor($amountSpent);
 
         if ($points <= 0) {
             return;
@@ -40,6 +43,16 @@ class RewardService
                 'description' => 'Earned from ticket purchase',
             ]);
         });
+    }
+
+    /**
+     * 2026-11-20 (user): the ONE earning rule. Points for an amount paid: (amount / PESOS_PER_POINT) * DECIMAL_RATE,
+     * kept to two decimals (₱130 -> 0.65, ₱152 -> 0.76). Earning and taking points back on a refunded discount both
+     * use it, so a refund never takes back points that were not earned.
+     */
+    public static function pointsFor(float $amount): float
+    {
+        return $amount > 0 ? round(($amount / self::PESOS_PER_POINT) * self::DECIMAL_RATE, 2) : 0.0;
     }
 
     public function redeemPoints(int $passengerId, int $points, ?string $description = null, ?int $paymentId = null): bool

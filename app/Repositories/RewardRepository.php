@@ -9,7 +9,7 @@ use Illuminate\Support\Collection;
 
 class RewardRepository
 {
-    public function incrementPoints(int $passengerId, int $points): void
+    public function incrementPoints(int $passengerId, float $points): void // 2026-11-20: earned points have decimals
     {
         PassengerUser::where('passenger_id', $passengerId)
             ->increment('reward_points', $points);
@@ -25,7 +25,7 @@ class RewardRepository
      * One atomic statement: the points are taken only if the passenger still has them at this moment, so two
      * checkouts at the same time cannot both spend the same points. False when there were not enough.
      */
-    public function decrementPointsIfEnough(int $passengerId, int $points): bool
+    public function decrementPointsIfEnough(int $passengerId, float $points): bool
     {
         return PassengerUser::where('passenger_id', $passengerId)
             ->where('reward_points', '>=', $points)

@@ -3,19 +3,22 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperRewardTransaction
+ *
  * @property int $reward_transaction_id
  * @property int $passenger_id
  * @property int|null $payment_id
- * @property int $points
+ * @property float $points
  * @property string $type
  * @property string|null $description
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\PassengerUser $passenger
- * @property-read \App\Models\Payment|null $payment
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read PassengerUser $passenger
+ * @property-read Payment|null $payment
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction query()
@@ -27,6 +30,7 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereRewardTransactionId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereType($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RewardTransaction whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class RewardTransaction extends Model
@@ -42,6 +46,12 @@ class RewardTransaction extends Model
         'type',
         'description',
     ];
+
+    /** 2026-11-20: earned points have two decimals (RewardService::pointsFor); redeemed points stay whole. */
+    protected function casts(): array
+    {
+        return ['points' => 'float'];
+    }
 
     public function passenger()
     {

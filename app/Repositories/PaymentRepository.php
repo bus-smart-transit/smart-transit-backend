@@ -185,7 +185,7 @@ class PaymentRepository
 
             $rewardRows = $rewardByPayment->get($payment->payment_id, collect());
             $redeemedPoints = (int) abs($rewardRows->where('type', 'redeemed')->sum('points'));
-            $earnedPoints = (int) $rewardRows->where('type', 'earned')->sum('points');
+            $earnedPoints = round((float) $rewardRows->where('type', 'earned')->sum('points'), 2); // 2026-11-20: decimals
             $rewardDiscount = (float) $redeemedPoints;
             $grossAmount = (float) $payment->amount + $rewardDiscount;
 

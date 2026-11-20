@@ -328,7 +328,8 @@ it('recovers an unknown checkout from a signed paid-session webhook by payment m
     expect($payment->fresh()->gateway_reference)->toBe('cs_recovered_123');
     expect($payment->fresh()->payment_intent_id)->toBe('pi_recovered_123');
     expect(Ticket::where('payment_id', $payment->payment_id)->count())->toBe(1);
-    expect((int) $passenger->fresh()->reward_points)->toBe(17);
+    // 20 - 5 used + 0.21 earned on the PHP 42 paid (2026-11-20 rate: 0.1 point per PHP 20, two decimals).
+    expect(round((float) $passenger->fresh()->reward_points, 2))->toBe(15.21);
 
     $this->actingAs($passenger->user)->withHeader('Idempotency-Key', $key)
         ->postJson('/api/passengers/checkout', $payload)
@@ -346,7 +347,7 @@ it('takes the points once at checkout and takes PHP 1 off per point', function (
 
     expect((float) $payment->amount)->toBe(37.0);                       // 47 - 10 points x PHP 1
     expect((int) $pax->fresh()->reward_points)->toBe(20);
-    expect(RewardTransaction::where('payment_id', $payment->payment_id)->pluck('points')->all())->toBe([-10]);
+    expect(RewardTransaction::where('payment_id', $payment->payment_id)->pluck('points')->all())->toBe([-10.0]);
 });
 
 it('never lets two checkouts spend the same points: the second spend is refused and the balance cannot go below zero', function () {
@@ -397,8 +398,8 @@ it('keeps the points of a payment that was paid, and does not expire it', functi
     Artisan::call('payments:release-expired-holds');
 
     expect($payment->fresh()->status)->toBe('paid');
-    // 30 - 10 spent + 1 earned on the PHP 37 actually paid (1 point per PHP 20).
-    expect((int) $pax->fresh()->reward_points)->toBe(21);
+    // 30 - 10 spent + 0.19 earned on the PHP 37 actually paid (2026-11-20 rate: 0.1 point per PHP 20).
+    expect(round((float) $pax->fresh()->reward_points, 2))->toBe(20.19);
 });
 
 // ------------------------------------------------------------ the report values a point at the discount
@@ -433,8 +434,8 @@ it('honours a late payment when the seat is still free: one ticket, one seat, th
     expect($payment->fresh()->status)->toBe('paid');
     expect(Ticket::where('payment_id', $payment->payment_id)->count())->toBe(1);
     expect($f['trip']->fresh()->total_occupancy)->toBe(1);
-    // 30 - 10 taken again + 1 earned on the PHP 37 paid.
-    expect((int) $pax->fresh()->reward_points)->toBe(21);
+    // 30 - 10 taken again + 0.19 earned on the PHP 37 paid (2026-11-20 rate).
+    expect(round((float) $pax->fresh()->reward_points, 2))->toBe(20.19);
 });
 
 it('honours a payment that succeeds after an earlier attempt in the same checkout failed, when the seat is still free', function () {
