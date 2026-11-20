@@ -22,6 +22,7 @@ use Illuminate\Support\Collection;
 final class TripRunInfo
 {
     public const ONE_WAY = 'one_way';
+
     public const ROUND_TRIP = 'round_trip';
 
     /** @return array{key: string, label: string, source: string}|null */
@@ -53,7 +54,10 @@ final class TripRunInfo
             ->map(fn (RouteStop $rs) => ['stop_id' => (int) $rs->stop_id, 'name' => $rs->stop?->stop_name, 'stop_type' => $rs->stop_type])
             ->values();
 
-        $nonStop = $served->isNotEmpty() && $served->every(fn ($s) => $s['stop_type'] === 'terminal');
+        // 2026-11-20: a route that marks no express stop runs express non-stop between its two ends (ExpressStops).
+        $routeId = (int) (collect($routeStops)->first()?->route_id ?? 0);
+        $nonStop = $served->isNotEmpty() && ($served->every(fn ($s) => $s['stop_type'] === 'terminal')
+            || ($routeId && app(ExpressStops::class)->isDefaultNonStopRoute($routeId)));
 
         return [
             'type' => $type,

@@ -10,8 +10,10 @@ use App\Models\Stop;
 use App\Models\Trip;
 use App\Models\User;
 use App\Repositories\RouteGeometryRepository;
+use App\Repositories\RouteStopRepository;
 use App\Services\TicketService;
 use App\Support\ServiceType;
+use App\Support\TripRunInfo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -292,4 +294,54 @@ it('lets an operator mark a stop as served by express, with validation', functio
 
     $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/stops/{$routeStops['B']->id}/express", ['served_by_express' => 'maybe'])->assertUnprocessable();
     $this->actingAs($operator)->patchJson("/api/operator/routes/{$route->route_id}/stops/999999/express", ['served_by_express' => true])->assertNotFound();
+});
+
+// 2026-11-20 (user): a route that marks no stop runs its express trips non-stop between its own origin and destination.
+it('runs express non-stop between the route ends when the route marks no express stop', function () {
+    [$route, $stops, $fleetRoute, $operator] = exRoute('Plain ', []);
+    $express = exTrip($fleetRoute, $operator, 'express');
+
+    $data = $this->getJson("/api/trips/{$express->trip_id}/timeline")->assertSuccessful()->json('data');
+    $rows = collect($data['stops'])->keyBy('name');
+
+    expect($rows['Plain A']['selectable'])->toBeTrue()
+        ->and($rows['Plain E']['selectable'])->toBeTrue()
+        ->and($rows['Plain B']['type'])->toBe('pass_through')
+        ->and($rows['Plain D']['type'])->toBe('pass_through')
+        // No express times are set, so the two ends take the regular timetable as the estimate; nothing between them.
+        ->and($rows['Plain A']['eta_time'])->toBe('08:00')
+        ->and($rows['Plain E']['eta_time'])->toBe('09:00')
+        ->and($rows['Plain B']['eta_time'])->toBeNull();
+
+    $service = TripRunInfo::service('express', RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->get());
+    expect($service)->toMatchArray(['label' => 'Express - Non-stop', 'non_stop' => true])
+        ->and(collect($service['served_stops'])->pluck('name')->all())->toBe(['Plain A', 'Plain E']);
+
+    // A middle stop cannot be used on this express trip.
+    $this->getJson("/api/trips/{$express->trip_id}/timeline?".http_build_query(['boarding_stop_id' => $stops['B']->stop_id]))
+        ->assertUnprocessable()->assertJsonValidationErrors('boarding_stop_id');
+});
+
+it('switches to the marked stops as soon as the route marks one, and back when none is marked', function () {
+    [$route, , $fleetRoute, $operator, $routeStops] = exRoute('Switch ', []);
+    $express = exTrip($fleetRoute, $operator, 'express');
+    $selectable = fn () => collect($this->getJson("/api/trips/{$express->trip_id}/timeline")->assertSuccessful()->json('data.stops'))
+        ->where('selectable', true)->pluck('name')->all();
+
+    expect($selectable())->toBe(['Switch A', 'Switch E']);
+
+    // The same write the route page's express switch makes.
+    expect(app(RouteStopRepository::class)->updateExpress($route->route_id, $routeStops['D']->id, ['served_by_express' => true]))->toBeTrue();
+    expect($selectable())->toBe(['Switch D']);
+
+    $routeStops['D']->fresh()->update(['served_by_express' => false]);
+    expect($selectable())->toBe(['Switch A', 'Switch E']);
+});
+
+it('leaves regular trips on a route without express stops unchanged', function () {
+    [, , $fleetRoute, $operator] = exRoute('Reg ', []);
+    $regular = exTrip($fleetRoute, $operator, 'regular');
+
+    $rows = collect($this->getJson("/api/trips/{$regular->trip_id}/timeline")->assertSuccessful()->json('data.stops'))->keyBy('name');
+    expect($rows['Reg B']['type'])->toBe('stop')->and($rows['Reg B']['eta_time'])->toBe('08:15');
 });

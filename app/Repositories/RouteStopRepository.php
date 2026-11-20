@@ -133,4 +133,26 @@ class RouteStopRepository
 
         return true;
     }
+
+    /**
+     * 2026-11-20: what ExpressStops needs about a route: whether any stop is marked "served by express", and the order
+     * of its first and last stopping stop (pass-throughs never count as an end).
+     *
+     * @return array{marked: bool, first: int|null, last: int|null}
+     */
+    public function expressSummary(int $routeId): array
+    {
+        $row = DB::table('route_stop')
+            ->where('route_id', $routeId)
+            ->selectRaw('MAX(CASE WHEN served_by_express THEN 1 ELSE 0 END) AS marked')
+            ->selectRaw("MIN(CASE WHEN stop_type <> 'pass_through' THEN stop_order END) AS first_order")
+            ->selectRaw("MAX(CASE WHEN stop_type <> 'pass_through' THEN stop_order END) AS last_order")
+            ->first();
+
+        return [
+            'marked' => (int) ($row->marked ?? 0) === 1,
+            'first' => $row?->first_order !== null ? (int) $row->first_order : null,
+            'last' => $row?->last_order !== null ? (int) $row->last_order : null,
+        ];
+    }
 }

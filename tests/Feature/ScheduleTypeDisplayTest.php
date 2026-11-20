@@ -124,11 +124,14 @@ it('describes a regular trip as Regular with no stop list, an express as Express
     expect($nonStop['label'])->toBe('Express - Non-stop')->and($nonStop['non_stop'])->toBeTrue()->and(collect($nonStop['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
 });
 
-it('shows an express with no served stops recorded as Express with an empty list, never as Non-stop', function () {
+// 2026-11-20 (user): changed. A route that marks no express stop no longer leaves express with no stop: it runs non-stop
+// between the route's own first and last stop (ExpressStops). Before, this test expected "Express" with an empty list.
+it('shows an express on a route with no marked stops as Express - Non-stop between the route ends', function () {
     $f = sdFixture([]);
     $service = TripRunInfo::forTrip($f['mk'](['service_type' => 'express']))['service'];
 
-    expect($service['label'])->toBe('Express')->and($service['non_stop'])->toBeFalse()->and($service['served_stops'])->toBe([]);
+    expect($service['label'])->toBe('Express - Non-stop')->and($service['non_stop'])->toBeTrue()
+        ->and(collect($service['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
 });
 
 it('carries both facts to the booking list, the A2 timeline header, the operator schedule, the block cards, the ticket and the QR data', function () {

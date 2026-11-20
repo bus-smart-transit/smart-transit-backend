@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Support\ApiRequestMetrics;
 use App\Support\Database\RlsContext;
+use App\Support\ExpressStops;
 use App\Support\HealthBeat;
 use App\Support\PlaceGroups;
 use App\Support\RateLimiting\ToggleableRateLimiter;
@@ -32,6 +33,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(ApiRequestMetrics::class);
         // Batch 49 item 6: the stops are grouped into places once per request or job.
         $this->app->scoped(PlaceGroups::class);
+        // 2026-11-20: each route's default express stops are read once per request or job.
+        $this->app->scoped(ExpressStops::class);
 
         // Laravel's CacheServiceProvider is deferred and (re)binds the limiter
         // when it loads, so a plain singleton() here would be overwritten.

@@ -2,19 +2,23 @@
 
 namespace App\Models;
 
+use App\Support\ExpressStops;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @mixin IdeHelperRouteStop
+ *
  * @property int $route_stop_id
  * @property int $stop_id
  * @property int $route_id
  * @property int $stop_order
  * @property numeric $distance_from_origin_km
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property-read \App\Models\Route $route
- * @property-read \App\Models\Stop $stop
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read Route $route
+ * @property-read Stop $stop
+ *
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop query()
@@ -25,6 +29,7 @@ use Illuminate\Database\Eloquent\Model;
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopId($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereStopOrder($value)
  * @method static \Illuminate\Database\Eloquent\Builder<static>|RouteStop whereUpdatedAt($value)
+ *
  * @mixin \Eloquent
  */
 class RouteStop extends Model
@@ -33,10 +38,12 @@ class RouteStop extends Model
      * The table associated with the model data layout.
      */
     protected $table = 'route_stop';
+
     // DB column is `id` (created by $table->id() in migration).
     // Previously declared as 'route_stop_id' which caused Postgres to fail
     // with "column route_stop_id does not exist" on insert.
     protected $primaryKey = 'id';
+
     /**
      * The attributes that are mass assignable from structural payloads.
      */
@@ -71,6 +78,10 @@ class RouteStop extends Model
                 $routeStop->distance_from_origin_m = (int) round((float) $routeStop->distance_from_origin_km * 1000);
             }
         });
+        // 2026-11-20: a changed or removed stop can change an express trip's default ends (ExpressStops).
+        $forget = fn (RouteStop $routeStop) => app(ExpressStops::class)->forget((int) $routeStop->route_id);
+        static::saved($forget);
+        static::deleted($forget);
     }
 
     /**
@@ -88,5 +99,4 @@ class RouteStop extends Model
     {
         return $this->belongsTo(Stop::class, 'stop_id', 'stop_id');
     }
-
 }

@@ -31,11 +31,15 @@ final class ServiceType
         return self::normalize($type) === self::EXPRESS;
     }
 
-    /** The stop type a trip of this service sees: a non-express stop is a pass-through on express. */
+    /**
+     * The stop type a trip of this service sees: a non-express stop is a pass-through on express. 2026-11-20: on a route
+     * that marks no stop, express serves the route's own two ends, non-stop (ExpressStops).
+     */
     public static function effectiveStopType(?string $serviceType, RouteStop $routeStop): string
     {
         $type = $routeStop->stop_type ?? 'stop';
-        if (self::isExpress($serviceType) && in_array($type, config('timeline.stopping_types'), true) && ! $routeStop->served_by_express) {
+        if (self::isExpress($serviceType) && in_array($type, config('timeline.stopping_types'), true) && ! $routeStop->served_by_express
+            && ! app(ExpressStops::class)->isDefaultStop($routeStop)) {
             return 'pass_through';
         }
 
@@ -50,11 +54,15 @@ final class ServiceType
 
     /**
      * Minutes from departure at which the trip reaches the stop. Express never borrows the regular
-     * offsets (an express bus is faster); null means "ETA unavailable".
+     * offsets (an express bus is faster); null means "ETA unavailable". 2026-11-20: except the two ends of a route
+     * that marks no express stop (ExpressStops): without express times they take the regular ones as the estimate.
      */
     public static function offsetMinutes(?string $serviceType, RouteStop $routeStop): ?int
     {
         $value = self::isExpress($serviceType) ? $routeStop->express_offset_min : $routeStop->scheduled_offset_min;
+        if ($value === null && self::isExpress($serviceType) && app(ExpressStops::class)->isDefaultStop($routeStop)) {
+            $value = $routeStop->scheduled_offset_min;
+        }
 
         return $value === null ? null : (int) $value;
     }
