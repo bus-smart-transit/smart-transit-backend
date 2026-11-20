@@ -222,6 +222,8 @@ class TicketTrackingService
             return $view;
         }
 
+        // 2026-11-20: the trip id lets the page pick its own bus out of the live updates (trip ids are public elsewhere too).
+        $view['trip_id'] = (int) $trip->trip_id;
         $start = Carbon::parse($trip->trip_date->toDateString().' '.$time, $timezone);
         $direction = $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound';
         $grace = (int) config('tracking.grace_minutes_after');
