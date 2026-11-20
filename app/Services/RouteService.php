@@ -94,6 +94,7 @@ class RouteService
 
                 return [
                     'stop_id' => $rs->stop_id,
+                    'stop_code' => $rs->stop?->stop_code, // 2026-11-20: the route page links "Trips from here"
                     'stop_name' => $rs->stop?->stop_name,
                     'municipality' => $rs->stop?->municipality,
                     'latitude' => $latitude,

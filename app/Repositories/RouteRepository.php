@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Route;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -80,5 +81,39 @@ class RouteRepository
     public function customDropoffSettings(int $routeId): ?Route
     {
         return Route::where('route_id', $routeId)->first(['route_id', 'allow_custom_dropoff', 'custom_dropoff_mode']);
+    }
+
+    /**
+     * 2026-11-20: the routes a bus runs (an active bus on an active assignment) with a stop in one of these towns
+     * (lower case), with their stops and running buses, by name.
+     *
+     * @param  array<int, string>  $lowerTowns
+     * @return Collection<int, Route>
+     */
+    public function servingTowns(array $lowerTowns): Collection
+    {
+        if ($lowerTowns === []) {
+            return new Collection;
+        }
+
+        return $this->publicQuery()
+            ->whereHas('routeStops.stop', fn ($q) => $q->whereIn(DB::raw('lower(municipality)'), $lowerTowns))
+            ->orderBy('route_name')
+            ->get();
+    }
+
+    /** 2026-11-20: one route a bus runs, for its public page; null when no bus runs it. */
+    public function findPublic(int $routeId): ?Route
+    {
+        return $this->publicQuery()->where('route_id', $routeId)->first();
+    }
+
+    private function publicQuery(): Builder
+    {
+        $running = fn ($q) => $q->where('status', 'active')->whereHas('fleet', fn ($f) => $f->where('status', 'active'));
+
+        return Route::query()
+            ->whereHas('fleetRoutes', $running)
+            ->with(['routeStops.stop:stop_id,stop_name,municipality', 'fleetRoutes' => $running, 'fleetRoutes.fleet:fleet_id,bus_company_name,body_no,company_id']);
     }
 }

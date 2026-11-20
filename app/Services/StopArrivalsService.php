@@ -55,6 +55,11 @@ class StopArrivalsService
                 continue;
             }
             $eta = Carbon::parse($row['eta'])->setTimezone($now->getTimezone());
+            // 2026-11-20 (user: a bus scheduled minutes earlier vanished from the card): a bus that has not left yet is
+            // still coming even when its timetable time has passed; it is due now and shows as running late.
+            if ($eta->lt($now) && in_array((string) $trip->status, ['scheduled', 'delayed'], true)) {
+                $eta = $now->copy();
+            }
             if ($eta->lt($now->copy()->subMinutes(2)) || ! $eta->isSameDay($now)) {
                 continue;
             }

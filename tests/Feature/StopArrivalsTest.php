@@ -116,3 +116,16 @@ it('lists buses due later today apart from the next few hours, and nothing from 
         ->and(collect($data['later'])->pluck('eta_time')->all())->toBe(['15:20', '22:10'])
         ->and($data['later_total'])->toBe(2);
 });
+
+// 2026-11-20 (user: one of two buses from the same terminal did not show): a delayed bus (its time has passed and it
+// has not left) is still coming to the stop, so it is listed.
+it('lists a delayed bus that has not left yet', function () {
+    $f = saFixture();
+    ($f['trip'])('06:55', 'delayed');
+    ($f['trip'])('07:30');
+
+    $data = $this->getJson('/api/stops/'.$f['stops']['A']->stop_code.'/arrivals?limit=20')->assertOk()->json('data');
+
+    expect($data['total'])->toBe(2)
+        ->and($data['arrivals'][0])->toMatchArray(['status' => 'delayed', 'eta_minutes' => 0, 'scheduled_time' => '06:55', 'late_by_minutes' => 5, 'delayed' => true]);
+});

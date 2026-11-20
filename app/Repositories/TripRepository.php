@@ -42,9 +42,10 @@ class TripRepository
             return new Collection;
         }
 
+        // 2026-11-20 (user): a delayed bus (its time has passed and it has not left) is still coming, so it is listed.
         return Trip::with(['fleetRoute.fleet'])
             ->where('trip_date', $date)
-            ->whereIn('status', ['scheduled', 'boarding', 'departed', 'in-progress'])
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
             ->whereHas('fleetRoute.route.routeStops', fn ($q) => $q->whereIn('stop_id', $stopIds))
             ->orderBy('departure_time')
             ->get();
@@ -811,5 +812,20 @@ class TripRepository
         $trip = Trip::with(['driver:company_user_id,user_id', 'conductor:company_user_id,user_id'])->find($tripId);
 
         return array_values(array_filter([(int) $trip?->driver?->user_id, (int) $trip?->conductor?->user_id]));
+    }
+
+    /**
+     * 2026-11-20: a route's trips on a date that are still to run or on the road (its public page), earliest first.
+     *
+     * @return Collection<int, Trip>
+     */
+    public function openOnRouteOnDate(int $routeId, string $date): Collection
+    {
+        return Trip::with(['fleetRoute.fleet'])
+            ->where('trip_date', $date)
+            ->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress'])
+            ->whereHas('fleetRoute', fn ($q) => $q->where('route_id', $routeId))
+            ->orderBy('departure_time')
+            ->get();
     }
 }

@@ -26,6 +26,7 @@ use App\Http\Controllers\PassengerController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PayMongoController;
 use App\Http\Controllers\PlaceSearchController;
+use App\Http\Controllers\PublicRouteController;
 use App\Http\Controllers\RegionController;
 use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\ReportingController;
@@ -150,6 +151,10 @@ Route::get('/region', [RegionController::class, 'show'])->middleware('throttle:p
 // Batch 51 item 3: "Are you in {place}?" on the homepage (a point rounded to about 1 km; cached; own limit).
 Route::get('/region/place', [RegionController::class, 'place'])->middleware('throttle:20,1,region-place');
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:public-read');
+// 2026-11-20 (user): the passengers' route pages (a province picture -> its routes -> one route and today's departures).
+Route::get('/routes', [PublicRouteController::class, 'forProvince'])->middleware('throttle:public-read');
+Route::get('/routes/{routeId}', [PublicRouteController::class, 'show'])->whereNumber('routeId')->middleware('throttle:public-read');
+Route::get('/routes/{routeId}/departures', [PublicRouteController::class, 'departures'])->whereNumber('routeId')->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:public-read');
 Route::get('trips', [TripController::class, 'availableTrips'])->middleware('throttle:public-read');
 // Batch 77: the buses coming to a stop (Track Bus stop pin card).
