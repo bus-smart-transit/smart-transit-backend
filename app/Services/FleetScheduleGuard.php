@@ -87,7 +87,7 @@ class FleetScheduleGuard
             return;
         }
 
-        $service = ServiceType::normalize($serviceType) === ServiceType::EXPRESS ? 'express ' : '';
+        $service = ServiceType::normalize($serviceType) === ServiceType::EXPRESS ? 'non-stop ' : ''; // 2026-11-21: express is Non-stop
         throw ValidationException::withMessages(['fleet_route_id' => [sprintf(
             'This bus has no %sfare for this route on %s, so its trips could not be sold. Add a fare rule for it first (Fleets, Fare rules), then schedule it.',
             $service, Carbon::parse($tripDate)->format('M j, Y'),

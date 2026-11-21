@@ -101,7 +101,8 @@ it('labels a one-leg block One-way run, a multi-leg block Round-trip run, and a 
     expect(TripRunInfo::forTrip($standaloneOne)['run_pattern'])->toMatchArray(['label' => 'One-way run', 'source' => 'trip_type']);
 });
 
-it('describes a regular trip as Regular with no stop list, an express as Express with the stops it serves, and Non-stop only when those are just the terminals', function () {
+// 2026-11-21 (user): express is shown as "Non-stop" and serves only the route's two ends, whatever stops are marked.
+it('describes a regular trip as Regular with no stop list, and an express as Non-stop with its two ends', function () {
     $f = sdFixture(['A', 'B', 'D', 'E']);
     $regular = $f['mk']();
     $express = $f['mk'](['service_type' => 'express']);
@@ -109,28 +110,23 @@ it('describes a regular trip as Regular with no stop list, an express as Express
     $reg = TripRunInfo::forTrip($regular)['service'];
     expect($reg)->toMatchArray(['type' => 'regular', 'label' => 'Regular', 'non_stop' => false, 'served_stops' => []]);
 
+    // B and D are marked "served by express", but a non-stop trip still serves only the two ends.
     $exp = TripRunInfo::forTrip($express)['service'];
-    expect($exp['label'])->toBe('Express')->and($exp['non_stop'])->toBeFalse();
-    expect(collect($exp['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop B', 'Stop D', 'Stop E']); // several stops, in travel order
+    expect($exp['label'])->toBe('Non-stop')->and($exp['non_stop'])->toBeTrue();
+    expect(collect($exp['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
 
-    // On the reverse leg the same stops are listed in the order the bus meets them.
+    // On the reverse leg the two ends are listed in the order the bus meets them.
     $reverse = TripRunInfo::forTrip($f['mk'](['service_type' => 'express', 'leg_direction' => 'reverse']))['service'];
-    expect(collect($reverse['served_stops'])->pluck('name')->all())->toBe(['Stop E', 'Stop D', 'Stop B', 'Stop A']);
-
-    // Derived from data, not a flag: serve only the terminals and the same trip becomes Non-stop.
-    RouteStop::where('route_id', $f['route']->route_id)->update(['served_by_express' => false]);
-    RouteStop::where('route_id', $f['route']->route_id)->where('stop_type', 'terminal')->update(['served_by_express' => true]);
-    $nonStop = TripRunInfo::forTrip($f['mk'](['service_type' => 'express']))['service'];
-    expect($nonStop['label'])->toBe('Express - Non-stop')->and($nonStop['non_stop'])->toBeTrue()->and(collect($nonStop['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
+    expect(collect($reverse['served_stops'])->pluck('name')->all())->toBe(['Stop E', 'Stop A']);
 });
 
 // 2026-11-20 (user): changed. A route that marks no express stop no longer leaves express with no stop: it runs non-stop
 // between the route's own first and last stop (ExpressStops). Before, this test expected "Express" with an empty list.
-it('shows an express on a route with no marked stops as Express - Non-stop between the route ends', function () {
+it('shows an express on a route with no marked stops as Non-stop between the route ends', function () {
     $f = sdFixture([]);
     $service = TripRunInfo::forTrip($f['mk'](['service_type' => 'express']))['service'];
 
-    expect($service['label'])->toBe('Express - Non-stop')->and($service['non_stop'])->toBeTrue()
+    expect($service['label'])->toBe('Non-stop')->and($service['non_stop'])->toBeTrue()
         ->and(collect($service['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
 });
 
@@ -141,8 +137,8 @@ it('carries both facts to the booking list, the A2 timeline header, the operator
     $leg = $block->legs->first();
 
     // Booking list (passenger).
-    $dep = $this->getJson("/api/booking/departures?origin_stop_id={$f['stops']['B']->stop_id}&destination_stop_id={$f['stops']['D']->stop_id}&date=2026-10-05")->assertSuccessful()->json('data.departures.0');
-    expect($dep['run_pattern']['label'])->toBe('Round-trip run')->and($dep['service']['label'])->toBe('Express')->and(collect($dep['service']['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop B', 'Stop D', 'Stop E']);
+    $dep = $this->getJson("/api/booking/departures?origin_stop_id={$f['stops']['A']->stop_id}&destination_stop_id={$f['stops']['E']->stop_id}&date=2026-10-05")->assertSuccessful()->json('data.departures.0');
+    expect($dep['run_pattern']['label'])->toBe('Round-trip run')->and($dep['service']['label'])->toBe('Non-stop')->and(collect($dep['service']['served_stops'])->pluck('name')->all())->toBe(['Stop A', 'Stop E']);
 
     // The A2 timeline header.
     $trip = $this->getJson("/api/trips/{$leg->trip_id}/timeline")->assertSuccessful()->json('data.trip');
@@ -151,12 +147,12 @@ it('carries both facts to the booking list, the A2 timeline header, the operator
     // The operator's schedule list.
     $list = collect($this->actingAs($f['operator'])->getJson('/api/operator/trips?status_filter=all')->assertSuccessful()->json('data'));
     $row = $list->firstWhere('trip_id', $leg->trip_id);
-    expect($row['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($row['run_info']['service']['label'])->toBe('Express');
+    expect($row['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($row['run_info']['service']['label'])->toBe('Non-stop');
 
     // The operator's block cards.
     $cards = collect($this->actingAs($f['operator'])->getJson('/api/operator/assignments')->assertSuccessful()->json('data'));
     $card = $cards->first(fn ($c) => ($c['shift_block_id'] ?? null) === $block->shift_block_id);
-    expect($card['run_pattern']['label'])->toBe('Round-trip run')->and($card['service']['label'])->toBe('Express');
+    expect($card['run_pattern']['label'])->toBe('Round-trip run')->and($card['service']['label'])->toBe('Non-stop');
 
     // The ticket and its QR data (the saved image draws from the same payload).
     $user = User::create(['username' => 'pax'.Str::random(6), 'email' => Str::random(8).'@example.com', 'password' => bcrypt('password123'), 'role' => 'passenger']);
@@ -166,7 +162,7 @@ it('carries both facts to the booking list, the A2 timeline header, the operator
         'origin_stop_id' => $f['stops']['B']->stop_id, 'destination_stop_id' => $f['stops']['D']->stop_id]);
 
     $mine = collect($this->actingAs($user)->getJson('/api/passengers/tickets')->assertSuccessful()->json('data.data'))->firstWhere('ticket_uuid', $ticket->ticket_uuid);
-    expect($mine['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($mine['run_info']['service']['label'])->toBe('Express');
+    expect($mine['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($mine['run_info']['service']['label'])->toBe('Non-stop');
     $qr = $this->actingAs($user)->getJson("/api/passengers/tickets/{$ticket->ticket_uuid}/qr")->assertSuccessful()->json('data');
-    expect($qr['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($qr['run_info']['service']['label'])->toBe('Express');
+    expect($qr['run_info']['run_pattern']['label'])->toBe('Round-trip run')->and($qr['run_info']['service']['label'])->toBe('Non-stop');
 });

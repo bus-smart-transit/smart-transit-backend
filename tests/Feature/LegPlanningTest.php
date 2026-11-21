@@ -172,7 +172,8 @@ it('refuses a block with more legs than the setting allows', function () {
     $f = lplFixture(10);
     config(['shift_blocks.max_legs_per_block' => 2]);
 
-    lplBlock($this, $f, ['06:00', '07:00', '08:00'])->assertStatus(422)->assertJsonFragment(['A shift block has 1 to 2 legs.']);
+    // 2026-11-21 (user): blocks have an even number of legs, so the smallest number over the limit here is 4.
+    lplBlock($this, $f, ['06:00', '07:00', '08:00', '09:00'])->assertStatus(422)->assertJsonFragment(['A shift block has 1 to 2 legs.']);
 });
 
 it('lets the Operator move a leg later, and keeps the turnaround to the next leg', function () {

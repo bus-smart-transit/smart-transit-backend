@@ -291,7 +291,7 @@ test('dispatcher override can force hand-off regardless of GPS state', function 
 });
 
 test('shift block legs alternate outbound and reverse directions for N legs', function () {
-    config(['shift_blocks.legs_per_block' => 5]);
+    config(['shift_blocks.legs_per_block' => 6]); // 2026-11-21 (user): blocks have an even number of legs
 
     [$operatorUser, $operator] = makeBlockTestStaff('operator');
     [, $driver] = makeBlockTestStaff('driver');
@@ -304,7 +304,7 @@ test('shift block legs alternate outbound and reverse directions for N legs', fu
         'conductor_id' => $conductor->company_user_id,
         'block_type' => 'morning',
         'scheduled_date' => now()->toDateString(),
-        'leg_departure_times' => ['06:00', '08:00', '10:00', '12:00', '14:00'],
+        'leg_departure_times' => ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00'],
     ]);
 
     $response->assertSuccessful();
@@ -316,7 +316,7 @@ test('shift block legs alternate outbound and reverse directions for N legs', fu
         ->values()
         ->all();
 
-    expect($directions)->toBe(['outbound', 'reverse', 'outbound', 'reverse', 'outbound']);
+    expect($directions)->toBe(['outbound', 'reverse', 'outbound', 'reverse', 'outbound', 'reverse']);
 });
 
 test('repair command is idempotent, supports dry-run, and skips started/completed blocks', function () {

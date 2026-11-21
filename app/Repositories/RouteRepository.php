@@ -3,7 +3,9 @@
 namespace App\Repositories;
 
 use App\Models\Route;
+use App\Support\FinancialClock;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -118,9 +120,17 @@ class RouteRepository
         return $this->publicQuery()->where('route_id', $routeId)->first();
     }
 
+    /**
+     * 2026-11-21 (user, Dynamic Route Scheduling): a route is public while one of its buses has a trip on it that is not
+     * cancelled or finished, from today to config booking.public_route_window_days ahead; its bus companies are those.
+     */
     private function publicQuery(): Builder
     {
-        $running = fn ($q) => $q->where('status', 'active')->whereHas('fleet', fn ($f) => $f->where('status', 'active'));
+        $today = FinancialClock::today();
+        $until = Carbon::parse($today)->addDays((int) config('booking.public_route_window_days', 7))->toDateString();
+        $running = fn ($q) => $q->where('status', 'active')
+            ->whereHas('fleet', fn ($f) => $f->where('status', 'active'))
+            ->whereHas('trips', fn ($t) => $t->whereBetween('trip_date', [$today, $until])->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress']));
 
         return Route::query()
             ->whereHas('fleetRoutes', $running)

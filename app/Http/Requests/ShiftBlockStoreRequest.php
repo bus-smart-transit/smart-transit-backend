@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\EvenLegCount;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -29,7 +30,7 @@ class ShiftBlockStoreRequest extends FormRequest
             'block_type' => ['required', 'string'],
             'scheduled_date' => ['required', 'date'],
             'service_type' => ['sometimes', 'in:regular,express'],
-            'leg_departure_times' => ['required', 'array'],
+            'leg_departure_times' => ['required', 'array', new EvenLegCount], // 2026-11-21 (user): out and back
             'leg_departure_times.*' => ['required', 'date_format:H:i'],
         ];
     }

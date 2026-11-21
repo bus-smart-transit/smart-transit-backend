@@ -26,8 +26,11 @@ function prOperator(): User
     return $user->fresh();
 }
 
-/** A route through the given towns (one stop each); with $bus, an active bus runs it. */
-function prRoute(User $operator, string $name, array $towns, bool $bus = true): array
+/**
+ * A route through the given towns (one stop each); with $bus, an active bus runs it. 2026-11-21 (user, Dynamic Route
+ * Scheduling): a route is public while a bus has a trip on it in the next 7 days, so the bus gets one on $tripDate.
+ */
+function prRoute(User $operator, string $name, array $towns, bool $bus = true, ?string $tripDate = '2026-10-07'): array
 {
     $route = Route::create(['route_name' => $name, 'origin' => $towns[0].' Terminal', 'destination' => end($towns).' Terminal']);
     foreach ($towns as $i => $town) {
@@ -38,6 +41,9 @@ function prRoute(User $operator, string $name, array $towns, bool $bus = true): 
     if ($bus) {
         $fleet = Fleet::create(['company_user_id' => $operator->companyProfile->company_user_id, 'plate_number' => 'PR-'.fake()->unique()->numerify('####'), 'bus_company_name' => 'Sample Lines', 'body_no' => '77', 'capacity' => 30, 'seated_capacity' => 30, 'standing_capacity' => 0, 'status' => 'active', 'vehicle_class' => 'ordinary']);
         $fleetRoute = FleetRoute::create(['fleet_id' => $fleet->fleet_id, 'route_id' => $route->route_id, 'start_time' => '05:00', 'end_time' => '22:00', 'status' => 'active']);
+        if ($tripDate !== null) {
+            Trip::create(['fleet_route_id' => $fleetRoute->fleet_route_id, 'company_user_id' => $operator->companyProfile->company_user_id, 'trip_date' => $tripDate, 'departure_time' => '06:00', 'trip_type' => 'one_way', 'leg_direction' => 'outbound', 'status' => 'scheduled', 'current_seated_capacity' => 0, 'current_standing_capacity' => 0, 'total_occupancy' => 0]);
+        }
     }
 
     return [$route, $fleetRoute];
@@ -59,6 +65,7 @@ it('lists the routes a bus runs through a province, with the province towns each
     [$east] = prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']);
     prRoute($operator, 'City to North Town', ['Sample City', 'North Town']);
     prRoute($operator, 'Unused East Route', ['Sample City', 'East Town'], false); // no bus runs it
+    prRoute($operator, 'Far Future Route', ['Sample City', 'East Town'], true, '2026-10-20'); // its only trip is past the 7 days
 
     $data = $this->getJson('/api/routes?province=sample oriental')->assertOk()->json('data');
 

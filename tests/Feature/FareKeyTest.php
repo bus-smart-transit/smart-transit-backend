@@ -137,12 +137,13 @@ it('prices regular and express separately and sells express only where an expres
     $express = fkTrip($fleet, $operator, 'express', 'outbound', '09:00');
 
     // No express rule yet: refused as "Fare unavailable", with no borrowing from the regular rule.
-    expect(fn () => fkPrice($express, $stops, 'B', 'D'))->toThrow(ValidationException::class, 'Fare unavailable');
+    // 2026-11-21 (user): express is Non-stop, so its journey is the route's two ends.
+    expect(fn () => fkPrice($express, $stops, 'A', 'E'))->toThrow(ValidationException::class, 'Fare unavailable');
     expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(47.0);
 
     // Once an express rule exists for the class, the same trip is priced from it (its own base, base distance and rate).
     fkRule('aircon', 'express', 20.00, 3.00, ['base_distance_km' => 10]);
-    expect(fkPrice($express, $stops, 'B', 'D')['amount'])->toBe(50.0); // 20 + (20 - 10) x 3
+    expect(fkPrice($express, $stops, 'A', 'E')['amount'])->toBe(110.0); // 20 + (40 - 10) x 3
     expect(fkPrice($regular, $stops, 'B', 'D')['amount'])->toBe(47.0); // regular untouched
 });
 

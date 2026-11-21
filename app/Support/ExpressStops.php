@@ -22,12 +22,13 @@ final class ExpressStops
 
     public function __construct(private RouteStopRepository $routeStops) {}
 
-    /** True when express trips on this route run non-stop between its first and last stop (no stop is marked). */
+    /**
+     * True when express trips on this route run non-stop between its first and last stop. 2026-11-21 (user): express is
+     * shown as "Non-stop" and always runs non-stop, so stops marked "served by express" no longer change it.
+     */
     public function isDefaultNonStopRoute(int $routeId): bool
     {
-        $summary = $this->summary($routeId);
-
-        return ! $summary['marked'] && $summary['first'] !== null;
+        return $this->summary($routeId)['first'] !== null;
     }
 
     /** True when this route stop is one of the two ends an express trip serves by default. */

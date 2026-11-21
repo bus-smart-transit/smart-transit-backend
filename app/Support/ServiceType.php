@@ -38,7 +38,8 @@ final class ServiceType
     public static function effectiveStopType(?string $serviceType, RouteStop $routeStop): string
     {
         $type = $routeStop->stop_type ?? 'stop';
-        if (self::isExpress($serviceType) && in_array($type, config('timeline.stopping_types'), true) && ! $routeStop->served_by_express
+        // 2026-11-21 (user): express is "Non-stop": only the route's first and last stop, whatever stops are marked.
+        if (self::isExpress($serviceType) && in_array($type, config('timeline.stopping_types'), true)
             && ! app(ExpressStops::class)->isDefaultStop($routeStop)) {
             return 'pass_through';
         }

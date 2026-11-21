@@ -101,8 +101,9 @@ it('marks only terminals as served by express when the migration backfills exist
     expect($routeStops['B']->fresh()->served_by_express)->toBeFalse();
 });
 
-it('shows non-express stops as pass-through rows on an express timeline, with no ETA invented', function () {
-    [, $stops, $fleetRoute, $operator] = exRoute();
+// 2026-11-21 (user): express is "Non-stop": only the route's first and last stop, even where stops are marked.
+it('shows every stop between the ends as a pass-through on a non-stop timeline, even marked ones', function () {
+    [, $stops, $fleetRoute, $operator] = exRoute(); // D is marked "served by express"
     $express = exTrip($fleetRoute, $operator, 'express');
 
     $data = $this->getJson("/api/trips/{$express->trip_id}/timeline")->assertSuccessful()->json('data');
@@ -110,12 +111,11 @@ it('shows non-express stops as pass-through rows on an express timeline, with no
 
     expect($data['trip']['service_type'])->toBe('express');
     expect($byName['Stop B']['type'])->toBe('pass_through');
-    expect($byName['Stop B']['selectable'])->toBeFalse();
-    expect($byName['Stop D']['type'])->toBe('stop');
-    expect($byName['Stop D']['selectable'])->toBeTrue();
-    // No express offsets exist, so no stop has a time. The regular offsets are not borrowed.
-    expect(collect($data['stops'])->pluck('eta_time')->filter()->all())->toBe([]);
-    expect($data['header']['via'])->toBe(['Stop D']); // B is not "via" on express
+    expect($byName['Stop D']['type'])->toBe('pass_through');
+    expect(collect($data['stops'])->where('selectable', true)->pluck('name')->values()->all())->toBe(['Stop A', 'Stop E']);
+    // No express offsets exist: the two ends take the regular timetable as the estimate, nothing between them.
+    expect(collect($data['stops'])->pluck('eta_time')->filter()->values()->all())->toBe(['08:00', '09:00']);
+    expect($data['header']['via'])->toBe([]);
     expect($data['allow_custom_dropoff'])->toBeFalse();
 });
 
@@ -161,7 +161,7 @@ it('says "Fare unavailable" for an express journey and never falls back to the r
     $express = exTrip($fleetRoute, $operator, 'express');
 
     $fare = $this->getJson("/api/trips/{$express->trip_id}/timeline?".http_build_query([
-        'boarding_stop_id' => $stops['A']->stop_id, 'alighting_stop_id' => $stops['D']->stop_id, 'seat_type' => 'seated',
+        'boarding_stop_id' => $stops['A']->stop_id, 'alighting_stop_id' => $stops['E']->stop_id, 'seat_type' => 'seated',
     ]))->assertSuccessful()->json('data.fare');
 
     expect($fare['error'])->toBe('Fare unavailable');
@@ -175,7 +175,7 @@ it('refuses to sell an express ticket, and refuses a tampered stop for what it i
     $item = fn (Trip $trip, string $from, string $to) => ['trip_id' => $trip->trip_id, 'seat_type' => 'seated', 'origin_stop_id' => $stops[$from]->stop_id, 'destination_stop_id' => $stops[$to]->stop_id];
 
     // A served journey: still not for sale in Stage 1.
-    expect(fn () => app(TicketService::class)->reserveAndPrice($item($express, 'A', 'D')))
+    expect(fn () => app(TicketService::class)->reserveAndPrice($item($express, 'A', 'E')))
         ->toThrow(ValidationException::class, 'Fare unavailable');
 
     // A stop express skips: refused as a stop problem, before the fare rule is even considered.
@@ -198,14 +198,14 @@ it('lists an express departure as not bookable, and Book Now never picks it', fu
     [, $stops, $fleetRoute, $operator] = exRoute();
     exTrip($fleetRoute, $operator, 'express', '07:00');
     $regular = exTrip($fleetRoute, $operator, 'regular', '09:00');
-    $q = ['origin_stop_id' => $stops['A']->stop_id, 'destination_stop_id' => $stops['D']->stop_id];
+    $q = ['origin_stop_id' => $stops['A']->stop_id, 'destination_stop_id' => $stops['E']->stop_id];
 
-    $trips = $this->getJson('/api/booking/trips?'.http_build_query(['from' => $stops['A']->fresh()->stop_code, 'to' => $stops['D']->fresh()->stop_code, 'date' => '2026-10-04']))->assertSuccessful()->json('data.trips');
+    $trips = $this->getJson('/api/booking/trips?'.http_build_query(['from' => $stops['A']->fresh()->stop_code, 'to' => $stops['E']->fresh()->stop_code, 'date' => '2026-10-04']))->assertSuccessful()->json('data.trips');
     $byService = collect($trips)->keyBy('service_type');
     expect($byService['express']['bookable'])->toBeFalse();
     expect($byService['express']['fare'])->toBeNull();
     expect($byService['regular']['bookable'])->toBeTrue();
-    expect($byService['regular']['fare'])->toEqual(75.0); // 15 + 30 km * 2: the regular fare is not cached onto express
+    expect($byService['regular']['fare'])->toEqual(95.0); // 15 + 40 km * 2: the regular fare is not cached onto express
 
     $best = $this->getJson('/api/booking/resolve?'.http_build_query($q + ['mode' => 'now']))->assertSuccessful()->json('data.trip');
     expect($best['trip_id'])->toBe($regular->trip_id);
@@ -222,7 +222,8 @@ it('does not offer an express trip for a journey that uses a stop it skips', fun
     expect(collect($trips)->pluck('service_type')->all())->toBe([]);
 });
 
-it('keeps express settings per route: a second route with different served stops is independent', function () {
+// 2026-11-21 (user): marked stops no longer change a non-stop trip, on any route.
+it('runs non-stop on every route, whichever stops each route marks', function () {
     $operator = exStaff('operator');
     [, $stopsOne, $frOne] = exRoute('One ', ['A', 'D', 'E'], $operator);
     [, $stopsTwo, $frTwo] = exRoute('Two ', ['A', 'B', 'E'], $operator); // this route's express DOES stop at B
@@ -233,9 +234,10 @@ it('keeps express settings per route: a second route with different served stops
     $two = collect($this->getJson("/api/trips/{$tripTwo->trip_id}/timeline")->json('data.stops'))->keyBy('name');
 
     expect($one['One B']['type'])->toBe('pass_through');
-    expect($two['Two B']['type'])->toBe('stop');
-    expect($one['One D']['type'])->toBe('stop');
+    expect($two['Two B']['type'])->toBe('pass_through');
+    expect($one['One D']['type'])->toBe('pass_through');
     expect($two['Two D']['type'])->toBe('pass_through');
+    expect($one['One A']['selectable'])->toBeTrue()->and($two['Two E']['selectable'])->toBeTrue();
 });
 
 it('mirrors served stops and express offsets on a reverse leg', function () {
@@ -314,7 +316,7 @@ it('runs express non-stop between the route ends when the route marks no express
         ->and($rows['Plain B']['eta_time'])->toBeNull();
 
     $service = TripRunInfo::service('express', RouteStop::where('route_id', $route->route_id)->orderBy('stop_order')->get());
-    expect($service)->toMatchArray(['label' => 'Express - Non-stop', 'non_stop' => true])
+    expect($service)->toMatchArray(['label' => 'Non-stop', 'non_stop' => true])
         ->and(collect($service['served_stops'])->pluck('name')->all())->toBe(['Plain A', 'Plain E']);
 
     // A middle stop cannot be used on this express trip.
@@ -322,7 +324,8 @@ it('runs express non-stop between the route ends when the route marks no express
         ->assertUnprocessable()->assertJsonValidationErrors('boarding_stop_id');
 });
 
-it('switches to the marked stops as soon as the route marks one, and back when none is marked', function () {
+// 2026-11-21 (user): marking a stop no longer changes a non-stop trip (it used to switch to the marked stops).
+it('keeps a non-stop trip on its two ends when the route marks a stop', function () {
     [$route, , $fleetRoute, $operator, $routeStops] = exRoute('Switch ', []);
     $express = exTrip($fleetRoute, $operator, 'express');
     $selectable = fn () => collect($this->getJson("/api/trips/{$express->trip_id}/timeline")->assertSuccessful()->json('data.stops'))
@@ -332,7 +335,7 @@ it('switches to the marked stops as soon as the route marks one, and back when n
 
     // The same write the route page's express switch makes.
     expect(app(RouteStopRepository::class)->updateExpress($route->route_id, $routeStops['D']->id, ['served_by_express' => true]))->toBeTrue();
-    expect($selectable())->toBe(['Switch D']);
+    expect($selectable())->toBe(['Switch A', 'Switch E']);
 
     $routeStops['D']->fresh()->update(['served_by_express' => false]);
     expect($selectable())->toBe(['Switch A', 'Switch E']);

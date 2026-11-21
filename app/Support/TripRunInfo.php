@@ -61,7 +61,7 @@ final class TripRunInfo
 
         return [
             'type' => $type,
-            'label' => $nonStop ? 'Express - Non-stop' : 'Express',
+            'label' => 'Non-stop', // 2026-11-21 (user): express is shown as Non-stop (most people know the word)
             'non_stop' => $nonStop,
             'served_stops' => $served->all(),
         ];
