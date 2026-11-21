@@ -60,6 +60,7 @@ class ShiftBlockService
      */
     public function createBlock(array $payload): ShiftBlock
     {
+        $payload = $this->fleets->withFleetRoute($payload); // 2026-11-21 (user): bus and route chosen when scheduling
         [$fleetRoute, $driver, $conductor, $legTimes] = $this->assertBlockCanBeCreated($payload);
         $block = $this->persistBlock($payload, $fleetRoute, $legTimes);
         $this->notifyBlockAssigned($block, $driver, $conductor, $fleetRoute, $payload);
@@ -77,6 +78,7 @@ class ShiftBlockService
      */
     public function previewRange(array $payload): array
     {
+        $payload = $this->fleets->withFleetRoute($payload); // 2026-11-21 (user): bus and route chosen when scheduling
         // Batch 46: refuse another company's crew up front, so the preview never reads their schedule.
         $this->assertCrewPair($payload);
         $dates = $this->rangeDates((string) $payload['from_date'], (string) $payload['to_date']);
@@ -119,6 +121,7 @@ class ShiftBlockService
      */
     public function createRange(array $payload): array
     {
+        $payload = $this->fleets->withFleetRoute($payload); // 2026-11-21 (user): bus and route chosen when scheduling
         $created = [];
         $result = DB::transaction(function () use ($payload, &$created) {
             StaffUser::whereIn('company_user_id', [(int) $payload['driver_id'], (int) $payload['conductor_id']])->lockForUpdate()->get();

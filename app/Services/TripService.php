@@ -81,6 +81,8 @@ class TripService
 
     public function scheduleTrip(array $payload): object
     {
+        // 2026-11-21 (user): the bus and the route are chosen here; their bus-and-route row is found or made.
+        $payload = $this->fleets->withFleetRoute($payload);
         // Batch 46 step 2: only on a bus of the scheduling Operator's company.
         $this->fleets->assertFleetRouteOfCompany((int) $payload['company_user_id'], $payload['fleet_route_id'] ?? null);
 
@@ -345,6 +347,27 @@ class TripService
      *
      * @throws ValidationException
      */
+    /**
+     * 2026-11-21 (user): move a trip onto another bus by naming the bus: its row for the trip's route is found or made
+     * (FleetService::linkFor checks the bus is the owner's company's and active), then changeFleet decides as before.
+     */
+    /** The Operator who scheduled the trip (0 when there is no such trip). */
+    public function ownerOf(int $tripId): int
+    {
+        return (int) ($this->tripRepository->findById($tripId)?->company_user_id ?? 0);
+    }
+
+    public function changeFleetToBus(int $tripId, int $fleetId, int $ownerCompanyUserId): object
+    {
+        $trip = $this->tripRepository->findById($tripId);
+        if (! $trip?->fleetRoute) {
+            throw ValidationException::withMessages(['trip' => ['Trip not found.']]);
+        }
+        $link = $this->fleets->linkFor($ownerCompanyUserId, $fleetId, (int) $trip->fleetRoute->route_id);
+
+        return $this->changeFleet($tripId, (int) $link->fleet_route_id);
+    }
+
     public function changeFleet(int $tripId, int $fleetRouteId): object
     {
         $trip = $this->tripRepository->findById($tripId);

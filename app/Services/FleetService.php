@@ -6,9 +6,12 @@ use App\Models\FleetRoute;
 use App\Repositories\CompanyRepository;
 use App\Repositories\FleetRepository;
 use App\Repositories\FleetRouteRepository;
+use App\Repositories\RouteRepository;
 use App\Repositories\StaffRepository;
 use App\Repositories\TripRepository;
+use App\Support\BusLabel;
 use App\Support\CompanyScope;
+use App\Support\OperatingWindow;
 use App\Support\VehicleClass;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -31,6 +34,11 @@ class FleetService
         $routes = $payload['routes'] ?? [];
         unset($payload['routes']);
         $payload['vehicle_class'] = VehicleClass::normalize($payload['vehicle_class'] ?? null);
+        // 2026-11-21 (user): a bus added with routes and no hours of its own gets the window that covers them.
+        if (empty($payload['operating_start_time']) && $routes !== []) {
+            $window = OperatingWindow::cover(array_map(fn ($route) => [(string) $route['start_time'], (string) $route['end_time']], $routes));
+            [$payload['operating_start_time'], $payload['operating_end_time']] = $window ?? [null, null];
+        }
 
         // B3: the fleet row and its fleets_routes rows are written atomically so
         // a fleet can never be saved while its selected routes are silently lost.
@@ -126,6 +134,94 @@ class FleetService
         if (! $fleetRouteId || ! $this->fleetRepository->fleetRouteIsOwnedByOperator((int) $fleetRouteId, $ownerCompanyUserId)) {
             throw ValidationException::withMessages(['fleet_route_id' => ['Choose one of your own buses.']]);
         }
+    }
+
+    /**
+     * 2026-11-21 (user): the route is chosen when a trip is scheduled, not fixed on the bus. A request that names a bus
+     * and a route (fleet_id + route_id) gets the bus-and-route row that trips, tickets and fares are kept on: the
+     * existing one (made active again if it was removed), or a new one the first time this bus runs this route, with
+     * the bus's operating hours. The bus and the route must both be the scheduling Operator's company's, and the bus
+     * active. A request that already names a fleet_route_id is returned unchanged.
+     *
+     * @param  array<string, mixed>  $payload  with company_user_id (who schedules)
+     * @return array<string, mixed> the payload with fleet_route_id set
+     *
+     * @throws ValidationException
+     */
+    public function withFleetRoute(array $payload): array
+    {
+        if (! empty($payload['fleet_route_id']) || empty($payload['fleet_id']) || empty($payload['route_id'])) {
+            return $payload;
+        }
+        $payload['fleet_route_id'] = $this->linkFor((int) $payload['company_user_id'], (int) $payload['fleet_id'], (int) $payload['route_id'])->fleet_route_id;
+
+        return $payload;
+    }
+
+    /**
+     * The bus-and-route row for this bus on this route (see withFleetRoute).
+     *
+     * @throws ValidationException
+     */
+    public function linkFor(int $ownerCompanyUserId, int $fleetId, int $routeId): FleetRoute
+    {
+        $fleet = $this->fleetRepository->findById($fleetId);
+        $isAdmin = $this->staff->roleOf($ownerCompanyUserId) === 'admin';
+        if (! $fleet || (! $isAdmin && ! $this->fleetRepository->isOwnedByOperator($fleetId, $ownerCompanyUserId))) {
+            throw ValidationException::withMessages(['fleet_id' => ['Choose one of your own buses.']]);
+        }
+        if ($fleet->status !== 'active') {
+            throw ValidationException::withMessages(['fleet_id' => ['This bus is not in service. Choose an active bus.']]);
+        }
+        $route = app(RouteRepository::class)->findById($routeId);
+        if (! $route || (! $isAdmin && (int) $route->company_id !== (int) CompanyScope::companyIdOf($ownerCompanyUserId))) {
+            throw ValidationException::withMessages(['route_id' => ['Choose one of your own routes.']]);
+        }
+
+        return DB::transaction(function () use ($fleet, $routeId) {
+            $link = $this->fleetRouteRepository->findLink((int) $fleet->fleet_id, $routeId);
+            if ($link && $link->status !== 'active') {
+                $this->fleetRouteRepository->updateStatus((int) $link->fleet_route_id, 'active');
+                $link->status = 'active';
+            }
+
+            return $link ?? $this->fleetRouteRepository->create([
+                'fleet_id' => $fleet->fleet_id,
+                'route_id' => $routeId,
+                // The table needs hours; the bus's own window is what the scheduling guard reads.
+                'start_time' => $fleet->operating_start_time ?? '00:00',
+                'end_time' => $fleet->operating_end_time ?? '23:59',
+                'status' => 'active',
+            ]);
+        });
+    }
+
+    /**
+     * 2026-11-21 (user, Dynamic Route Scheduling): each active bus of the Operator's company (every company's for the
+     * Admin) with whether it can take a trip on this route at this date and time, and why not (FleetScheduleGuard).
+     *
+     * @return list<array{fleet_id: int, plate_number: string, bus_label: ?string, vehicle_class: ?string, operating_start_time: ?string, operating_end_time: ?string, available: bool, reason_code: ?string, reason: ?string}>
+     */
+    public function availability(?int $operatorCompanyUserId, int $routeId, string $tripDate, string $departureTime, ?string $serviceType): array
+    {
+        $guard = app(FleetScheduleGuard::class);
+        $buses = $operatorCompanyUserId === null ? $this->fleetRepository->all()->where('status', 'active') : $this->fleetRepository->forCompanyOf($operatorCompanyUserId);
+
+        return $buses->sortBy('plate_number')->values()->map(function ($fleet) use ($guard, $routeId, $tripDate, $departureTime, $serviceType) {
+            $reason = $guard->reasonUnavailable($fleet, $routeId, $tripDate, $departureTime, null, $serviceType);
+
+            return [
+                'fleet_id' => (int) $fleet->fleet_id,
+                'plate_number' => (string) $fleet->plate_number,
+                'bus_label' => BusLabel::for($fleet),
+                'vehicle_class' => $fleet->vehicle_class,
+                'operating_start_time' => $fleet->operating_start_time ? substr((string) $fleet->operating_start_time, 0, 5) : null,
+                'operating_end_time' => $fleet->operating_end_time ? substr((string) $fleet->operating_end_time, 0, 5) : null,
+                'available' => $reason === null,
+                'reason_code' => $reason['code'] ?? null,
+                'reason' => $reason['message'] ?? null,
+            ];
+        })->all();
     }
 
     /**

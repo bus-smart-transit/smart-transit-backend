@@ -12,6 +12,7 @@ use App\Services\FleetService;
 use App\Services\LegPlanningService;
 use App\Services\OperatorRouteAccess;
 use App\Services\RouteDurationFactorService;
+use App\Services\RouteService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -114,19 +115,28 @@ class RouteDurationFactorController extends Controller
     public function planLegs(RouteDurationFactorPlanLegsRequest $request)
     {
         $data = $request->validated();
-
-        $fleetRoute = $this->fleetRoutes->findWithRoute((int) $data['fleet_route_id']);
-        if (! $fleetRoute) {
-            return $this->error('Bus route not found.', 404);
-        }
         $user = $request->user();
-        // Batch 46 step 2: a bus of the Operator's company.
-        if ($user->role === 'operator' && ! app(FleetService::class)->isOwnedByOperator((int) $fleetRoute->fleet_id, (int) $user->companyProfile?->company_user_id)) {
-            return $this->error('You do not have permission to plan for that bus.', 403);
+
+        // 2026-11-21 (user): the route alone is enough (the bus is chosen with it when scheduling).
+        if (! empty($data['route_id'])) {
+            $routeId = (int) $data['route_id'];
+            if (! app(RouteService::class)->userOwnsRoute($routeId, $user)) {
+                return $this->error('Route not found.', 404);
+            }
+        } else {
+            $fleetRoute = $this->fleetRoutes->findWithRoute((int) $data['fleet_route_id']);
+            if (! $fleetRoute) {
+                return $this->error('Bus route not found.', 404);
+            }
+            // Batch 46 step 2: a bus of the Operator's company.
+            if ($user->role === 'operator' && ! app(FleetService::class)->isOwnedByOperator((int) $fleetRoute->fleet_id, (int) $user->companyProfile?->company_user_id)) {
+                return $this->error('You do not have permission to plan for that bus.', 403);
+            }
+            $routeId = (int) $fleetRoute->route_id;
         }
 
         $plan = $this->legPlanning->plan(
-            (int) $fleetRoute->route_id,
+            $routeId,
             $data['service_type'] ?? null,
             $data['scheduled_date'],
             $data['first_departure_time'],

@@ -20,7 +20,10 @@ class ShiftBlockStoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'fleet_route_id' => ['required', 'integer'],
+            // 2026-11-21 (user): a bus and a route (the route is chosen when scheduling), or an existing bus-and-route row.
+            'fleet_route_id' => ['required_without_all:fleet_id,route_id', 'nullable', 'integer'],
+            'fleet_id' => ['required_without:fleet_route_id', 'nullable', 'integer', 'exists:fleets,fleet_id'],
+            'route_id' => ['required_without:fleet_route_id', 'nullable', 'integer', 'exists:routes,route_id'],
             'driver_id' => ['required', 'integer'],
             'conductor_id' => ['required', 'integer'],
             'block_type' => ['required', 'string'],

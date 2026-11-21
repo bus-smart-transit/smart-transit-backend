@@ -270,6 +270,7 @@ Route::prefix('operator')
         Route::post('routes/{routeId}/geometry/regenerate', [RouteController::class, 'regenerateGeometry'])->middleware(['company.admin', 'throttle:3,1,mgmt-routes-geometry-regenerate-post']);
         Route::patch('routes/{routeId}/custom-dropoff', [RouteController::class, 'updateCustomDropoff'])->middleware('company.admin');
         Route::get('fleet-routes', [FleetController::class, 'fleetRoutes']);
+        Route::get('fleets/availability', [FleetController::class, 'availability'])->middleware('throttle:120,1,mgmt-fleets-availability'); // 2026-11-21 (user)
         Route::post('fleets', [FleetController::class, 'store'])->middleware('company.admin');
         Route::post('fleets/{fleetId}/routes', [FleetController::class, 'assignRoute'])->middleware('company.admin');
 

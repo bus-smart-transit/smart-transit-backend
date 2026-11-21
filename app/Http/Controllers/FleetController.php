@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\AssignFleetRouteRequest;
+use App\Http\Requests\FleetAvailabilityRequest;
 use App\Http\Requests\StoreFleetRequest;
 use App\Http\Requests\UpdateFleetRequest;
 use App\Services\AuditLogger;
@@ -81,6 +82,17 @@ class FleetController extends Controller
         // computed on demand at quote/booking time (see FareRuleService),
         // not precomputed and stored.
         return $this->success($fleetRoute, 'Route assigned successfully');
+    }
+
+    /** 2026-11-21 (user): GET operator/fleets/availability - which buses can take this trip, and why not. */
+    public function availability(FleetAvailabilityRequest $request)
+    {
+        $data = $request->validated();
+
+        return $this->success(
+            $this->fleetService->availability($this->operatorScope($request), (int) $data['route_id'], $data['trip_date'], $data['departure_time'], $data['service_type'] ?? null),
+            'Bus availability retrieved'
+        );
     }
 
     public function fleetRoutes(Request $request)

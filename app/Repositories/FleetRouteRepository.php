@@ -13,6 +13,17 @@ class FleetRouteRepository
         return FleetRoute::create($payload);
     }
 
+    /**
+     * 2026-11-21 (user): the row that links this bus to this route (the active one first, else the newest), if any.
+     */
+    public function findLink(int $fleetId, int $routeId): ?FleetRoute
+    {
+        return FleetRoute::where('fleet_id', $fleetId)->where('route_id', $routeId)
+            ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+            ->orderByDesc('fleet_route_id')
+            ->first();
+    }
+
     public function findById(int $fleetRouteId): ?FleetRoute
     {
         return FleetRoute::find($fleetRouteId);

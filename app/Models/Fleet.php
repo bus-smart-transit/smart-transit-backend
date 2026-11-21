@@ -59,6 +59,8 @@ class Fleet extends Model
         'fleet_type', // 'public' | 'private'
         'vehicle_class', // config('fares.vehicle_classes') key; null until the operator sets it (Batch 28 item 5)
         'company_id', // Batch 46 step 2: the company that owns the bus (company_user_id = who registered it)
+        'operating_start_time', // 2026-11-21 (user): the bus's one operating window (App\Support\OperatingWindow)
+        'operating_end_time',
     ];
 
     public function companyUser()

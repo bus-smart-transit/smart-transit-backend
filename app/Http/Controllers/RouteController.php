@@ -10,6 +10,7 @@ use App\Http\Requests\UpdateRouteCustomDropoffRequest;
 use App\Http\Requests\UpdateRouteRequest;
 use App\Http\Requests\UpdateRouteStopExpressRequest;
 use App\Http\Requests\UpdateRouteStopTypeRequest;
+use App\Models\FleetRoute;
 use App\Models\Route;
 use App\Repositories\FleetRouteRepository;
 use App\Services\AuditLogger;
@@ -49,11 +50,22 @@ class RouteController extends Controller
         if (! $this->routeService->getRouteWithStops($routeId, $request->user())) {
             return $this->error('Route not found.', 404);
         }
-        $fleetRouteId = (int) $request->validated('fleet_route_id');
-        $fleets->assertFleetRouteOfCompany((int) $request->user()?->companyProfile?->company_user_id, $fleetRouteId);
-        $fleetRoute = $fleetRoutes->findWithRoute($fleetRouteId);
-        if (! $fleetRoute || (int) $fleetRoute->route_id !== $routeId) {
-            return $this->error('That bus does not run this route.', 422);
+        $owner = (int) $request->user()?->companyProfile?->company_user_id;
+        if ($request->validated('fleet_id')) {
+            // 2026-11-21 (user): any bus of the company, on this route (the route is chosen when scheduling). Nothing is
+            // saved: the fares are worked out for this bus on this route as they would be charged.
+            $fleetId = (int) $request->validated('fleet_id');
+            if ($request->user()?->role !== 'admin' && ! $fleets->isOwnedByOperator($fleetId, $owner)) {
+                return $this->error('Choose one of your own buses.', 422);
+            }
+            $fleetRoute = $fleetRoutes->findLink($fleetId, $routeId) ?? new FleetRoute(['fleet_id' => $fleetId, 'route_id' => $routeId]);
+        } else {
+            $fleetRouteId = (int) $request->validated('fleet_route_id');
+            $fleets->assertFleetRouteOfCompany($owner, $fleetRouteId);
+            $fleetRoute = $fleetRoutes->findWithRoute($fleetRouteId);
+            if (! $fleetRoute || (int) $fleetRoute->route_id !== $routeId) {
+                return $this->error('That bus does not run this route.', 422);
+            }
         }
         $origin = $request->validated('origin_stop_id');
 

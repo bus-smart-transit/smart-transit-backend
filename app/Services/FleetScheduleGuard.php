@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Trip;
+use App\Support\OperatingWindow;
 use App\Support\ServiceType;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -46,6 +48,33 @@ class FleetScheduleGuard
     }
 
     /**
+     * 2026-11-21 (user, Dynamic Route Scheduling): why this bus cannot take a trip on this route at this time (outside
+     * its hours, already on another trip, or no fare), or null when it can. The same checks as assertCanSchedule, for
+     * a bus that may never have run the route yet; nothing is saved. The code is outside_hours, busy or no_fare.
+     *
+     * @return array{code: string, message: string}|null
+     */
+    public function reasonUnavailable(Fleet $fleet, int $routeId, string $tripDate, string $departureTime, ?string $legDirection = null, ?string $serviceType = null): ?array
+    {
+        $fleetRoute = new FleetRoute(['fleet_id' => $fleet->fleet_id, 'route_id' => $routeId]);
+        $fleetRoute->setRelation('fleet', $fleet);
+        $checks = [
+            'outside_hours' => fn () => $this->assertInsideOperatingWindow($fleetRoute, $departureTime),
+            'busy' => fn () => $this->assertBusIsFree($fleetRoute, $tripDate, $departureTime, $legDirection, $serviceType, null),
+            'no_fare' => fn () => $this->assertHasFare($fleetRoute, $tripDate, $serviceType),
+        ];
+        foreach ($checks as $code => $check) {
+            try {
+                $check();
+            } catch (ValidationException $refused) {
+                return ['code' => $code, 'message' => (string) collect($refused->errors())->flatten()->first()];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Batch 50 (user, 2026-11-08): a trip that could never be sold is not scheduled. The bus needs a seated fare rule in
      * force on that day for this route and service type (FareRuleResolver, the one fare owner).
      *
@@ -65,25 +94,26 @@ class FleetScheduleGuard
         )]]);
     }
 
+    /**
+     * 2026-11-21 (user): the bus's own operating hours (set when the bus is added). A bus without them falls back to the
+     * hours of its bus-and-route row, as before.
+     */
     private function assertInsideOperatingWindow(FleetRoute $fleetRoute, string $departureTime): void
     {
-        if (! $fleetRoute->start_time || ! $fleetRoute->end_time) {
+        $fleetRoute->loadMissing('fleet');
+        $fleet = $fleetRoute->fleet;
+        [$start, $end] = $fleet?->operating_start_time && $fleet?->operating_end_time
+            ? [(string) $fleet->operating_start_time, (string) $fleet->operating_end_time]
+            : [(string) $fleetRoute->start_time, (string) $fleetRoute->end_time];
+        if ($start === '' || $end === '') {
             return;
         }
 
-        $start = $this->minutes((string) $fleetRoute->start_time);
-        $end = $this->minutes((string) $fleetRoute->end_time);
-        $at = $this->minutes($departureTime);
-
-        $inside = $start <= $end
-            ? ($at >= $start && $at <= $end)
-            : ($at >= $start || $at <= $end); // the window runs past midnight
-
-        if (! $inside) {
+        if (! OperatingWindow::contains($start, $end, $departureTime)) {
             throw ValidationException::withMessages([
                 'departure_time' => [sprintf(
-                    'This bus runs this route between %s and %s. A %s departure is outside those hours.',
-                    $this->clock($start), $this->clock($end), $this->clock($at),
+                    'This bus runs between %s and %s. A %s departure is outside those hours.',
+                    $this->clock($this->minutes($start)), $this->clock($this->minutes($end)), $this->clock($this->minutes($departureTime)),
                 )],
             ]);
         }

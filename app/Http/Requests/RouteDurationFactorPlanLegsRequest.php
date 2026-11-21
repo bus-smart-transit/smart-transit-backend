@@ -22,7 +22,9 @@ class RouteDurationFactorPlanLegsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'fleet_route_id' => 'required|integer|exists:fleets_routes,fleet_route_id',
+            // 2026-11-21 (user): the route alone is enough (the route is chosen when scheduling).
+            'fleet_route_id' => 'required_without:route_id|nullable|integer|exists:fleets_routes,fleet_route_id',
+            'route_id' => 'required_without:fleet_route_id|nullable|integer|exists:routes,route_id',
             'scheduled_date' => 'required|date_format:Y-m-d',
             'first_departure_time' => ['required', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'],
             'service_type' => 'nullable|string|in:'.implode(',', ServiceType::ALL),

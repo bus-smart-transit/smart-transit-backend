@@ -16,7 +16,9 @@ class RouteFareTableRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'fleet_route_id' => 'required|integer|min:1',
+            // 2026-11-21 (user): any of the company's buses, or an existing bus-and-route row.
+            'fleet_route_id' => 'required_without:fleet_id|nullable|integer|min:1',
+            'fleet_id' => 'required_without:fleet_route_id|nullable|integer|min:1',
             'direction' => 'nullable|in:outbound,reverse',
             'service_type' => 'nullable|in:regular,express',
             'origin_stop_id' => 'nullable|integer|min:1',

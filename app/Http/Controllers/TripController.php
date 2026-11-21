@@ -61,6 +61,14 @@ class TripController extends Controller
 
         $data = $request->validated();
         $user = $request->user();
+        // 2026-11-21 (user): the new bus by itself (it runs the trip's route); FleetService::linkFor checks it is ours.
+        if (! empty($data['fleet_id'])) {
+            $owner = (int) ($user?->companyProfile?->company_user_id ?? $this->tripService->ownerOf($tripId));
+            $trip = $this->tripService->changeFleetToBus($tripId, (int) $data['fleet_id'], $owner);
+            AuditLogger::log('trip.change_fleet', 'Trip', $tripId, $data);
+
+            return $this->success($trip, 'Bus changed. Passengers with tickets were notified.');
+        }
         if ($user?->role === 'operator') {
             if (! app(FleetService::class)->fleetRouteIsOwnedByOperator((int) $data['fleet_route_id'], (int) $user->companyProfile?->company_user_id)) {
                 return $this->error('You do not have permission to use that bus.', 403);
