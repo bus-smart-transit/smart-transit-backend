@@ -49,6 +49,7 @@ class Route extends Model
         'origin',
         'destination',
         'route_name',
+        'color', // 2026-11-21 (user): the route's own colour (App\Support\RouteColor)
         'allow_custom_dropoff',
         'custom_dropoff_mode',
         'company_id', // 2026-11-06: the company that owns the route (null: the Admin's)

@@ -14,6 +14,16 @@ class RouteRepository
         return Route::create($payload);
     }
 
+    /**
+     * 2026-11-21 (user): the colours routes already use (RouteColor::nextFree skips them).
+     *
+     * @return array<int, string>
+     */
+    public function usedColors(): array
+    {
+        return Route::query()->whereNotNull('color')->pluck('color')->all();
+    }
+
     public function findById(int $routeId): ?Route
     {
         return Route::with([

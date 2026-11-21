@@ -44,6 +44,7 @@ class PublicRouteService
             return [
                 'route_id' => (int) $route->route_id,
                 'route_name' => $route->route_name,
+                'color' => $route->color, // 2026-11-21 (user): the route's own colour
                 'origin' => $route->origin,
                 'destination' => $route->destination,
                 'stop_count' => $stops->count(),
@@ -67,6 +68,7 @@ class PublicRouteService
         return [
             'route_id' => (int) $route->route_id,
             'route_name' => $route->route_name,
+            'color' => $route->color,
             'origin' => $route->origin,
             'destination' => $route->destination,
             'provinces' => $this->provincesOf($towns),

@@ -270,6 +270,7 @@ class FleetLocationRepository
                 t.last_acknowledged_at,
                 fr.route_id,
                 r.route_name,
+                r.color AS route_color,
                 r.origin,
                 r.destination
             FROM fleet_locations fl

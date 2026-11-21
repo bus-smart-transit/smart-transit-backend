@@ -12,6 +12,7 @@ use App\Models\RouteStop;
 use App\Models\StaffUser;
 use App\Models\Stop;
 use App\Models\User;
+use App\Support\RouteColor;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -116,7 +117,7 @@ class DavaoRegionDemoSeeder extends Seeder
             $operator = $staff['operator'];
             foreach (self::ROUTES as $name => [$origin, $destination, $stops, $bus]) {
                 $route = Route::firstOrCreate(['route_name' => $name], ['origin' => $origin, 'destination' => $destination]);
-                $route->forceFill(['company_id' => $operator->company_id])->save(); // 2026-11-06: owned by the demo company
+                $route->forceFill(['company_id' => $operator->company_id, 'color' => $route->color ?? RouteColor::nextFree(Route::query()->pluck('color')->all())])->save(); // 2026-11-06: owned by the demo company; 2026-11-21: its own colour
                 $this->stops($route, $stops);
                 $this->bus($route, $operator, $bus);
             }

@@ -11,6 +11,7 @@ use App\Repositories\StopRepository;
 use App\Repositories\TicketRepository;
 use App\Support\CompanyScope;
 use App\Support\Geo\GeoLine;
+use App\Support\RouteColor;
 use App\Support\RouteName;
 use App\Support\StopSpacing;
 use Illuminate\Support\Carbon;
@@ -37,6 +38,7 @@ class RouteService
     {
         $name = trim((string) ($payload['route_name'] ?? ''));
         $payload['route_name'] = $name !== '' ? $name : RouteName::from((string) $payload['origin'], (string) $payload['destination']);
+        $payload['color'] = RouteColor::nextFree($this->routeRepository->usedColors()); // 2026-11-21 (user): never a colour in use
 
         return $this->routeRepository->create($payload);
     }
