@@ -11,6 +11,7 @@ use App\Repositories\FleetLocationRepository;
 use App\Repositories\GpsSimulationRepository;
 use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
+use App\Repositories\TripRepository;
 use App\Support\BusLabel;
 use App\Support\Geo\GeoLine;
 use App\Support\LiveUpdates;
@@ -40,6 +41,8 @@ class GpsSimulationService
         private RouteGeometryRepository $geometry,
         private RouteStopRepository $routeStops,
         private RouteSnapService $routeSnap,
+        private TripRepository $trips,
+        private DriverNavigationService $navigation,
     ) {}
 
     public static function enabled(): bool
@@ -84,7 +87,7 @@ class GpsSimulationService
     {
         $this->assertEnabled();
         $this->assertSpeed($speed);
-        $trip = Trip::with('fleetRoute')->find($tripId);
+        $trip = $this->trips->findById($tripId);
         if (! $trip || ! TripProgressService::isRunning($trip->status)) {
             throw ValidationException::withMessages(['trip_id' => ['Only a trip that has departed can be simulated.']]);
         }
@@ -150,8 +153,8 @@ class GpsSimulationService
         // The same rule as the Driver's tap (DriverNavigationService); it shows on the Driver's stop list, marks
         // passengers who did not board at the stops behind the bus as missed, and goes to the route adherence report.
         if ($action === 'acknowledge') {
-            $trip = Trip::with('fleetRoute')->find((int) $simulation->trip_id);
-            if (! $trip || ! app(DriverNavigationService::class)->acknowledgeStopOnTrip($trip, (int) $stopId, TripStopAcknowledgement::SOURCE_SIMULATOR, $userId)) {
+            $trip = $this->trips->findById((int) $simulation->trip_id);
+            if (! $trip || ! $this->navigation->acknowledgeStopOnTrip($trip, (int) $stopId, TripStopAcknowledgement::SOURCE_SIMULATOR, $userId)) {
                 throw ValidationException::withMessages(['stop_id' => ['This stop cannot be marked as reached: the trip is not on the road, or the stop is not on its route.']]);
             }
         }
@@ -174,7 +177,7 @@ class GpsSimulationService
         }
         // 2026-11-21 (user, demo): the Driver's screen reloads its stops (a stop marked, or control given back).
         if (in_array($action, ['acknowledge', 'stop'], true)) {
-            $trip = Trip::find((int) $simulation->trip_id);
+            $trip = $this->trips->findById((int) $simulation->trip_id);
             if ($trip) {
                 LiveUpdates::tripStatus((int) $trip->trip_id, (string) $trip->status);
             }

@@ -101,6 +101,25 @@ it('shows the Operator the fares from a stop to every later stop, as passengers 
     expect($express->json('data.rows'))->toBe([['stop_id' => $f['stops']['D']->stop_id, 'name' => 'Stop D', 'fare' => null]]);
 });
 
+// 2026-11-21 (user, Dynamic Route Scheduling): any bus of the company can run any route, so the fare table also takes a
+// bus by itself (fleet_id), priced on this route without saving a bus-and-route row; another company's bus is refused.
+it('shows the fares of any company bus on the route, even one that never ran it, and saves nothing', function () {
+    $f = b75Fixture();
+    $spare = Fleet::create([
+        'company_user_id' => $f['operator']->companyProfile->company_user_id, 'plate_number' => 'B75-SPARE', 'bus_company_name' => 'Co B', 'body_no' => '8',
+        'capacity' => 30, 'seated_capacity' => 30, 'standing_capacity' => 0, 'status' => 'active', 'vehicle_class' => 'ordinary', 'company_id' => $f['fleet']->company_id,
+    ]);
+    $this->actingAs($f['operator']);
+
+    $rows = $this->getJson("/api/operator/routes/{$f['route']->route_id}/fares?fleet_id={$spare->fleet_id}")->assertOk()->json('data.rows');
+    expect(collect($rows)->map(fn ($r) => [$r['name'], $r['fare']])->all())->toBe([['Stop B', 24], ['Stop C', 47], ['Stop D', 69]])
+        ->and(FleetRoute::where('fleet_id', $spare->fleet_id)->count())->toBe(0);
+
+    $theirs = Fleet::create(['company_user_id' => b75Staff('operator')->companyProfile->company_user_id, 'plate_number' => 'B75-THEIRS', 'capacity' => 30, 'seated_capacity' => 30, 'standing_capacity' => 0, 'status' => 'active']);
+    $this->getJson("/api/operator/routes/{$f['route']->route_id}/fares?fleet_id={$theirs->fleet_id}")
+        ->assertUnprocessable()->assertJsonPath('errors.fleet_id.0', 'Choose one of your own buses.');
+});
+
 it('keeps another company\'s bus out of the fare table', function () {
     $f = b75Fixture();
     $other = b75Staff('operator');

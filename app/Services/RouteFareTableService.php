@@ -3,11 +3,13 @@
 namespace App\Services;
 
 use App\Models\FleetRoute;
+use App\Repositories\FleetRouteRepository;
 use App\Repositories\RouteStopRepository;
 use App\Support\BookingWindow;
 use App\Support\BusLabel;
 use App\Support\ServiceType;
 use App\Support\VehicleClass;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Batch 75 (panel, 2026-11-15): the fares a route's stops produce, shown to the Operator the way passengers see them
@@ -19,7 +21,35 @@ class RouteFareTableService
     public function __construct(
         private RouteStopRepository $routeStops,
         private FareRuleService $fares,
+        private FleetService $fleets,
+        private FleetRouteRepository $fleetRoutes,
     ) {}
+
+    /**
+     * The bus whose fares are shown on this route. 2026-11-21 (user, Dynamic Route Scheduling): any bus of the company
+     * (fleet_id) can run any route, so a bus that never ran it is priced on an unsaved bus-and-route object (nothing is
+     * written); an existing row (fleet_route_id) must be the company's and on this route. The Admin is not limited.
+     *
+     * @throws ValidationException
+     */
+    public function busOnRoute(int $ownerCompanyUserId, bool $isAdmin, int $routeId, ?int $fleetId, ?int $fleetRouteId): FleetRoute
+    {
+        if ($fleetId) {
+            if (! $isAdmin && ! $this->fleets->isOwnedByOperator($fleetId, $ownerCompanyUserId)) {
+                throw ValidationException::withMessages(['fleet_id' => ['Choose one of your own buses.']]);
+            }
+
+            return $this->fleetRoutes->findLink($fleetId, $routeId) ?? new FleetRoute(['fleet_id' => $fleetId, 'route_id' => $routeId]);
+        }
+
+        $this->fleets->assertFleetRouteOfCompany($ownerCompanyUserId, $fleetRouteId);
+        $fleetRoute = $this->fleetRoutes->findWithRoute((int) $fleetRouteId);
+        if (! $fleetRoute || (int) $fleetRoute->route_id !== $routeId) {
+            throw ValidationException::withMessages(['fleet_route_id' => ['That bus does not run this route.']]);
+        }
+
+        return $fleetRoute;
+    }
 
     /**
      * @return array{route_id: int, bus_label: string|null, vehicle_class: string|null, direction: string, service_type: string, origins: array<int, array{stop_id: int, name: string|null}>, origin: array{stop_id: int, name: string|null}|null, rows: array<int, array{stop_id: int, name: string|null, fare: float|null}>}
