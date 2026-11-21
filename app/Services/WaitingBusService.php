@@ -74,12 +74,14 @@ class WaitingBusService
             'bus_company_name' => $fleet->bus_company_name,
             'body_no' => $fleet->body_no,
             'fleet_type' => $fleet->fleet_type,
+            'vehicle_class' => $fleet->vehicle_class, // 2026-11-21 (user): the bus card shows the class
             'trip_status' => $trip->status,
             'leg_direction' => $direction,
             'last_acknowledged_stop_id' => null,
             'last_acknowledged_at' => null,
             'route_id' => (int) $trip->fleetRoute->route_id,
             'route_name' => $route?->route_name,
+            'route_color' => $route?->color, // 2026-11-21 (user): the route's own colour, as for a running bus
             'origin' => $route?->origin,
             'destination' => $route?->destination,
             'waiting' => true,

@@ -56,6 +56,25 @@ class PublicRouteService
         return ['province' => $this->provinceName($province), 'routes' => $routes];
     }
 
+    /**
+     * 2026-11-21 (user): "View all routes" on the homepage: every province of the region that a bus runs through, each
+     * with its routes (the same rows as forProvince, so a route that crosses provinces is listed under each one).
+     *
+     * @return array{provinces: list<array{province: string, routes: list<array<string, mixed>>}>}
+     */
+    public function all(): array
+    {
+        $provinces = [];
+        foreach (array_keys((array) config('region.provinces', [])) as $name) {
+            $group = $this->forProvince((string) $name);
+            if ($group !== null && $group['routes'] !== []) {
+                $provinces[] = $group;
+            }
+        }
+
+        return ['provinces' => $provinces];
+    }
+
     /** @return array<string, mixed>|null */
     public function summary(int $routeId): ?array
     {

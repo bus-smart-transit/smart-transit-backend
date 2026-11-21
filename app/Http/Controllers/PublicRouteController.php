@@ -26,6 +26,12 @@ class PublicRouteController extends Controller
             : $this->success($data, 'Routes retrieved');
     }
 
+    /** 2026-11-21 (user): GET routes/all - every province a bus runs through, with its routes ("View all routes"). */
+    public function all()
+    {
+        return $this->success($this->routes->all(), 'Routes retrieved');
+    }
+
     public function show(int $routeId)
     {
         $route = $this->routes->summary($routeId);

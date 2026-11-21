@@ -7,6 +7,7 @@ use App\Http\Requests\UpdateLocationRequest;
 use App\Services\FleetLocationService;
 use App\Services\TripService;
 use App\Support\BusLabel;
+use App\Support\VehicleClass;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 
@@ -57,6 +58,11 @@ class FleetLocationController extends Controller
     private function presentBus(object $row, Request $request): object
     {
         $row->bus_label = BusLabel::compose($row->bus_company_name ?? null, $row->body_no ?? null, $row->owner_company_name ?? null);
+        // 2026-11-21 (user): the Track Bus bus card shows the company and the body number apart, and the bus class.
+        $company = trim((string) ($row->bus_company_name ?? '')) ?: trim((string) ($row->owner_company_name ?? ''));
+        $row->bus_company = $company !== '' ? $company : null;
+        $row->bus_body_no = trim((string) ($row->body_no ?? '')) ?: null;
+        $row->vehicle_class_label = VehicleClass::label(VehicleClass::normalize($row->vehicle_class ?? null));
         unset($row->bus_company_name, $row->body_no, $row->owner_company_name);
         // Batch 49 item 4: a position from the Super Admin's GPS simulator; every map labels it "Simulated".
         $row->is_simulated = (bool) ($row->is_simulated ?? false);

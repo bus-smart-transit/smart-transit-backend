@@ -153,6 +153,7 @@ Route::get('/region/place', [RegionController::class, 'place'])->middleware('thr
 Route::get('/routes/{routeId}/stops', [RouteController::class, 'publicStops'])->middleware('throttle:public-read');
 // 2026-11-20 (user): the passengers' route pages (a province picture -> its routes -> one route and today's departures).
 Route::get('/routes', [PublicRouteController::class, 'forProvince'])->middleware('throttle:public-read');
+Route::get('/routes/all', [PublicRouteController::class, 'all'])->middleware('throttle:public-read'); // 2026-11-21 (user): View all routes
 Route::get('/routes/{routeId}', [PublicRouteController::class, 'show'])->whereNumber('routeId')->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/departures', [PublicRouteController::class, 'departures'])->whereNumber('routeId')->middleware('throttle:public-read');
 Route::get('/routes/{routeId}/geometry', [RouteController::class, 'geometry'])->middleware('throttle:public-read');

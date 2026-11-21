@@ -264,6 +264,7 @@ class FleetLocationRepository
                 f.body_no,
                 c.company_name AS owner_company_name,
                 f.fleet_type,
+                f.vehicle_class,
                 t.status AS trip_status,
                 t.leg_direction,
                 t.last_acknowledged_stop_id,

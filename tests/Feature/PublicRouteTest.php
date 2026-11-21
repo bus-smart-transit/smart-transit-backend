@@ -102,3 +102,14 @@ it('answers 404 for a route no bus runs', function () {
     $this->getJson("/api/routes/{$route->route_id}")->assertNotFound();
     $this->getJson("/api/routes/{$route->route_id}/departures")->assertNotFound();
 });
+
+it('lists every province a bus runs through, with its routes, for View all routes', function () {
+    $operator = prOperator();
+    prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']);
+    prRoute($operator, 'Unused North Route', ['North Town'], false); // no bus runs it, so its province is left out
+
+    $data = $this->getJson('/api/routes/all')->assertOk()->json('data.provinces');
+
+    expect(collect($data)->pluck('province')->all())->toBe(['Sample Oriental', 'Sample City'])
+        ->and(collect($data)->map(fn ($group) => collect($group['routes'])->pluck('route_name')->all())->all())->toBe([['City to Far Town'], ['City to Far Town']]);
+});

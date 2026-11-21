@@ -93,3 +93,17 @@ it('never sends the passenger location: the bus list takes no coordinates', func
     expect($route->methods())->toContain('GET');
     $this->getJson('/api/region')->assertSuccessful()->assertJsonPath('data.nearby_radius_km', 5);
 });
+
+// 2026-11-21 (user): the Track Bus bus card shows the company and body number apart, and the bus class label.
+it('gives each live bus its company, body number and class label for the bus card', function () {
+    config(['tracking.active_locations_cache_seconds' => 0]);
+    $row = (object) ['fleet_id' => 1, 'trip_id' => null, 'route_id' => null, 'latitude' => 7.07, 'longitude' => 125.6, 'age_seconds' => 10, 'plate_number' => 'NBP 1', 'bus_company_name' => 'Nbp Lines', 'body_no' => 'N-04', 'fleet_type' => 'public', 'vehicle_class' => 'aircon'];
+    $locations = Mockery::mock(FleetLocationRepository::class);
+    $locations->shouldReceive('getAllActiveLocations')->andReturn(collect([$row]));
+    app()->instance(FleetLocationRepository::class, $locations);
+
+    $bus = $this->getJson('/api/fleet/locations')->assertSuccessful()->json('data.0');
+
+    expect($bus)->toMatchArray(['bus_label' => 'Nbp Lines / N-04', 'bus_company' => 'Nbp Lines', 'bus_body_no' => 'N-04', 'vehicle_class_label' => 'Aircon', 'fleet_type' => 'public'])
+        ->and($bus)->not->toHaveKey('plate_number');
+});
