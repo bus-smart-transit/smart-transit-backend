@@ -25,7 +25,7 @@ class PublicRouteService
     ) {}
 
     /**
-     * @return array{province: string, routes: list<array<string, mixed>>}|null null for a province the region does not have
+     * @return array{province: string, routes: list<array<string, mixed>>, groups: list<array<string, mixed>>}|null null for a province the region does not have
      */
     public function forProvince(string $province): ?array
     {
@@ -35,7 +35,8 @@ class PublicRouteService
         }
         $lower = array_map(fn ($town) => mb_strtolower($town), $towns);
 
-        $routes = $this->routes->servingTowns($lower)->map(function (Route $route) use ($lower) {
+        $found = $this->routes->servingTowns($lower);
+        $routes = $found->map(function (Route $route) use ($lower) {
             $stops = $route->routeStops->sortBy('stop_order');
             $inProvince = $stops->map(fn ($rs) => $rs->stop?->municipality)
                 ->filter(fn ($town) => $town !== null && in_array(mb_strtolower($town), $lower, true))
@@ -53,7 +54,7 @@ class PublicRouteService
             ];
         })->values()->all();
 
-        return ['province' => $this->provinceName($province), 'routes' => $routes];
+        return ['province' => $this->provinceName($province), 'routes' => $routes, 'groups' => $this->groups($found)];
     }
 
     /**
@@ -64,14 +65,61 @@ class PublicRouteService
      */
     public function all(): array
     {
-        return ['routes' => $this->routes->allPublic()->map(fn (Route $route) => [
-            'route_id' => (int) $route->route_id,
-            'route_name' => $route->route_name,
-            'color' => $route->color,
-            'origin' => $route->origin,
-            'destination' => $route->destination,
-            'company_name' => $route->company?->company_name,
-        ])->values()->all()];
+        $routes = $this->routes->allPublic();
+
+        return [
+            'routes' => $routes->map(fn (Route $route) => [
+                'route_id' => (int) $route->route_id,
+                'route_name' => $route->route_name,
+                'color' => $route->color,
+                'origin' => $route->origin,
+                'destination' => $route->destination,
+                'company_name' => $route->company?->company_name,
+            ])->values()->all(),
+            'groups' => $this->groups($routes),
+        ];
+    }
+
+    /**
+     * 2026-11-21 (user): routes that start in the same town and end in the same town are shown as one card, listing the
+     * companies that run them, each opening its own route (companies keep their own stops, so stop names can differ
+     * while the towns match). The card is titled with the first and last stop of its earliest route.
+     *
+     * @param  iterable<Route>  $routes  with routeStops.stop and company loaded
+     * @return list<array{key: string, title: string, color: ?string, routes: list<array{route_id: int, route_name: string, company_name: ?string}>}>
+     */
+    private function groups(iterable $routes): array
+    {
+        $groups = [];
+        foreach ($routes as $route) {
+            $stopping = $route->routeStops->sortBy('stop_order')->filter(fn ($rs) => $rs->stop_type !== 'pass_through')->values();
+            $first = $stopping->first()?->stop;
+            $last = $stopping->last()?->stop;
+            $place = fn ($stop, ?string $fallback) => mb_strtolower(trim((string) ($stop?->municipality ?: $stop?->stop_name ?: $fallback)));
+            $key = $place($first, $route->origin).'|'.$place($last, $route->destination);
+
+            $groups[$key] ??= ['key' => $key, 'routes' => []];
+            $groups[$key]['routes'][] = [
+                'route_id' => (int) $route->route_id,
+                'route_name' => $route->route_name,
+                'company_name' => $route->company?->company_name,
+                'color' => $route->color,
+                'title' => trim(($first?->stop_name ?: $route->origin).' → '.($last?->stop_name ?: $route->destination)),
+            ];
+        }
+
+        return collect($groups)->map(function (array $group) {
+            $routes = collect($group['routes'])->sortBy('route_id')->values();
+            $earliest = $routes->first();
+
+            return [
+                'key' => $group['key'],
+                'title' => $earliest['title'],
+                'color' => $earliest['color'],
+                'routes' => $routes->map(fn ($r) => ['route_id' => $r['route_id'], 'route_name' => $r['route_name'], 'company_name' => $r['company_name']])
+                    ->sortBy(fn ($r) => mb_strtolower((string) $r['company_name']))->values()->all(),
+            ];
+        })->sortBy(fn ($g) => mb_strtolower($g['title']))->values()->all();
     }
 
     /** @return array<string, mixed>|null */

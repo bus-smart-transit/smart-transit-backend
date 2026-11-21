@@ -131,3 +131,29 @@ it('lists every route once, by name, with its company, for View all routes', fun
         ->and($routes[1])->toMatchArray(['route_id' => $far->route_id, 'company_name' => 'Sample Lines Co'])
         ->and($routes[0]['company_name'])->toBeNull();
 });
+
+// 2026-11-21 (user): routes that start and end in the same towns share one card listing the companies that run them;
+// companies keep their own stops, so the stop names may differ while the towns match.
+it('groups routes with the same end towns into one card with each company and its own route', function () {
+    $operator = prOperator();
+    $metro = Company::create(['company_name' => 'Metro Lines']);
+    $test = Company::create(['company_name' => 'Alpha Bus']);
+    [$first] = prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']);
+    [$second] = prRoute($operator, 'City to Far Town (Alpha)', ['Sample City', 'Far Town']);
+    [$solo] = prRoute($operator, 'City to North Town', ['Sample City', 'North Town']);
+    $first->update(['company_id' => $metro->company_id]);
+    $second->update(['company_id' => $test->company_id]);
+    $solo->update(['company_id' => $metro->company_id]);
+    // The second company names its last stop differently; the town is the same.
+    RouteStop::where('route_id', $second->route_id)->orderByDesc('stop_order')->first()->stop->update(['stop_name' => 'Far Town New Terminal']);
+
+    $groups = $this->getJson('/api/routes/all')->assertOk()->json('data.groups');
+
+    expect($groups)->toHaveCount(2)
+        ->and($groups[0])->toMatchArray(['title' => 'Sample City Stop → Far Town Stop'])
+        ->and(collect($groups[0]['routes'])->map(fn ($r) => [$r['company_name'], $r['route_id']])->all())->toBe([['Alpha Bus', $second->route_id], ['Metro Lines', $first->route_id]])
+        ->and(collect($groups[1]['routes'])->pluck('route_id')->all())->toBe([$solo->route_id]);
+
+    $province = $this->getJson('/api/routes?province=sample oriental')->assertOk()->json('data.groups');
+    expect($province)->toHaveCount(1)->and($province[0]['routes'])->toHaveCount(2);
+});
