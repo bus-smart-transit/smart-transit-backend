@@ -37,6 +37,7 @@ class AdminGpsSimulationController extends Controller
             $data['action'],
             isset($data['stop_id']) ? (int) $data['stop_id'] : null,
             isset($data['speed']) ? (int) $data['speed'] : null,
+            (int) $request->user()->user_id,
         );
 
         return $this->success($this->simulator->present($simulation), 'Simulation updated');

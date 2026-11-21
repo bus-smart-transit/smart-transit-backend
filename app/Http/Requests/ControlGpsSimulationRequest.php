@@ -15,8 +15,9 @@ class ControlGpsSimulationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'action' => 'required|string|in:pause,resume,stop,jump,speed,deviate,rejoin',
-            'stop_id' => 'required_if:action,jump|nullable|integer|min:1',
+            // 2026-11-21 (user, demo): acknowledge = mark a stop as reached on the Driver's behalf.
+            'action' => 'required|string|in:pause,resume,stop,jump,speed,deviate,rejoin,acknowledge',
+            'stop_id' => 'required_if:action,jump,acknowledge|nullable|integer|min:1',
             'speed' => 'required_if:action,speed|nullable|integer|in:'.implode(',', config('route_geometry.gps.simulator_speeds')),
         ];
     }

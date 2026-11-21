@@ -6,6 +6,7 @@ use App\Models\Payment;
 use App\Models\RewardTransaction;
 use App\Models\Ticket;
 use App\Models\Trip;
+use App\Models\TripStopAcknowledgement;
 use App\Services\RewardService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -151,6 +152,8 @@ class ReportingRepository
 
         $gpsByTrip = $this->getGpsPointsForTrips($trips->pluck('trip_id')->all(), DB::getDriverName())
             ->groupBy('trip_id');
+        // 2026-11-21 (user): stops the Driver (or, for the demo, the GPS simulator) marked as reached also count.
+        $acksByTrip = app(TripStopAcknowledgementRepository::class)->forTrips($trips->pluck('trip_id')->all());
 
         $totalTrips = count($trips);
         $tripAdherences = [];
@@ -168,8 +171,11 @@ class ReportingRepository
             }
 
             $gpsPoints = $gpsByTrip->get($trip->trip_id, collect());
+            $acks = $acksByTrip->get($trip->trip_id, collect());
+            $ackedStopIds = $acks->pluck('stop_id')->map(fn ($id) => (int) $id)->flip();
+            $simulatedAcks = $acks->where('source', TripStopAcknowledgement::SOURCE_SIMULATOR)->count();
 
-            if ($gpsPoints->isEmpty()) {
+            if ($gpsPoints->isEmpty() && $acks->isEmpty()) {
                 // No GPS data — fall back to completion-based proxy
                 $tripAdherences[] = [
                     'trip_id' => $trip->trip_id,
@@ -185,7 +191,14 @@ class ReportingRepository
 
             // For each scheduled stop, find whether a GPS point came within PROXIMITY_METERS
             $stopsVisited = 0;
+            $stopsAcknowledged = 0;
             foreach ($stops as $stop) {
+                if ($ackedStopIds->has((int) $stop->stop_id)) {
+                    $stopsAcknowledged++;
+                    $stopsVisited++;
+
+                    continue;
+                }
                 $stopLat = (float) $stop->latitude;
                 $stopLng = (float) $stop->longitude;
 
@@ -211,9 +224,13 @@ class ReportingRepository
                 'status' => $trip->status,
                 'stops_scheduled' => $stopCount,
                 'stops_visited' => $stopsVisited,
+                'stops_acknowledged' => $stopsAcknowledged,
                 'stop_coverage_pct' => $coveragePct,
                 'gps_points' => $gpsPoints->count(),
-                'data_source' => 'gps',
+                'data_source' => $gpsPoints->isEmpty() ? 'acknowledged' : 'gps',
+                // Stops marked by the Super Admin's GPS simulator (demo), shown as "Simulated"; never presented as real driving.
+                'simulated' => $simulatedAcks > 0,
+                'simulated_acknowledgements' => $simulatedAcks,
             ];
         }
 

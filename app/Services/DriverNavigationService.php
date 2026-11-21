@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\TripStopAcknowledgement;
+use App\Repositories\GpsSimulationRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TicketRepository;
 use App\Repositories\TripRepository;
+use App\Repositories\TripStopAcknowledgementRepository;
 
 class DriverNavigationService
 {
@@ -124,6 +127,8 @@ class DriverNavigationService
             'route_name' => $trip->fleetRoute->route->route_name,
             'leg_direction' => $trip->leg_direction ?? 'outbound',
             'last_acknowledged_stop_id' => $trip->last_acknowledged_stop_id,
+            // 2026-11-21 (user, demo): the Super Admin's GPS simulator controls this bus's location (the Driver is told).
+            'simulated_control' => app(GpsSimulationRepository::class)->activeForTrip((int) $trip->trip_id) !== null,
             'stops' => $stopsData,
             'requested_stops' => $this->requestedStops($trip, $stops),
         ];
@@ -222,11 +227,21 @@ class DriverNavigationService
      * last acknowledged stop, changes nothing. Only a live trip on this
      * route's stops can be acknowledged.
      */
-    public function acknowledgeStop(int $driverId, int $stopId): bool
+    public function acknowledgeStop(int $driverId, int $stopId, ?int $userId = null): bool
     {
         $trip = $this->tripRepository->findCurrentByDriver($driverId);
 
-        if (! $trip || ! $trip->fleetRoute || ! in_array($trip->status, ['departed', 'in-progress'], true)) {
+        return $trip ? $this->acknowledgeStopOnTrip($trip, $stopId, TripStopAcknowledgement::SOURCE_DRIVER, $userId) : false;
+    }
+
+    /**
+     * Mark a stop of the trip as reached: the Driver's tap, or (2026-11-21, user, demo) the Super Admin's GPS simulator
+     * on the Driver's behalf. Both follow the same rule: the trip is on the road, the stop is on its route, and a stop
+     * already behind the bus changes nothing. Each new acknowledgement is logged for the route adherence report.
+     */
+    public function acknowledgeStopOnTrip(object $trip, int $stopId, string $source, ?int $userId = null): bool
+    {
+        if (! $trip->fleetRoute || ! in_array($trip->status, ['departed', 'in-progress'], true)) {
             return false;
         }
 
@@ -244,6 +259,7 @@ class DriverNavigationService
 
         $updated = $this->tripRepository->updateLastAcknowledgedStop($trip->trip_id, $stopId);
         if ($updated) {
+            app(TripStopAcknowledgementRepository::class)->record((int) $trip->trip_id, $stopId, $source, $userId);
             // Batch 76: passengers who did not board at the stops now behind the bus missed it; their seats go back on sale.
             $fresh = $this->tripRepository->findById((int) $trip->trip_id);
             if ($fresh) {

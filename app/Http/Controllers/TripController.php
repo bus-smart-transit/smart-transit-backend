@@ -420,7 +420,7 @@ class TripController extends Controller
             return $this->error('Staff profile not found.', 404);
         }
         // Batch 52 item 4: a tap that was not recorded says why (it used to answer success).
-        if (! $this->navigationService->acknowledgeStop($companyUser->company_user_id, $stopId)) {
+        if (! $this->navigationService->acknowledgeStop($companyUser->company_user_id, $stopId, (int) $request->user()->user_id)) {
             return $this->error($this->navigationService->stopTapRefusal($companyUser->company_user_id, $stopId), 422);
         }
 

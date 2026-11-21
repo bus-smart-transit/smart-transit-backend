@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Jobs\RunGpsSimulationTick;
 use App\Models\GpsSimulation;
 use App\Models\Trip;
+use App\Models\TripStopAcknowledgement;
 use App\Models\User;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\GpsSimulationRepository;
@@ -12,6 +13,7 @@ use App\Repositories\RouteGeometryRepository;
 use App\Repositories\RouteStopRepository;
 use App\Support\BusLabel;
 use App\Support\Geo\GeoLine;
+use App\Support\LiveUpdates;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -111,6 +113,7 @@ class GpsSimulationService
         $this->writePoint($simulation, $line);
         AuditLogger::log('gps_simulation.start', 'Trip', (int) $trip->trip_id, ['simulation_id' => $simulation->id, 'speed' => $speed]);
         $this->schedule($simulation);
+        LiveUpdates::tripStatus((int) $trip->trip_id, (string) $trip->status); // 2026-11-21: the Driver's screen shows the simulator has control
 
         return $simulation->fresh();
     }
@@ -120,7 +123,7 @@ class GpsSimulationService
      *
      * @throws ValidationException
      */
-    public function control(int $simulationId, string $action, ?int $stopId = null, ?int $speed = null): GpsSimulation
+    public function control(int $simulationId, string $action, ?int $stopId = null, ?int $speed = null, ?int $userId = null): GpsSimulation
     {
         $simulation = DB::transaction(function () use ($simulationId, $action, $stopId, $speed) {
             $simulation = $this->simulations->findForUpdate($simulationId);
@@ -135,12 +138,23 @@ class GpsSimulationService
                 'speed' => $simulation->speed = $this->assertSpeed((int) $speed),
                 // 2026-11-19 (user): take the bus off its route, or put it back on the line (kept in the cache, below).
                 'deviate', 'rejoin' => null,
+                // 2026-11-21 (user, demo): mark a stop as reached for the Driver (below, after the lock).
+                'acknowledge' => null,
                 default => throw ValidationException::withMessages(['action' => ['Unknown action.']]),
             };
             $simulation->save();
 
             return $simulation;
         });
+
+        // The same rule as the Driver's tap (DriverNavigationService); it shows on the Driver's stop list, marks
+        // passengers who did not board at the stops behind the bus as missed, and goes to the route adherence report.
+        if ($action === 'acknowledge') {
+            $trip = Trip::with('fleetRoute')->find((int) $simulation->trip_id);
+            if (! $trip || ! app(DriverNavigationService::class)->acknowledgeStopOnTrip($trip, (int) $stopId, TripStopAcknowledgement::SOURCE_SIMULATOR, $userId)) {
+                throw ValidationException::withMessages(['stop_id' => ['This stop cannot be marked as reached: the trip is not on the road, or the stop is not on its route.']]);
+            }
+        }
 
         if ($action === 'deviate') {
             Cache::put(self::offRouteKey((int) $simulation->id), true, now()->addMinutes((int) config('route_geometry.gps.simulator_max_minutes') + 5));
@@ -157,6 +171,13 @@ class GpsSimulationService
         AuditLogger::log('gps_simulation.'.$action, 'Trip', (int) $simulation->trip_id, array_filter(['simulation_id' => $simulation->id, 'stop_id' => $stopId, 'speed' => $speed]));
         if ($action === 'resume') {
             $this->schedule($simulation);
+        }
+        // 2026-11-21 (user, demo): the Driver's screen reloads its stops (a stop marked, or control given back).
+        if (in_array($action, ['acknowledge', 'stop'], true)) {
+            $trip = Trip::find((int) $simulation->trip_id);
+            if ($trip) {
+                LiveUpdates::tripStatus((int) $trip->trip_id, (string) $trip->status);
+            }
         }
 
         return $simulation->fresh();
@@ -230,6 +251,7 @@ class GpsSimulationService
             'position' => $point ? ['latitude' => $point['lat'], 'longitude' => $point['lng']] : null,
             'stops' => $trip ? $this->routeStops->getOrderedStopsForDirection((int) $trip->fleetRoute->route_id, $trip->leg_direction === 'reverse' ? 'reverse' : 'outbound')
                 ->map(fn ($rs) => ['stop_id' => (int) $rs->stop_id, 'name' => $rs->stop?->stop_name])->values()->all() : [],
+            'last_acknowledged_stop_id' => $trip?->last_acknowledged_stop_id ? (int) $trip->last_acknowledged_stop_id : null, // 2026-11-21 (user)
             'expires_at' => $simulation->expires_at?->toIso8601String(),
             'stop_reason' => $simulation->stop_reason,
         ];
