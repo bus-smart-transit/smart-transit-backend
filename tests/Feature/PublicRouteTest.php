@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Company;
 use App\Models\Fleet;
 use App\Models\FleetRoute;
 use App\Models\Route;
@@ -60,18 +61,22 @@ beforeEach(function () {
 });
 afterEach(fn () => Carbon::setTestNow());
 
-it('lists the routes a bus runs through a province, with the province towns each one stops in', function () {
+// 2026-11-21 (user): every route with at least two stops is listed, whether or not a bus runs it now, with the
+// company that runs it (the pages used to empty when nothing was scheduled).
+it('lists every route through a province, with the province towns each one stops in and its company', function () {
     $operator = prOperator();
+    $company = Company::create(['company_name' => 'Sample Lines Co']);
     [$east] = prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']);
+    $east->update(['company_id' => $company->company_id]);
     prRoute($operator, 'City to North Town', ['Sample City', 'North Town']);
-    prRoute($operator, 'Unused East Route', ['Sample City', 'East Town'], false); // no bus runs it
-    prRoute($operator, 'Far Future Route', ['Sample City', 'East Town'], true, '2026-10-20'); // its only trip is past the 7 days
+    prRoute($operator, 'Unused East Route', ['Sample City', 'East Town'], false); // no bus runs it: still listed
+    prRoute($operator, 'One Stop Route', ['East Town'], false); // a single stop is not a route yet: left out
 
     $data = $this->getJson('/api/routes?province=sample oriental')->assertOk()->json('data');
 
     expect($data['province'])->toBe('Sample Oriental')
-        ->and(collect($data['routes'])->pluck('route_name')->all())->toBe(['City to Far Town'])
-        ->and($data['routes'][0])->toMatchArray(['route_id' => $east->route_id, 'stop_count' => 3, 'towns_in_province' => ['East Town', 'Far Town'], 'bus_companies' => ['Sample Lines']]);
+        ->and(collect($data['routes'])->pluck('route_name')->all())->toBe(['City to Far Town', 'Unused East Route'])
+        ->and($data['routes'][0])->toMatchArray(['route_id' => $east->route_id, 'stop_count' => 3, 'towns_in_province' => ['East Town', 'Far Town'], 'company_name' => 'Sample Lines Co']);
 });
 
 it('answers 404 for a province the region does not have, and asks for one', function () {
@@ -103,20 +108,26 @@ it('gives a route page its summary, its stops with codes, and today\'s departure
     ]);
 });
 
-it('answers 404 for a route no bus runs', function () {
-    [$route] = prRoute(prOperator(), 'Unused Route', ['Sample City', 'East Town'], false);
+it('shows a route no bus runs with no departures, and answers 404 for a route with fewer than two stops', function () {
+    [$unused] = prRoute(prOperator(), 'Unused Route', ['Sample City', 'East Town'], false);
+    [$oneStop] = prRoute(prOperator(), 'One Stop Route', ['East Town'], false);
 
-    $this->getJson("/api/routes/{$route->route_id}")->assertNotFound();
-    $this->getJson("/api/routes/{$route->route_id}/departures")->assertNotFound();
+    $this->getJson("/api/routes/{$unused->route_id}")->assertOk()->assertJsonPath('data.route_name', 'Unused Route');
+    expect($this->getJson("/api/routes/{$unused->route_id}/departures")->assertOk()->json('data.departures'))->toBe([]);
+    $this->getJson("/api/routes/{$oneStop->route_id}")->assertNotFound();
 });
 
-it('lists every province a bus runs through, with its routes, for View all routes', function () {
+it('lists every route once, by name, with its company, for View all routes', function () {
     $operator = prOperator();
-    prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']);
-    prRoute($operator, 'Unused North Route', ['North Town'], false); // no bus runs it, so its province is left out
+    $company = Company::create(['company_name' => 'Sample Lines Co']);
+    [$far] = prRoute($operator, 'City to Far Town', ['Sample City', 'East Town', 'Far Town']); // crosses two provinces
+    $far->update(['company_id' => $company->company_id]);
+    prRoute($operator, 'Alpha Route', ['North Town', 'Sample City'], false);
+    prRoute($operator, 'One Stop Route', ['North Town'], false);
 
-    $data = $this->getJson('/api/routes/all')->assertOk()->json('data.provinces');
+    $routes = $this->getJson('/api/routes/all')->assertOk()->json('data.routes');
 
-    expect(collect($data)->pluck('province')->all())->toBe(['Sample Oriental', 'Sample City'])
-        ->and(collect($data)->map(fn ($group) => collect($group['routes'])->pluck('route_name')->all())->all())->toBe([['City to Far Town'], ['City to Far Town']]);
+    expect(collect($routes)->pluck('route_name')->all())->toBe(['Alpha Route', 'City to Far Town'])
+        ->and($routes[1])->toMatchArray(['route_id' => $far->route_id, 'company_name' => 'Sample Lines Co'])
+        ->and($routes[0]['company_name'])->toBeNull();
 });

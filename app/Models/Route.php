@@ -114,6 +114,12 @@ class Route extends Model
         return $this->hasMany(RouteStop::class, 'route_id', 'route_id')->orderBy('stop_order');
     }
 
+    /** 2026-11-21 (user): the company that runs the route (shown on the passengers' route pages). */
+    public function company()
+    {
+        return $this->belongsTo(Company::class, 'company_id', 'company_id');
+    }
+
     public function fleetRoutes()
     {
         return $this->hasMany(FleetRoute::class, 'route_id', 'route_id');

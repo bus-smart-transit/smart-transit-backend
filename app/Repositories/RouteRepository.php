@@ -3,9 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Route;
-use App\Support\FinancialClock;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -121,19 +119,24 @@ class RouteRepository
     }
 
     /**
-     * 2026-11-21 (user, Dynamic Route Scheduling): a route is public while one of its buses has a trip on it that is not
-     * cancelled or finished, from today to config booking.public_route_window_days ahead; its bus companies are those.
+     * 2026-11-21 (user): every route with at least two stops is public, whether or not a bus runs it now (its page says
+     * when no trip is scheduled), with the company that runs it. (Earlier: only routes with a trip in the next 7 days,
+     * which emptied the pages whenever nothing was scheduled.)
      */
     private function publicQuery(): Builder
     {
-        $today = FinancialClock::today();
-        $until = Carbon::parse($today)->addDays((int) config('booking.public_route_window_days', 7))->toDateString();
-        $running = fn ($q) => $q->where('status', 'active')
-            ->whereHas('fleet', fn ($f) => $f->where('status', 'active'))
-            ->whereHas('trips', fn ($t) => $t->whereBetween('trip_date', [$today, $until])->whereIn('status', ['scheduled', 'delayed', 'boarding', 'departed', 'in-progress']));
-
         return Route::query()
-            ->whereHas('fleetRoutes', $running)
-            ->with(['routeStops.stop:stop_id,stop_name,municipality', 'fleetRoutes' => $running, 'fleetRoutes.fleet:fleet_id,bus_company_name,body_no,company_id']);
+            ->has('routeStops', '>=', 2)
+            ->with(['routeStops.stop:stop_id,stop_name,municipality', 'company:company_id,company_name']);
+    }
+
+    /**
+     * 2026-11-21 (user): every public route once, by name (the passengers' "View all routes").
+     *
+     * @return Collection<int, Route>
+     */
+    public function allPublic(): Collection
+    {
+        return $this->publicQuery()->orderBy('route_name')->orderBy('route_id')->get();
     }
 }

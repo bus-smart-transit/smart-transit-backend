@@ -54,10 +54,6 @@ return [
     // Batch 76 (user, 2026-11-17): priority seats for seniors, persons with disability and pregnant passengers. A ticket
     // asks for one at checkout (a senior or PWD discount claim asks for it automatically); the Chauffeur checks on the bus.
     // At most seats_per_bus priority tickets are sold online per trip. No money changes hands, so nothing is refunded.
-    // 2026-11-21 (user, Dynamic Route Scheduling): the passengers' route pages list a route while a bus has a trip on it
-    // from today to this many days ahead (buses are chosen per trip, so a route is "run" when trips are scheduled).
-    'public_route_window_days' => (int) env('PUBLIC_ROUTE_WINDOW_DAYS', 7),
-
     'priority' => [
         'seats_per_bus' => (int) env('PRIORITY_SEATS_PER_BUS', 4),
         'types' => [

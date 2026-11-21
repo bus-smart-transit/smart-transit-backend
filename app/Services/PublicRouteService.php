@@ -49,7 +49,7 @@ class PublicRouteService
                 'destination' => $route->destination,
                 'stop_count' => $stops->count(),
                 'towns_in_province' => $inProvince,
-                'bus_companies' => $route->fleetRoutes->map(fn ($fr) => $fr->fleet?->bus_company_name)->filter()->unique()->values()->all(),
+                'company_name' => $route->company?->company_name, // 2026-11-21 (user): the company that runs the route
             ];
         })->values()->all();
 
@@ -57,22 +57,21 @@ class PublicRouteService
     }
 
     /**
-     * 2026-11-21 (user): "View all routes" on the homepage: every province of the region that a bus runs through, each
-     * with its routes (the same rows as forProvince, so a route that crosses provinces is listed under each one).
+     * 2026-11-21 (user): "View all routes" on the homepage: every route once (no repeats across provinces), by name,
+     * with the company that runs it.
      *
-     * @return array{provinces: list<array{province: string, routes: list<array<string, mixed>>}>}
+     * @return array{routes: list<array{route_id: int, route_name: string, color: ?string, origin: ?string, destination: ?string, company_name: ?string}>}
      */
     public function all(): array
     {
-        $provinces = [];
-        foreach (array_keys((array) config('region.provinces', [])) as $name) {
-            $group = $this->forProvince((string) $name);
-            if ($group !== null && $group['routes'] !== []) {
-                $provinces[] = $group;
-            }
-        }
-
-        return ['provinces' => $provinces];
+        return ['routes' => $this->routes->allPublic()->map(fn (Route $route) => [
+            'route_id' => (int) $route->route_id,
+            'route_name' => $route->route_name,
+            'color' => $route->color,
+            'origin' => $route->origin,
+            'destination' => $route->destination,
+            'company_name' => $route->company?->company_name,
+        ])->values()->all()];
     }
 
     /** @return array<string, mixed>|null */
@@ -91,7 +90,7 @@ class PublicRouteService
             'origin' => $route->origin,
             'destination' => $route->destination,
             'provinces' => $this->provincesOf($towns),
-            'bus_companies' => $route->fleetRoutes->map(fn ($fr) => $fr->fleet?->bus_company_name)->filter()->unique()->values()->all(),
+            'company_name' => $route->company?->company_name,
         ];
     }
 
