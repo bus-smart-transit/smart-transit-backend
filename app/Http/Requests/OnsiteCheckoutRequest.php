@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Support\PriorityBoarding;
+use App\Support\TripCapacity;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -18,7 +19,7 @@ class OnsiteCheckoutRequest extends FormRequest
         return [
             'items' => 'required|array|min:1',
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
-            'items.*.seat_type' => 'required|string|in:seated,standing',
+            'items.*.seat_type' => ['required', 'string', Rule::in(TripCapacity::seatTypes())],
             // Task 6: `gps` = boarding between stops. The boarding point is resolved on the server from the bus's
             // own position, so no origin and no coordinates for it are accepted here.
             'items.*.boarding_mode' => 'nullable|string|in:gps',
@@ -49,5 +50,11 @@ class OnsiteCheckoutRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->merge(['idempotency_key' => $this->header('Idempotency-Key')]);
+    }
+
+    /** @return array<string, string> */
+    public function messages(): array
+    {
+        return ['items.*.seat_type.in' => 'Standing passengers are not allowed. Sell a seat.'];
     }
 }

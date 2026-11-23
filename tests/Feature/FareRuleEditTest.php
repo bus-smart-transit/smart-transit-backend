@@ -122,7 +122,7 @@ it('lets an Operator edit their own bus but not drop its places below what is so
 
     $fresh = $fleet->fresh();
     expect($fresh->body_no)->toBe('07')
-        ->and((int) $fresh->capacity)->toBe(45)
+        ->and((int) $fresh->capacity)->toBe(35) // 2026-11-23: seats only, standing passengers are not allowed
         ->and($fresh->bus_company_name)->not->toBe('Renamed')
         ->and($theirs->fresh()->body_no)->toBeNull();
 });

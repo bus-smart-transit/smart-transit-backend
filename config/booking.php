@@ -32,6 +32,11 @@ return [
     'stale_trip_fallback_length_minutes' => (int) env('BOOKING_STALE_TRIP_FALLBACK_LENGTH_MINUTES', 240),
 
     'max_seats_per_purchase' => (int) env('BOOKING_MAX_SEATS_PER_PURCHASE', 20),
+    // 2026-11-23 (advisor): standing passengers are not allowed (LTFRB). Off: no standing places are counted, offered
+    // or sold, and a bus is saved with none (TripCapacity::standingAllowed).
+    'allow_standing' => (bool) env('BOOKING_ALLOW_STANDING', false),
+    // 2026-11-23 (advisor): the fewest seats a bus may have.
+    'min_bus_seats' => (int) env('BOOKING_MIN_BUS_SEATS', 20),
     // Batch 49 item 6: stops with the same name (ignoring case, spaces and accents) within this many metres are one
     // place for passengers (PlaceGroups). Production pairs are 0 to 9 m apart; two real places 300 m apart stay apart.
     'place_group_radius_m' => (float) env('BOOKING_PLACE_GROUP_RADIUS_M', 100),

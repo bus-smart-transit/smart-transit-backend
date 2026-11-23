@@ -36,11 +36,30 @@ class RouteService
      */
     public function createRoute(array $payload): object
     {
+        $this->assertNotDuplicate(isset($payload['company_id']) ? (int) $payload['company_id'] : null, (string) $payload['origin'], (string) $payload['destination']);
         $name = trim((string) ($payload['route_name'] ?? ''));
         $payload['route_name'] = $name !== '' ? $name : RouteName::from((string) $payload['origin'], (string) $payload['destination']);
         $payload['color'] = RouteColor::nextFree($this->routeRepository->usedColors()); // 2026-11-21 (user): never a colour in use
 
         return $this->routeRepository->create($payload);
+    }
+
+    /**
+     * 2026-11-23 (advisor): a company may not have the same road twice, in either direction (RouteName::endsKey).
+     *
+     * @throws ValidationException
+     */
+    private function assertNotDuplicate(?int $companyId, string $origin, string $destination, ?int $exceptRouteId = null): void
+    {
+        $key = RouteName::endsKey($origin, $destination);
+        $same = $this->routeRepository->endsForCompany($companyId)->first(
+            fn (Route $route) => (int) $route->route_id !== $exceptRouteId
+                && RouteName::endsKey((string) $route->origin, (string) $route->destination) === $key
+        );
+        if ($same) {
+            $name = $same->route_name ?: RouteName::from((string) $same->origin, (string) $same->destination);
+            throw ValidationException::withMessages(['origin' => ["This route already exists as {$name}. Its schedules run both ways."]]);
+        }
     }
 
     public function listRoutes(?User $user = null): object
@@ -300,6 +319,17 @@ class RouteService
     public function updateRoute(int $routeId, array $changes): ?Route
     {
         $changes = array_map(fn ($value) => trim((string) $value), array_intersect_key($changes, array_flip(['route_name', 'origin', 'destination'])));
+        if (isset($changes['origin']) || isset($changes['destination'])) {
+            $current = $this->routeRepository->findById($routeId);
+            if ($current) {
+                $this->assertNotDuplicate(
+                    $current->company_id !== null ? (int) $current->company_id : null,
+                    $changes['origin'] ?? (string) $current->origin,
+                    $changes['destination'] ?? (string) $current->destination,
+                    $routeId,
+                );
+            }
+        }
         if ($changes !== []) {
             $this->routeRepository->update($routeId, $changes);
         }

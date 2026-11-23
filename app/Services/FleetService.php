@@ -12,6 +12,7 @@ use App\Repositories\TripRepository;
 use App\Support\BusLabel;
 use App\Support\CompanyScope;
 use App\Support\OperatingWindow;
+use App\Support\TripCapacity;
 use App\Support\VehicleClass;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -29,7 +30,10 @@ class FleetService
     // $payload = ['plate_number','seated_capacity','standing_capacity','fleet_type', 'routes' => [['route_id','start_time','end_time'], ...]]
     public function registerFleet(array $payload, int $staffId): object
     {
-        // Auto-calculate capacity from seated + standing
+        // 2026-11-23 (advisor): no standing places unless booking.allow_standing; capacity = seats (+ standing).
+        if (! TripCapacity::standingAllowed()) {
+            $payload['standing_capacity'] = 0;
+        }
         $capacity = (intval($payload['seated_capacity'] ?? 0) + intval($payload['standing_capacity'] ?? 0));
         $routes = $payload['routes'] ?? [];
         unset($payload['routes']);
@@ -80,6 +84,9 @@ class FleetService
             return null;
         }
 
+        if (! TripCapacity::standingAllowed() && (array_key_exists('seated_capacity', $payload) || array_key_exists('standing_capacity', $payload))) {
+            $payload['standing_capacity'] = 0;   // 2026-11-23: an edited bus drops any standing places it had
+        }
         if (array_key_exists('seated_capacity', $payload) || array_key_exists('standing_capacity', $payload)) {
             $seated = (int) ($payload['seated_capacity'] ?? $fleet->seated_capacity);
             $standing = (int) ($payload['standing_capacity'] ?? $fleet->standing_capacity);
@@ -90,7 +97,7 @@ class FleetService
             if ($seated < $sold['seated']) {
                 throw ValidationException::withMessages(['seated_capacity' => ["{$sold['seated']} seats are already sold on a trip of this bus that has not finished. Choose at least {$sold['seated']}."]]);
             }
-            if ($standing < $sold['standing']) {
+            if (TripCapacity::standingAllowed() && $standing < $sold['standing']) {
                 throw ValidationException::withMessages(['standing_capacity' => ["{$sold['standing']} standing places are already sold on a trip of this bus that has not finished. Choose at least {$sold['standing']}."]]);
             }
         }

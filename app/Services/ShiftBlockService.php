@@ -85,8 +85,8 @@ class ShiftBlockService
         $windowFrom = Carbon::parse($dates[0])->subDays(self::restWindowDays())->toDateString();
         $windowTo = Carbon::parse(end($dates))->addDays(self::restWindowDays())->toDateString();
         $worked = [
-            'driver' => array_flip($this->tripRepository->assignedDatesBetween('driver', (int) $payload['driver_id'], $windowFrom, $windowTo)),
-            'conductor' => array_flip($this->tripRepository->assignedDatesBetween('conductor', (int) $payload['conductor_id'], $windowFrom, $windowTo)),
+            'driver' => empty($payload['driver_id']) ? [] : array_flip($this->tripRepository->assignedDatesBetween('driver', (int) $payload['driver_id'], $windowFrom, $windowTo)),
+            'conductor' => empty($payload['conductor_id']) ? [] : array_flip($this->tripRepository->assignedDatesBetween('conductor', (int) $payload['conductor_id'], $windowFrom, $windowTo)),
         ];
 
         $days = [];
@@ -94,7 +94,8 @@ class ShiftBlockService
             $reason = null;
             try {
                 $this->assertBlockCanBeCreated(array_merge($payload, ['scheduled_date' => $date]));
-                $reason = $this->restDayReason($date, $worked['driver'], 'Driver') ?? $this->restDayReason($date, $worked['conductor'], 'Chauffeur');
+                $reason = (empty($payload['driver_id']) ? null : $this->restDayReason($date, $worked['driver'], 'Driver'))
+                    ?? (empty($payload['conductor_id']) ? null : $this->restDayReason($date, $worked['conductor'], 'Chauffeur'));
             } catch (ValidationException $e) {
                 $reason = (string) (collect($e->errors())->flatten()->first() ?? 'This day cannot be scheduled.');
             }
@@ -124,7 +125,7 @@ class ShiftBlockService
         $payload = $this->fleets->withFleetRoute($payload); // 2026-11-21 (user): bus and route chosen when scheduling
         $created = [];
         $result = DB::transaction(function () use ($payload, &$created) {
-            StaffUser::whereIn('company_user_id', [(int) $payload['driver_id'], (int) $payload['conductor_id']])->lockForUpdate()->get();
+            StaffUser::whereIn('company_user_id', array_filter([(int) ($payload['driver_id'] ?? 0), (int) ($payload['conductor_id'] ?? 0)]))->lockForUpdate()->get();
 
             $preview = $this->previewRange($payload);
             foreach ($preview['days'] as $i => $day) {
@@ -203,7 +204,7 @@ class ShiftBlockService
     /**
      * The block's driver and Chauffeur, checked by StaffService::assertCrewOf (right role, owner's own company).
      *
-     * @return array{0: StaffUser, 1: StaffUser}
+     * @return array{0: ?StaffUser, 1: ?StaffUser}
      */
     private function assertCrewPair(array $payload): array
     {
@@ -211,10 +212,32 @@ class ShiftBlockService
         // Batch 46 step 2: the bus must be the owner's company's too (checked first, before reading anyone's schedule).
         $this->fleets->assertFleetRouteOfCompany($owner, $payload['fleet_route_id'] ?? null);
 
+        // 2026-11-23 (advisor): the crew is optional when scheduling (the Operator schedules a month ahead and assigns
+        // the crew by the day); whoever is given is checked.
         return [
-            $this->staff->assertCrewOf($owner, $payload['driver_id'] ?? null, 'driver', 'driver_id'),
-            $this->staff->assertCrewOf($owner, $payload['conductor_id'] ?? null, 'conductor', 'conductor_id'),
+            empty($payload['driver_id']) ? null : $this->staff->assertCrewOf($owner, $payload['driver_id'], 'driver', 'driver_id'),
+            empty($payload['conductor_id']) ? null : $this->staff->assertCrewOf($owner, $payload['conductor_id'], 'conductor', 'conductor_id'),
         ];
+    }
+
+    /**
+     * 2026-11-23: one owner of "may this person work this block": no other shift block that day, no plain trip that day,
+     * and the rest rule before the first leg. Used when scheduling with a crew and when a crew is assigned later.
+     *
+     * @throws ValidationException
+     */
+    private function assertCrewFreeOn(string $role, int $staffId, string $date, string $firstLeg, ?int $exceptBlockId = null): void
+    {
+        $field = $role.'_id';
+        $label = $role === 'driver' ? 'driver' : 'Chauffeur';
+        if ($this->shiftBlockRepository->hasBlockOnDate($role, $staffId, $date, $exceptBlockId)) {
+            throw ValidationException::withMessages([$field => ["This {$label} already has a shift block scheduled for this date."]]);
+        }
+        // A plain (non-block) trip that day counts too; legs are trips rows, so TripService already blocks the reverse.
+        if ($this->tripRepository->hasAnySameDayAssignment($role, $staffId, $date)) {
+            throw ValidationException::withMessages([$field => ["This {$label} already has a trip assigned on this date."]]);
+        }
+        $this->assertRestThresholdMet($role, $staffId, $date, $firstLeg);
     }
 
     private function assertBlockCanBeCreated(array $payload): array
@@ -249,32 +272,12 @@ class ShiftBlockService
 
         $this->legPlanning->assertNoOverlap((int) $fleetRoute->route_id, $payload['service_type'] ?? null, (string) $scheduledDate, $legTimes);
 
-        // One-shift-block-per-day exclusivity (supersedes the earlier
-        // per-trip exclusivity check — see TripService::assertNotAlreadyAssignedThatDay()
-        // for the plain non-block trip-assignment equivalent).
-        if ($this->shiftBlockRepository->hasBlockOnDate('driver', $payload['driver_id'], $scheduledDate)) {
-            throw ValidationException::withMessages(['driver_id' => ['This driver already has a shift block scheduled for this date.']]);
+        // One block a day each, no plain trip that day either, and the rest rule (for whoever is given).
+        foreach (['driver', 'conductor'] as $role) {
+            if (! empty($payload[$role.'_id'])) {
+                $this->assertCrewFreeOn($role, (int) $payload[$role.'_id'], (string) $scheduledDate, (string) $legTimes[0]);
+            }
         }
-        if ($this->shiftBlockRepository->hasBlockOnDate('conductor', $payload['conductor_id'], $scheduledDate)) {
-            throw ValidationException::withMessages(['conductor_id' => ['This conductor already has a shift block scheduled for this date.']]);
-        }
-
-        // Cross-system exclusivity: a staff member also may not already
-        // hold a plain (non-block) trip assignment on this date. Legs
-        // created below are `trips` rows with driver_id/conductor_id set,
-        // so TripService::assertNotAlreadyAssignedThatDay() already blocks
-        // the reverse case (plain trip vs. existing shift block); this
-        // closes the other direction.
-        if ($this->tripRepository->hasAnySameDayAssignment('driver', $payload['driver_id'], $scheduledDate)) {
-            throw ValidationException::withMessages(['driver_id' => ['This driver already has a trip assigned on this date.']]);
-        }
-        if ($this->tripRepository->hasAnySameDayAssignment('conductor', $payload['conductor_id'], $scheduledDate)) {
-            throw ValidationException::withMessages(['conductor_id' => ['This conductor already has a trip assigned on this date.']]);
-        }
-
-        // Rest Rule.
-        $this->assertRestThresholdMet('driver', $payload['driver_id'], $scheduledDate, $legTimes[0]);
-        $this->assertRestThresholdMet('conductor', $payload['conductor_id'], $scheduledDate, $legTimes[0]);
 
         // The bus must run this route at every leg's time and not already be on another trip then. Checked for all legs
         // before anything is created, so a refusal leaves no half-made block.
@@ -297,8 +300,8 @@ class ShiftBlockService
         $scheduledDate = $payload['scheduled_date'];
         $block = $this->shiftBlockRepository->create([
             'fleet_id' => $fleetRoute->fleet_id,
-            'driver_id' => $payload['driver_id'],
-            'conductor_id' => $payload['conductor_id'],
+            'driver_id' => $payload['driver_id'] ?? null,
+            'conductor_id' => $payload['conductor_id'] ?? null,
             'company_user_id' => $payload['company_user_id'],
             'block_type' => $payload['block_type'],
             'status' => 'scheduled',
@@ -316,8 +319,8 @@ class ShiftBlockService
                 'leg_direction' => $this->expectedLegDirectionFromIndex($index),
                 'service_type' => ServiceType::normalize($payload['service_type'] ?? null),
                 'status' => 'scheduled',
-                'driver_id' => $payload['driver_id'],
-                'conductor_id' => $payload['conductor_id'],
+                'driver_id' => $payload['driver_id'] ?? null,
+                'conductor_id' => $payload['conductor_id'] ?? null,
                 'shift_block_id' => $block->shift_block_id,
                 'current_seated_capacity' => 0,
                 'current_standing_capacity' => 0,
@@ -330,11 +333,11 @@ class ShiftBlockService
         return $block;
     }
 
-    private function notifyBlockAssigned(ShiftBlock $block, object $driver, object $conductor, object $fleetRoute, array $payload): void
+    private function notifyBlockAssigned(ShiftBlock $block, ?object $driver, ?object $conductor, object $fleetRoute, array $payload): void
     {
         $routeName = $fleetRoute->route?->route_name ?? 'a shift block';
         $scheduledDate = $payload['scheduled_date'];
-        if ($driver->user) {
+        if ($driver?->user) {
             $this->fcmService->sendToUser(
                 $driver->user,
                 'New Shift Block Assignment',
@@ -342,7 +345,7 @@ class ShiftBlockService
                 NotificationLink::blockAssignedData('driver', (int) $block->shift_block_id),
             );
         }
-        if ($conductor->user) {
+        if ($conductor?->user) {
             $this->fcmService->sendToUser(
                 $conductor->user,
                 'New Shift Block Assignment',
@@ -510,26 +513,16 @@ class ShiftBlockService
 
         $update = [];
 
-        if (! empty($payload['driver_id']) && (int) $payload['driver_id'] !== (int) $block->driver_id) {
-            $this->staff->assertCrewOf((int) $block->company_user_id, $payload['driver_id'], 'driver', 'driver_id');
-            if ($this->shiftBlockRepository->hasBlockOnDate('driver', $payload['driver_id'], $block->scheduled_date->format('Y-m-d'), $blockId)) {
-                throw ValidationException::withMessages(['driver_id' => ['This driver already has a shift block scheduled for this date.']]);
+        // 2026-11-23: the same checks as when scheduling with a crew (role, company, one block a day, rest rule).
+        $firstLeg = (string) (Trip::where('shift_block_id', $blockId)->orderBy('departure_time')->value('departure_time') ?? '00:00');
+        foreach (['driver', 'conductor'] as $role) {
+            $field = $role.'_id';
+            if (empty($payload[$field]) || (int) $payload[$field] === (int) $block->{$field}) {
+                continue;
             }
-            if ($this->tripRepository->hasAnySameDayAssignment('driver', $payload['driver_id'], $block->scheduled_date->format('Y-m-d'))) {
-                throw ValidationException::withMessages(['driver_id' => ['This driver already has a trip assigned on this date.']]);
-            }
-            $update['driver_id'] = $payload['driver_id'];
-        }
-
-        if (! empty($payload['conductor_id']) && (int) $payload['conductor_id'] !== (int) $block->conductor_id) {
-            $this->staff->assertCrewOf((int) $block->company_user_id, $payload['conductor_id'], 'conductor', 'conductor_id');
-            if ($this->shiftBlockRepository->hasBlockOnDate('conductor', $payload['conductor_id'], $block->scheduled_date->format('Y-m-d'), $blockId)) {
-                throw ValidationException::withMessages(['conductor_id' => ['This conductor already has a shift block scheduled for this date.']]);
-            }
-            if ($this->tripRepository->hasAnySameDayAssignment('conductor', $payload['conductor_id'], $block->scheduled_date->format('Y-m-d'))) {
-                throw ValidationException::withMessages(['conductor_id' => ['This conductor already has a trip assigned on this date.']]);
-            }
-            $update['conductor_id'] = $payload['conductor_id'];
+            $this->staff->assertCrewOf((int) $block->company_user_id, $payload[$field], $role, $field);
+            $this->assertCrewFreeOn($role, (int) $payload[$field], $block->scheduled_date->format('Y-m-d'), substr($firstLeg, 0, 5), $blockId);
+            $update[$field] = $payload[$field];
         }
 
         if ($update) {

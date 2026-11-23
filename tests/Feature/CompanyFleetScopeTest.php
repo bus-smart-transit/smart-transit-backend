@@ -104,7 +104,7 @@ it('gives a new bus its Operator\'s company and company name', function () {
     $op = cfsOperator($metro, 'First');
 
     $this->actingAs($op, 'sanctum');
-    $this->postJson('/api/operator/fleets', ['plate_number' => 'NEW-123', 'bus_company_name' => 'Typed Name', 'body_no' => '12', 'seated_capacity' => 40, 'standing_capacity' => 10, 'fleet_type' => 'public'])
+    $this->postJson('/api/operator/fleets', ['plate_number' => 'NEW-123', 'bus_company_name' => 'Typed Name', 'body_no' => '12', 'vehicle_class' => 'ordinary', 'operating_start_time' => '05:00', 'operating_end_time' => '22:00', 'seated_capacity' => 40, 'fleet_type' => 'public'])
         ->assertSuccessful();
 
     $fleet = Fleet::where('plate_number', 'NEW-123')->first();

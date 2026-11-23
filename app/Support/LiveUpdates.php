@@ -109,6 +109,19 @@ final class LiveUpdates
         }
     }
 
+    /**
+     * 2026-11-23 (advisor): the Driver and the Chauffeur were paired for a trip. Both people's open screens move on at
+     * once (the Driver to the dashboard, the Chauffeur to ticketing) instead of waiting for their next check.
+     *
+     * @param  array<int, int>  $userIds
+     */
+    public static function paired(array $userIds, int $tripId): void
+    {
+        foreach (array_unique(array_filter(array_map('intval', $userIds))) as $userId) {
+            self::send('paired', fn () => Broadcast::private('user.'.$userId)->as('paired')->with(['trip_id' => $tripId])->sendNow());
+        }
+    }
+
     /** A crew alert was raised, cancelled, handled or passed on to passengers: the Operators' screens reload it. */
     public static function alert(?string $companyKey, array $alert): void
     {

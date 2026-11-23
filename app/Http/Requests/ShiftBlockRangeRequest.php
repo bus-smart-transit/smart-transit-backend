@@ -27,8 +27,9 @@ class ShiftBlockRangeRequest extends FormRequest
             'fleet_route_id' => ['required_without_all:fleet_id,route_id', 'nullable', 'integer'],
             'fleet_id' => ['required_without:fleet_route_id', 'nullable', 'integer', 'exists:fleets,fleet_id'],
             'route_id' => ['required_without:fleet_route_id', 'nullable', 'integer', 'exists:routes,route_id'],
-            'driver_id' => ['required', 'integer'],
-            'conductor_id' => ['required', 'integer'],
+            // 2026-11-23 (advisor): the crew may be assigned later (the Operator schedules a month ahead).
+            'driver_id' => ['nullable', 'integer'],
+            'conductor_id' => ['nullable', 'integer'],
             'block_type' => ['required', 'string'],
             'from_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:today'],
             'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],

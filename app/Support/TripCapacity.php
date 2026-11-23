@@ -20,6 +20,21 @@ use App\Models\Trip;
 final class TripCapacity
 {
     /**
+     * 2026-11-23 (advisor): standing passengers are not allowed (LTFRB). With booking.allow_standing off, no bus has
+     * standing places: none are counted, offered or sold, whatever a bus row still holds from before.
+     */
+    public static function standingAllowed(): bool
+    {
+        return (bool) config('booking.allow_standing', false);
+    }
+
+    /** @return list<string> the seat types that may be sold */
+    public static function seatTypes(): array
+    {
+        return self::standingAllowed() ? ['seated', 'standing'] : ['seated'];
+    }
+
+    /**
      * @param  array{seated?: int, standing?: int}  $boarded  scanned-on counts by seat type
      * @return array<string, mixed>
      */
@@ -28,9 +43,11 @@ final class TripCapacity
         $fleet = $trip->fleetRoute?->fleet;
         $capacity = [
             'seated' => (int) ($fleet->seated_capacity ?? 0),
-            'standing' => (int) ($fleet->standing_capacity ?? 0),
+            'standing' => self::standingAllowed() ? (int) ($fleet->standing_capacity ?? 0) : 0,
         ];
-        $capacity['total'] = (int) ($fleet->capacity ?? ($capacity['seated'] + $capacity['standing']));
+        $capacity['total'] = self::standingAllowed()
+            ? (int) ($fleet->capacity ?? ($capacity['seated'] + $capacity['standing']))
+            : $capacity['seated'];
 
         $sold = [
             'seated' => (int) $trip->current_seated_capacity,
@@ -68,6 +85,9 @@ final class TripCapacity
      */
     public static function standingOpen(Trip $trip): bool
     {
+        if (! self::standingAllowed()) {
+            return false;
+        }
         $fleet = $trip->fleetRoute->fleet;
 
         return (int) $trip->current_seated_capacity >= (int) $fleet->seated_capacity;
@@ -77,6 +97,10 @@ final class TripCapacity
     public static function wouldExceed(Trip $trip, string $seatType, int $count): bool
     {
         $fleet = $trip->fleetRoute->fleet;
+
+        if ($seatType !== 'seated' && ! self::standingAllowed()) {
+            return true;
+        }
 
         return $seatType === 'seated'
             ? $trip->current_seated_capacity + $count > $fleet->seated_capacity

@@ -106,8 +106,8 @@ it('creates a fleet together with its routes and lists them back', function () {
     $this->actingAs($operator)
         ->postJson('/api/operator/fleets', [
             'plate_number' => 'B3-201',
+            'body_no' => 'B3-201', 'vehicle_class' => 'ordinary', 'operating_start_time' => '05:00', 'operating_end_time' => '22:00',
             'seated_capacity' => 40,
-            'standing_capacity' => 10,
             'fleet_type' => 'public',
             'routes' => [
                 ['route_id' => $route->route_id, 'start_time' => '06:00', 'end_time' => '22:00'],
@@ -133,8 +133,8 @@ it('does not create the fleet when a route in the payload is invalid', function 
     $this->actingAs($operator)
         ->postJson('/api/operator/fleets', [
             'plate_number' => 'B3-202',
+            'body_no' => 'B3-202', 'vehicle_class' => 'ordinary', 'operating_start_time' => '05:00', 'operating_end_time' => '22:00',
             'seated_capacity' => 40,
-            'standing_capacity' => 10,
             'fleet_type' => 'public',
             'routes' => [
                 ['route_id' => 999999, 'start_time' => '06:00', 'end_time' => '22:00'],

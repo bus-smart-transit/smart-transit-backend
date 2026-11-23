@@ -69,8 +69,8 @@ class ShiftBlockController extends Controller
         ]));
 
         AuditLogger::log('shift_block.create', 'ShiftBlock', $block->shift_block_id, [
-            'driver_id' => $validated['driver_id'],
-            'conductor_id' => $validated['conductor_id'],
+            'driver_id' => $validated['driver_id'] ?? null,
+            'conductor_id' => $validated['conductor_id'] ?? null,
             'block_type' => $validated['block_type'],
         ]);
 
@@ -120,8 +120,8 @@ class ShiftBlockController extends Controller
         foreach ($result['days'] as $day) {
             if (isset($day['shift_block_id'])) {
                 AuditLogger::log('shift_block.create', 'ShiftBlock', $day['shift_block_id'], [
-                    'driver_id' => $validated['driver_id'],
-                    'conductor_id' => $validated['conductor_id'],
+                    'driver_id' => $validated['driver_id'] ?? null,
+                    'conductor_id' => $validated['conductor_id'] ?? null,
                     'block_type' => $validated['block_type'],
                     'range' => [$result['from_date'], $result['to_date']],
                 ]);

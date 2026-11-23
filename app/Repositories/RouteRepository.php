@@ -24,6 +24,19 @@ class RouteRepository
         return Route::query()->whereNotNull('color')->pluck('color')->all();
     }
 
+    /**
+     * 2026-11-23: one company's routes with their two ends (the duplicate-route check). A null company means the routes
+     * that belong to no company.
+     *
+     * @return Collection<int, Route>
+     */
+    public function endsForCompany(?int $companyId): Collection
+    {
+        return Route::query()
+            ->when($companyId === null, fn ($q) => $q->whereNull('company_id'), fn ($q) => $q->where('company_id', $companyId))
+            ->get(['route_id', 'route_name', 'origin', 'destination', 'company_id']);
+    }
+
     public function findById(int $routeId): ?Route
     {
         return Route::with([

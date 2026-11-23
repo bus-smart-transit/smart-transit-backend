@@ -143,19 +143,27 @@ it('moves a trip to another bus named by itself, on the trip\'s own route', func
         ->and($moved->fleetRoute->route_id)->toBe($route->route_id);
 });
 
-it('adds a bus with its operating hours, or with the window that covers the routes it was added with', function () {
+it('adds a bus with its operating hours, which are required', function () {
     $company = Company::create(['company_name' => 'Ds Co']);
     $operator = dsOperator($company);
     $route = dsRoute($company);
     $this->actingAs($operator, 'sanctum');
 
-    $base = ['seated_capacity' => 40, 'standing_capacity' => 10, 'fleet_type' => 'public'];
+    // 2026-11-23 (advisor): body number, class and operating hours are required; a bus has at least 20 seats.
+    $base = ['seated_capacity' => 40, 'fleet_type' => 'public', 'body_no' => 'DS', 'vehicle_class' => 'ordinary'];
     $own = $this->postJson('/api/operator/fleets', $base + ['plate_number' => 'DS-101', 'operating_start_time' => '05:30', 'operating_end_time' => '21:30'])->assertSuccessful()->json('data');
-    $fromRoutes = $this->postJson('/api/operator/fleets', $base + ['plate_number' => 'DS-102', 'routes' => [['route_id' => $route->route_id, 'start_time' => '12:00', 'end_time' => '05:00']]])->assertSuccessful()->json('data');
+    $this->postJson('/api/operator/fleets', $base + ['plate_number' => 'DS-102', 'routes' => [['route_id' => $route->route_id, 'start_time' => '12:00', 'end_time' => '05:00']]])
+        ->assertUnprocessable()->assertJsonValidationErrors(['operating_start_time', 'operating_end_time']);
     $this->postJson('/api/operator/fleets', $base + ['plate_number' => 'DS-103', 'operating_start_time' => '05:30'])->assertUnprocessable()->assertJsonValidationErrors('operating_end_time');
+    $this->postJson('/api/operator/fleets', ['plate_number' => 'DS-104', 'seated_capacity' => 19, 'fleet_type' => 'public', 'operating_start_time' => '05:30', 'operating_end_time' => '21:30'])
+        ->assertUnprocessable()
+        ->assertJsonPath('errors.seated_capacity.0', 'A bus needs at least 20 seats.')
+        ->assertJsonValidationErrors(['body_no', 'vehicle_class']);
+    $this->postJson('/api/operator/fleets', $base + ['plate_number' => 'DS-105', 'standing_capacity' => 5, 'operating_start_time' => '05:30', 'operating_end_time' => '21:30'])
+        ->assertUnprocessable()->assertJsonPath('errors.standing_capacity.0', 'Standing passengers are not allowed.');
 
     expect(substr((string) Fleet::find($own['fleet_id'])->operating_start_time, 0, 5))->toBe('05:30')
-        ->and(substr((string) Fleet::find($fromRoutes['fleet_id'])->operating_end_time, 0, 5))->toBe('05:00');
+        ->and((int) Fleet::find($own['fleet_id'])->standing_capacity)->toBe(0);
 });
 
 it('says which buses can take a trip on a route at a time, and why the others cannot', function () {

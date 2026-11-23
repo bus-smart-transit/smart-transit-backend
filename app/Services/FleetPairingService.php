@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
-use App\Repositories\FleetDailyPinRepository;
 use App\Models\FleetDailyPin;
+use App\Repositories\FleetDailyPinRepository;
+use App\Repositories\StaffRepository;
+use App\Support\LiveUpdates;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -12,6 +14,7 @@ class FleetPairingService
     public function __construct(
         private FleetDailyPinRepository $pinRepository,
         private LegProgressionService $legs,
+        private StaffRepository $staff,
     ) {}
 
     // ── Token generation ────────────────────────────────────────────────────
@@ -24,15 +27,15 @@ class FleetPairingService
     public function generateToken(int $userId, string $role, int $tripId, int $fleetId): string
     {
         $payload = $this->encodePayload([
-            'uid'  => $userId,
+            'uid' => $userId,
             'role' => $role,
-            'tid'  => $this->legs->pairingScopeTripId($tripId), // a block's first leg stands for every leg
-            'fid'  => $fleetId,
+            'tid' => $this->legs->pairingScopeTripId($tripId), // a block's first leg stands for every leg
+            'fid' => $fleetId,
             'date' => Carbon::today()->toDateString(),
-            'exp'  => Carbon::now()->endOfDay()->timestamp,
+            'exp' => Carbon::now()->endOfDay()->timestamp,
         ]);
 
-        return $payload . '.' . $this->sign($payload);
+        return $payload.'.'.$this->sign($payload);
     }
 
     /**
@@ -63,7 +66,7 @@ class FleetPairingService
         }
 
         $pin = $this->pinRepository->findTodayByTrip($scannerTripId);
-        if (!$pin) {
+        if (! $pin) {
             $this->rejectWith('pin_code', 'No pairing record found for this trip today.');
         }
 
@@ -72,7 +75,7 @@ class FleetPairingService
             ? (int) ($pin->conductor_id ?? 0)
             : (int) ($pin->driver_id ?? 0);
 
-        if (!$partnerUserId) {
+        if (! $partnerUserId) {
             $this->rejectWith('pin_code', 'Partner assignment is missing for this trip.');
         }
 
@@ -83,7 +86,7 @@ class FleetPairingService
             $scannerFleetId,
         );
 
-        if (!hash_equals($this->toReadablePin($expectedToken), $pinCode)) {
+        if (! hash_equals($this->toReadablePin($expectedToken), $pinCode)) {
             $this->rejectWith('pin_code', 'Invalid PIN. Ask your partner to refresh and share the latest code.');
         }
 
@@ -106,10 +109,10 @@ class FleetPairingService
      */
     public function validateAndPair(
         string $scannedToken,
-        int    $scannerUserId,
+        int $scannerUserId,
         string $scannerRole,
-        int    $scannerTripId,
-        int    $scannerFleetId,
+        int $scannerTripId,
+        int $scannerFleetId,
     ): FleetDailyPin {
         // 1 & 2. Decode + verify signature
         $payload = $this->decodeToken($scannedToken);
@@ -142,7 +145,7 @@ class FleetPairingService
 
         // 8. Identity check against operator's assignment record (live DB check)
         $pin = $this->pinRepository->findTodayByTrip($scannerTripId);
-        if (!$pin) {
+        if (! $pin) {
             $this->rejectWith('token', 'No pairing record found for this trip today. Ask your operator to confirm assignments.');
         }
 
@@ -161,10 +164,16 @@ class FleetPairingService
         }
 
         // ✅ All checks passed — confirm pairing
-        $pin->paired_at             = now();
-        $pin->driver_verified_at    ??= now();
+        $pin->paired_at = now();
+        $pin->driver_verified_at ??= now();
         $pin->conductor_verified_at ??= now();
         $pin->save();
+
+        // 2026-11-23 (advisor): tell both crew members' screens at once.
+        LiveUpdates::paired([
+            $this->staff->findById((int) $pin->driver_id)?->user_id,
+            $this->staff->findById((int) $pin->conductor_id)?->user_id,
+        ], (int) $pin->trip_id);
 
         return $pin->fresh();
     }
@@ -188,10 +197,10 @@ class FleetPairingService
         $paired = $pairedByPairingTimestamp || $pairedByLegacyVerification;
 
         return [
-            'paired'     => $paired,
-            'paired_at'  => $paired ? Carbon::parse($pin->paired_at)->toIso8601String() : null,
+            'paired' => $paired,
+            'paired_at' => $paired ? Carbon::parse($pin->paired_at)->toIso8601String() : null,
             'expires_at' => Carbon::today()->endOfDay()->toIso8601String(),
-            'reason'     => $paired
+            'reason' => $paired
                 ? null
                 : ($pin ? 'QR pairing not yet completed. Scan your partner\'s QR code.' : 'No assignment record found for today.'),
         ];
@@ -216,12 +225,12 @@ class FleetPairingService
 
         [$payloadB64, $sigB64] = $parts;
 
-        if (!hash_equals($this->sign($payloadB64), $sigB64)) {
+        if (! hash_equals($this->sign($payloadB64), $sigB64)) {
             $this->rejectWith('token', 'Invalid token signature. The QR code may have been tampered with or is from a different system.');
         }
 
         $decoded = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             $this->rejectWith('token', 'Malformed token payload.');
         }
 

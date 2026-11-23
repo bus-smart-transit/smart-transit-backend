@@ -145,7 +145,8 @@ it('lets an operator register and edit the label fields, and rejects unsafe text
     testCompanyClaimsRoutesAndStops(); // 2026-11-06: routes and stops belong to a company
     $created = $this->actingAs($operator)->postJson('/api/operator/fleets', [
         'plate_number' => 'NEW-001', 'bus_company_name' => "Mindanao O'Brien Lines", 'body_no' => 'B-7',
-        'seated_capacity' => 30, 'standing_capacity' => 10, 'fleet_type' => 'public',
+        'vehicle_class' => 'ordinary', 'operating_start_time' => '05:00', 'operating_end_time' => '22:00',
+        'seated_capacity' => 30, 'fleet_type' => 'public',
     ])->assertSuccessful();
     $fleetId = $created->json('data.fleet_id');
     // Batch 46 step 2 (2026-11-06): an Operator's new bus takes the company name as its label; the typed name is not used.
@@ -153,15 +154,15 @@ it('lets an operator register and edit the label fields, and rejects unsafe text
     expect(Fleet::find($fleetId)->only(['bus_company_name', 'body_no']))->toBe(['bus_company_name' => $companyName, 'body_no' => 'B-7']);
 
     $this->actingAs($operator)->postJson('/api/operator/fleets', [
-        'plate_number' => 'NEW-002', 'bus_company_name' => '<script>alert(1)</script>', 'seated_capacity' => 30, 'standing_capacity' => 10, 'fleet_type' => 'public',
+        'plate_number' => 'NEW-002', 'bus_company_name' => '<script>alert(1)</script>', 'body_no' => 'T-1', 'vehicle_class' => 'ordinary', 'operating_start_time' => '05:00', 'operating_end_time' => '22:00', 'seated_capacity' => 30, 'fleet_type' => 'public',
     ])->assertUnprocessable()->assertJsonValidationErrors('bus_company_name');
 
     $this->actingAs($operator)->patchJson("/api/operator/fleets/{$fleetId}", ['body_no' => 'B-8', 'seated_capacity' => 20])->assertSuccessful();
     $fleet = Fleet::find($fleetId);
     expect($fleet->body_no)->toBe('B-8');
-    expect((int) $fleet->capacity)->toBe(30); // 20 seated + 10 standing
+    expect((int) $fleet->capacity)->toBe(20); // 2026-11-23: seats only, standing passengers are not allowed
 
-    $this->actingAs($operator)->patchJson("/api/operator/fleets/{$fleetId}", ['body_no' => ''])->assertSuccessful();
-    expect(Fleet::find($fleetId)->body_no)->toBeNull(); // empty clears it
-    expect(BusLabel::for(Fleet::find($fleetId)))->toBeNull();
+    // 2026-11-23 (advisor): the body number is required, so it can no longer be cleared.
+    $this->actingAs($operator)->patchJson("/api/operator/fleets/{$fleetId}", ['body_no' => ''])->assertUnprocessable()->assertJsonValidationErrors('body_no');
+    expect(Fleet::find($fleetId)->body_no)->toBe('B-8');
 });

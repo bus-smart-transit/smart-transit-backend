@@ -15,4 +15,17 @@ final class RouteName
 
         return mb_substr($tidy($origin).' to '.$tidy($destination), 0, 255);
     }
+
+    /**
+     * 2026-11-23 (advisor): the key that makes two routes the same road. Case, extra spaces and direction do not count:
+     * every schedule runs out and back, so "Nabunturan to Mati" is the same route as "Mati to Nabunturan".
+     */
+    public static function endsKey(string $origin, string $destination): string
+    {
+        $norm = fn (string $place): string => mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $place)));
+        $ends = [$norm($origin), $norm($destination)];
+        sort($ends);
+
+        return implode('|', $ends);
+    }
 }

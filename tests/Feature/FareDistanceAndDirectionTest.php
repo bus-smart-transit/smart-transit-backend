@@ -17,6 +17,7 @@ use App\Services\FareCalculationService;
 use App\Services\FareRuleService;
 use App\Services\TicketService;
 use App\Services\TripService;
+use App\Support\TripCapacity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -227,6 +228,7 @@ it('leaves tickets that were issued before the snapshot columns exist untouched'
 // ---------------------------------------------------------------- Task 5: one definition of "occupied"
 
 it('uses the same sold count for the sale block and the Chauffeur dashboard', function () {
+    config(['booking.allow_standing' => true]); // 2026-11-23: standing is off by default; this tests the rule when on
     [$conductor, $trip, $stops, $fleet] = fdFixture();
     $fleet->update(['seated_capacity' => 2, 'standing_capacity' => 1, 'capacity' => 3]);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
@@ -255,7 +257,19 @@ it('uses the same sold count for the sale block and the Chauffeur dashboard', fu
 
 // ---------------------------------------------------------------- Standing is onsite only, once the seats are full
 
+it('refuses standing passengers when standing is not allowed (the default)', function () {
+    [$conductor, $trip, $stops, $fleet] = fdFixture();
+    $fleet->update(['seated_capacity' => 1, 'standing_capacity' => 2, 'capacity' => 3]);
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+    $body = ['trip_id' => $trip->trip_id, 'seat_type' => 'standing', 'origin_stop_id' => $stops['B']->stop_id, 'destination_stop_id' => $stops['D']->stop_id];
+
+    $this->postJson('/api/conductor/checkout/quote', $body)->assertUnprocessable()
+        ->assertJsonPath('errors.seat_type.0', 'Standing passengers are not allowed. Sell a seat.');
+    expect(TripCapacity::summary($trip->fresh())['capacity'])->toMatchArray(['seated' => 1, 'standing' => 0, 'total' => 1]);
+});
+
 it('lets a Chauffeur quote and sell standing only once every seat is sold', function () {
+    config(['booking.allow_standing' => true]); // 2026-11-23: standing is off by default; this tests the rule when on
     [$conductor, $trip, $stops, $fleet] = fdFixture();
     $fleet->update(['seated_capacity' => 1, 'standing_capacity' => 2, 'capacity' => 3]);
     $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
@@ -275,6 +289,7 @@ it('lets a Chauffeur quote and sell standing only once every seat is sold', func
 });
 
 it('re-checks seats-first under the lock for a sale but not for a rebook', function () {
+    config(['booking.allow_standing' => true]); // 2026-11-23: standing is off by default; this tests the rule when on
     [, $trip, , $fleet] = fdFixture();
     $fleet->update(['seated_capacity' => 1, 'standing_capacity' => 2, 'capacity' => 3]);
     $tripService = app(TripService::class);

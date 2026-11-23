@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Support\TripCapacity;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 // The same fields one on-site sale item carries, flat, so a quote and the sale read the same way.
 class OnsiteQuoteRequest extends FormRequest
@@ -16,7 +18,7 @@ class OnsiteQuoteRequest extends FormRequest
     {
         return [
             'trip_id' => 'required|integer|exists:trips,trip_id',
-            'seat_type' => 'required|string|in:seated,standing',
+            'seat_type' => ['required', 'string', Rule::in(TripCapacity::seatTypes())],
             // `gps` = boarding between stops: the server resolves the boarding point from the bus's own position.
             'boarding_mode' => 'nullable|string|in:gps',
             'pending_boarding_id' => 'nullable|integer|exists:pending_boardings,id',
@@ -28,5 +30,11 @@ class OnsiteQuoteRequest extends FormRequest
             // Batch 76: the baggage fee is shown with the fare before the sale.
             'baggage' => ['sometimes', 'boolean'],
         ];
+    }
+
+    /** @return array<string, string> */
+    public function messages(): array
+    {
+        return ['seat_type.in' => 'Standing passengers are not allowed. Sell a seat.'];
     }
 }
