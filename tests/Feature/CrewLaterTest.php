@@ -106,3 +106,14 @@ it('still refuses to start boarding a leg that has no crew', function () {
     $this->actingAs($operator)->patchJson("/api/operator/trips/{$leg->trip_id}/boarding")->assertStatus(422);
     expect($leg->fresh()->status)->toBe('scheduled');
 });
+
+// 2026-11-24 (user): no schedule on a past day; the one-day block form refuses it as the range form does.
+it('refuses a block on a past day', function () {
+    [, $operator] = clBlockWithoutCrew($this);
+    $fleetRouteId = FleetRoute::latest('fleet_route_id')->value('fleet_route_id');
+
+    $this->actingAs($operator)->postJson('/api/operator/shift-blocks', [
+        'fleet_route_id' => $fleetRouteId,
+        'block_type' => config('shift_blocks.block_types')[0], 'scheduled_date' => '2026-10-04', 'leg_departure_times' => ['06:00', '09:00'],
+    ])->assertStatus(422)->assertJsonPath('errors.scheduled_date.0', 'The date cannot be in the past.');
+});

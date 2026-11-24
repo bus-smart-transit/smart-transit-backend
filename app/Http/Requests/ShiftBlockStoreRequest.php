@@ -29,10 +29,21 @@ class ShiftBlockStoreRequest extends FormRequest
             'driver_id' => ['nullable', 'integer'],
             'conductor_id' => ['nullable', 'integer'],
             'block_type' => ['required', 'string'],
-            'scheduled_date' => ['required', 'date'],
+            // 2026-11-24 (user): no schedule on a past day (the range form already refuses one).
+            'scheduled_date' => ['required', 'date', 'after_or_equal:today'],
             'service_type' => ['sometimes', 'in:regular,express'],
             'leg_departure_times' => ['required', 'array', new EvenLegCount], // 2026-11-21 (user): out and back
             'leg_departure_times.*' => ['required', 'date_format:H:i'],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'scheduled_date.after_or_equal' => 'The date cannot be in the past.',
         ];
     }
 }

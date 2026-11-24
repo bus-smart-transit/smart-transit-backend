@@ -358,7 +358,12 @@ it('keeps a standalone trip as before: End Trip closes the driver shift, and a d
 
 it('repairs stale dev state by dry run first, and never touches started, completed or ticketed legs', function () {
     config(['shift_blocks.leg_location_rule_enabled' => false]);
+    // 2026-11-24: a schedule cannot be made for a past day any more, so the stale block is made on its own day (the
+    // test clock set back), then the clock returns to "today" (2026-10-04).
+    $today = Carbon::now();
+    Carbon::setTestNow(Carbon::parse('2026-10-01 05:00:00', 'Asia/Manila'));
     [$block, $legs, $crew] = bpBlock($this, 4, '2026-10-01'); // earlier than "today" (2026-10-04)
+    Carbon::setTestNow($today);
     $legs[0]->update(['status' => 'boarding']);
     $legs[1]->update(['status' => 'delayed']);
     $legs[2]->update(['status' => 'delayed']);
@@ -369,7 +374,9 @@ it('repairs stale dev state by dry run first, and never touches started, complet
     ConductorShiftLog::create(['conductor_company_user_id' => bpCid($crew['conductor']), 'trip_id' => $legs[0]->trip_id, 'fleet_id' => $legs[0]->fleetRoute->fleet_id, 'shift_date' => '2026-10-01', 'started_at' => now()->subDays(3)]);
 
     // A started block on another day is left whole.
+    Carbon::setTestNow(Carbon::parse('2026-10-02 05:00:00', 'Asia/Manila'));
     [$other, $otherLegs] = bpBlock($this, 2, '2026-10-02', ['operator' => $crew['operator'], 'driver' => bpStaff('driver'), 'conductor' => bpStaff('conductor')], $legs[0]->fleetRoute);
+    Carbon::setTestNow($today);
     $otherLegs[0]->update(['status' => 'departed']);
     $otherLegs[1]->update(['status' => 'delayed']);
 
