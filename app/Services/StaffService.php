@@ -136,8 +136,27 @@ class StaffService
      */
     public function listDrivers(?string $tripDate = null, bool $withContactDetails = false, ?int $companyId = null, bool $includeBusy = false): object
     {
+        return $this->listCrew('driver', $tripDate, $withContactDetails, $companyId, $includeBusy);
+    }
+
+    /**
+     * 2026-11-24 (user): a Chauffeur already on a trip that day is busy too, as a Driver is (one trip per person per day),
+     * so the Operator's picker shows the reason and cannot pick them.
+     */
+    public function listConductors(bool $withContactDetails = false, ?int $companyId = null, ?string $tripDate = null, bool $includeBusy = false): object
+    {
+        return $this->listCrew('conductor', $tripDate, $withContactDetails, $companyId, $includeBusy);
+    }
+
+    /**
+     * The crew of one role. With a trip date, anyone already on a trip that day (or released from one) is left out, or
+     * with $includeBusy kept with the reason (busy_reason).
+     */
+    private function listCrew(string $role, ?string $tripDate, bool $withContactDetails, ?int $companyId, bool $includeBusy): object
+    {
         // Batch 46 (least privilege): an Operator lists only their company's crew; null (the Admin) lists everyone.
-        $drivers = $this->staffRepository->listByRole('driver', $companyId);
+        $column = $role === 'driver' ? 'driver_id' : 'conductor_id';
+        $drivers = $this->staffRepository->listByRole($role, $companyId);
         if ($tripDate === null) {
             return $this->presentStaff($drivers, $withContactDetails);
         }
@@ -146,13 +165,13 @@ class StaffService
         // cancelled counts, a completed one too.
         $dayTrips = Trip::query()
             ->whereDate('trip_date', $tripDate)
-            ->whereNotNull('driver_id')
+            ->whereNotNull($column)
             ->where('status', '!=', 'cancelled')
             ->orderBy('departure_time')
-            ->get(['driver_id', 'departure_time', 'status'])
-            ->groupBy(fn ($trip) => (int) $trip->driver_id);
+            ->get([$column, 'departure_time', 'status'])
+            ->groupBy(fn ($trip) => (int) $trip->{$column});
         $releasedIds = TripAssignmentRequest::query()
-            ->where('role', 'driver')
+            ->where('role', $role)
             ->where('status', TripAssignmentRequest::APPROVED)
             ->whereHas('trip', fn ($query) => $query->whereDate('trip_date', $tripDate))
             ->pluck('staff_company_user_id')
@@ -189,11 +208,6 @@ class StaffService
 
             return $row;
         })->values();
-    }
-
-    public function listConductors(bool $withContactDetails = false, ?int $companyId = null): object
-    {
-        return $this->presentStaff($this->staffRepository->listByRole('conductor', $companyId), $withContactDetails);
     }
 
     /**

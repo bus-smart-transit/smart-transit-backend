@@ -360,10 +360,18 @@ class StaffAuthController extends Controller
         );
     }
 
-    public function listConductors(Request $request)
+    /** 2026-11-24 (user): the same date check as the Driver list (trip_date, include_busy). */
+    public function listConductors(StaffAuthListDriversRequest $request)
     {
+        $validated = $request->validated();
+
         return $this->success(
-            $this->staffService->listConductors($request->user()?->role === 'admin', $this->crewScopeOf($request)),
+            $this->staffService->listConductors(
+                $request->user()?->role === 'admin',
+                $this->crewScopeOf($request),
+                $validated['trip_date'] ?? null,
+                (bool) ($validated['include_busy'] ?? false),
+            ),
             'Conductors retrieved successfully',
         );
     }

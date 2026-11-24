@@ -78,3 +78,24 @@ it('keeps one trip a day, a completed one included, and says why in the picker',
     // A free day: no reason.
     expect($this->getJson('/api/operator/drivers?trip_date='.now('Asia/Manila')->addDays(2)->toDateString().'&include_busy=1')->json('data.0.busy_reason'))->toBeNull();
 });
+
+// 2026-11-24 (user): a Chauffeur already on a trip that day is shown busy too, as a Driver is.
+it('gives a Chauffeur already on a trip that day the same reason in the picker', function () {
+    [$operator, , $trip] = cbrFixture();
+    $companyId = $operator->companyProfile->company_id;
+    $user = User::create(['username' => 'cbrconductor'.Str::random(5), 'email' => Str::random(8).'@example.com', 'password' => 'right-password-1', 'role' => 'conductor']);
+    $chauffeur = StaffUser::create(['user_id' => $user->user_id, 'company_user_uuid' => (string) Str::uuid(), 'name' => 'Cbr Chauffeur', 'phone_num' => '09170000000', 'address' => 'x', 'company_id' => $companyId, 'is_company_admin' => false, 'is_available' => true]);
+    $date = now('Asia/Manila')->toDateString();
+    $trip($date, '09:30')->forceFill(['conductor_id' => $chauffeur->company_user_id])->save();
+    $this->actingAs($operator, 'sanctum');
+
+    expect($this->getJson("/api/operator/conductors?trip_date={$date}")->assertOk()->json('data'))->toBe([]);
+    $listed = $this->getJson("/api/operator/conductors?trip_date={$date}&include_busy=1")->assertOk()->json('data');
+    expect($listed)->toHaveCount(1)
+        ->and($listed[0]['name'])->toBe('Cbr Chauffeur')
+        ->and($listed[0]['busy_reason'])->toBe('Already on a trip that day (9:30 AM, scheduled)');
+
+    // Without a date the list is unchanged; on a free day there is no reason.
+    expect($this->getJson('/api/operator/conductors')->assertOk()->json('data'))->toHaveCount(1);
+    expect($this->getJson('/api/operator/conductors?trip_date='.now('Asia/Manila')->addDays(2)->toDateString().'&include_busy=1')->json('data.0.busy_reason'))->toBeNull();
+});
