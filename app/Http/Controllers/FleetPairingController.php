@@ -177,7 +177,7 @@ class FleetPairingController extends Controller
 
             return $this->success([
                 'paired' => true,
-                'paired_at' => $pin->paired_at?->toIso8601String(),
+                'paired_at' => $pin->paired_at ? FleetPairingService::pairedAtLocal($pin->paired_at)->toIso8601String() : null,
                 'trip_id' => $trip->trip_id,
                 'fleet_id' => $fleetId,
                 'fleet_plate' => $trip->fleetRoute?->fleet?->plate_number,

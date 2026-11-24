@@ -40,23 +40,20 @@ class OccupancyService
         }
 
         $fleet = $trip->fleetRoute->fleet;
-        $seatedCapacity = $fleet->seated_capacity ?? 0;
-        $standingCapacity = $fleet->standing_capacity ?? 0;
-        $totalCapacity = $fleet->capacity ?? ($seatedCapacity + $standingCapacity);
 
         // Get boarded ticket counts by seat type
         $seatedBoarded = $this->ticketRepository->countBoardedByType($tripId, 'seated');
         $standingBoarded = $this->ticketRepository->countBoardedByType($tripId, 'standing');
         $totalBoarded = $seatedBoarded + $standingBoarded;
 
-        // Check capacity status
-        $seatedPercentage = $seatedCapacity > 0 ? ($seatedBoarded / $seatedCapacity) * 100 : 0;
-        $standingPercentage = $standingCapacity > 0 ? ($standingBoarded / $standingCapacity) * 100 : 0;
-        $totalPercentage = $totalCapacity > 0 ? ($totalBoarded / $totalCapacity) * 100 : 0;
-
         // Batch 27 Part 2, Task 5: capacity, occupied and "full" come from the ONE definition the sale block
         // uses (tickets sold). Boarded counts stay for the manifest and never decide a sale.
         $summary = TripCapacity::summary($trip, ['seated' => $seatedBoarded, 'standing' => $standingBoarded]);
+        // 2026-11-24: the capacity shown is TripCapacity's too. With standing not sold (booking.allow_standing off) a bus
+        // holds its seats; fleets.capacity still includes the old standing places, so it is never read here.
+        $seatedCapacity = (int) $summary['capacity']['seated'];
+        $standingCapacity = (int) $summary['capacity']['standing'];
+        $totalCapacity = (int) $summary['capacity']['total'];
         $capacityStatus = $this->getCapacityStatus($summary['utilization_percentage']);
 
         return [

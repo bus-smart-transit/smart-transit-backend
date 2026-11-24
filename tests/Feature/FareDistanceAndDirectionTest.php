@@ -255,6 +255,20 @@ it('uses the same sold count for the sale block and the Chauffeur dashboard', fu
     expect($summary()['onboard']['total'])->toBe(3)->and($summary()['sold']['total'])->toBe(3);
 });
 
+// 2026-11-24 (production test): the Chauffeur's load showed "0 / 50 seats" for a 40-seat bus; fleets.capacity still
+// counts the old standing places. With standing off, every capacity in the occupancy reply is the seats.
+it('shows the seats as the capacity on the Chauffeur dashboard when standing is not sold', function () {
+    [$conductor, $trip, $stops, $fleet] = fdFixture();
+    $fleet->update(['seated_capacity' => 40, 'standing_capacity' => 10, 'capacity' => 50]);
+    $this->actingAs($conductor)->postJson('/api/conductor/shift/start')->assertSuccessful();
+
+    $data = $this->actingAs($conductor)->getJson('/api/conductor/trips/current/occupancy')->assertSuccessful()->json('data');
+    expect($data['capacity'])->toBe(['total' => 40, 'seated' => 40, 'standing' => 0])
+        ->and($data['total_capacity'])->toBe(40)
+        ->and($data['standing_capacity'])->toBe(0)
+        ->and($data['capacity_summary']['capacity']['total'])->toBe(40);
+});
+
 // ---------------------------------------------------------------- Standing is onsite only, once the seats are full
 
 it('refuses standing passengers when standing is not allowed (the default)', function () {

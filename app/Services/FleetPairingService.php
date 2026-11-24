@@ -181,6 +181,16 @@ class FleetPairingService
     // ── Status check ─────────────────────────────────────────────────────────
 
     /**
+     * 2026-11-24: paired_at is the one timestamptz column. Laravel writes Manila wall time without an offset, so
+     * PostgreSQL keeps it as UTC (8 hours off) while SQLite keeps it as written. The wall time is right in both, so it
+     * is read as Manila time (the app's timezone) whatever offset comes back.
+     */
+    public static function pairedAtLocal(mixed $value): Carbon
+    {
+        return Carbon::parse($value)->shiftTimezone(config('app.timezone'));
+    }
+
+    /**
      * Return the pairing status for a given trip (live DB check, no local cache trusted).
      */
     public function getPairingStatus(int $tripId): array
@@ -189,7 +199,7 @@ class FleetPairingService
 
         $pairedByPairingTimestamp = $pin !== null
             && $pin->paired_at !== null
-            && Carbon::parse($pin->paired_at)->isToday();
+            && self::pairedAtLocal($pin->paired_at)->isToday();
 
         // Backward compatibility: older flows only marked both_verified.
         $pairedByLegacyVerification = $pin !== null && $pin->isBothVerified();
@@ -198,7 +208,7 @@ class FleetPairingService
 
         return [
             'paired' => $paired,
-            'paired_at' => $paired ? Carbon::parse($pin->paired_at)->toIso8601String() : null,
+            'paired_at' => $paired ? self::pairedAtLocal($pin->paired_at)->toIso8601String() : null,
             'expires_at' => Carbon::today()->endOfDay()->toIso8601String(),
             'reason' => $paired
                 ? null
