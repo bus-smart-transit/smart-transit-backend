@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\BaggageCharge;
 use App\Models\DiscountClaim;
 use App\Models\FareRule;
 use App\Models\Fleet;
@@ -33,10 +34,11 @@ use Illuminate\Validation\ValidationException;
 
 uses(RefreshDatabase::class);
 
-// Batch 76 (user, 2026-11-17): a priority seat per ticket (senior, PWD, pregnant), baggage in the compartment at 50
-// percent of the full fare, and "missed" tickets (the bus left the boarding stop before the ticket was scanned).
-// Fare numbers are SAMPLE test values: B -> D is 20 km, 13 + 15 x 2.25 = 46.75, 47 at the whole peso; the baggage fee is
-// 23.5, 24 at the whole peso, added to the ticket's amount (the user's decision: one sale), so the ticket is PHP 71.
+// Batch 76 (user, 2026-11-17): a priority seat per ticket (senior, PWD, pregnant), baggage in the compartment, and
+// "missed" tickets (the bus left the boarding stop before the ticket was scanned).
+// Fare numbers are SAMPLE test values: B -> D is 20 km, 13 + 15 x 2.25 = 46.75, 47 at the whole peso.
+// 2026-11-25 (user): baggage is only declared online and paid by size in cash on board (BaggageOnBoardTest); the
+// ticket's amount is the fare only.
 
 const B76_SECRET = 'whsk_b76_secret';
 
@@ -124,50 +126,50 @@ beforeEach(function () {
 });
 afterEach(fn () => Carbon::setTestNow());
 
-it('prices baggage at half the full fare, in whole pesos', function () {
-    expect(BaggageFee::forFare(100))->toBe(50.0)
-        ->and(BaggageFee::forFare(47))->toBe(24.0)
-        ->and(BaggageFee::forFare(0))->toBe(0.0);
+it('prices baggage by size from the default list', function () {
+    expect(BaggageFee::priceFor(null, 'small'))->toBe(20.0)
+        ->and(BaggageFee::priceFor(null, 'medium'))->toBe(50.0)
+        ->and(BaggageFee::priceFor(null, 'large'))->toBe(100.0)
+        ->and(BaggageFee::isSize('huge'))->toBeFalse();
 });
 
-it('adds the baggage fee to an online ticket payment, on its own PayMongo line, with the transaction fee on the whole', function () {
+it('only declares baggage online: the payment is the fare, with no baggage line on PayMongo', function () {
     $f = b76Fixture();
     $response = b76Checkout($this, b76Passenger(), $f, ['baggage' => true])->assertSuccessful();
     $payment = Payment::findOrFail($response->json('data.payment.payment_id'));
 
-    expect((float) $payment->amount)->toBe(71.0)
-        ->and((float) $payment->fee_amount)->toBe(round(71 * 0.024976, 2))
-        ->and(collect($payment->items_payload)->pluck('baggage_fee')->map(fn ($v) => (float) $v)->all())->toBe([24.0]);
+    expect((float) $payment->amount)->toBe(47.0)
+        ->and((float) $payment->fee_amount)->toBe(round(47 * 0.024976, 2));
 
     Http::assertSent(function ($request) {
         $lines = collect($request['data']['attributes']['line_items'] ?? []);
 
-        return $lines->firstWhere('name', 'Baggage compartment')['amount'] === 2400
+        return $lines->firstWhere('name', 'Baggage compartment') === null
             && $lines->firstWhere('name', 'Smart Transit Ticket Purchase')['amount'] === 4700;
     });
 });
 
-it('adds the baggage fee to the ticket amount but gives a discount only on the fare', function () {
+it('marks a declared online ticket as bringing baggage, and a discount is only on the fare', function () {
     $f = b76Fixture();
     $ticket = b76Paid($this, b76Passenger(), $f, ['discount_claim_key' => 'student', 'baggage' => true]);
-    expect((float) $ticket->amount)->toBe(71.0)->and($ticket->has_baggage)->toBeTrue()
+    expect((float) $ticket->amount)->toBe(47.0)->and($ticket->has_baggage)->toBeTrue()
         ->and((float) DiscountClaim::where('ticket_id', $ticket->ticket_id)->value('fare'))->toBe(47.0);
 
     $f['trip']->update(['status' => 'boarding']);
     app(DiscountClaimService::class)->review($ticket->fresh(), true, $f['trip']->fresh(), b76Staff('conductor'));
 
     $ticket = $ticket->fresh();
-    // 20% of the PHP 47 fare is about PHP 9; the PHP 24 baggage stays paid: 71 - 9 = 62.
-    expect((float) $ticket->amount)->toBe(62.0)
+    // 20% of the PHP 47 fare is about PHP 9: 47 - 9 = 38.
+    expect((float) $ticket->amount)->toBe(38.0)
         ->and((float) $ticket->original_amount)->toBe(47.0)
         ->and((float) DiscountClaim::where('ticket_id', $ticket->ticket_id)->value('refund_amount'))->toBe(9.0);
 });
 
-it('refunds the baggage fee with the fare when the trip is cancelled', function () {
+it('refunds only the fare of a ticket that declared baggage', function () {
     $f = b76Fixture();
     $ticket = b76Paid($this, b76Passenger(), $f, ['baggage' => true]);
 
-    expect(app(TicketResolutionService::class)->farePaid($ticket->fresh()))->toBe(71.0);
+    expect(app(TicketResolutionService::class)->farePaid($ticket->fresh()))->toBe(47.0);
 });
 
 it('asks for a priority seat when chosen, or when a senior or PWD discount is claimed', function () {
@@ -197,15 +199,19 @@ it('refuses an unknown priority type', function () {
     b76Checkout($this, b76Passenger(), b76Fixture(), ['priority_type' => 'vip'])->assertStatus(422);
 });
 
-it('adds the baggage fee to a cash sale on the bus', function () {
+it('records baggage on a cash sale as its own payment, apart from the fare', function () {
     $f = b76Fixture('boarding');
     $chauffeur = b76Staff('conductor');
-    $item = ['trip_id' => $f['trip']->trip_id, 'seat_type' => 'seated', 'origin_stop_id' => $f['stops']['B']->stop_id, 'destination_stop_id' => $f['stops']['D']->stop_id, 'baggage' => true, 'priority_type' => 'pwd'];
+    $item = ['trip_id' => $f['trip']->trip_id, 'seat_type' => 'seated', 'origin_stop_id' => $f['stops']['B']->stop_id, 'destination_stop_id' => $f['stops']['D']->stop_id, 'baggage_size' => 'medium', 'baggage_stub' => 'BG-12', 'priority_type' => 'pwd'];
 
     $result = app(PaymentService::class)->checkoutOnsite((int) $chauffeur->companyProfile->company_user_id, ['items' => [$item]]);
+    $charge = BaggageCharge::where('ticket_id', $result['tickets'][0]->ticket_id)->firstOrFail();
 
-    expect((float) $result['payment']->amount)->toBe(71.0)
-        ->and((float) $result['tickets'][0]->amount)->toBe(71.0)
+    expect((float) $result['payment']->amount)->toBe(47.0)
+        ->and((float) $result['tickets'][0]->amount)->toBe(47.0)
+        ->and((float) $charge->amount)->toBe(50.0)
+        ->and($charge->size)->toBe('medium')
+        ->and($charge->stub_number)->toBe('BG-12')
         ->and($result['tickets'][0]->has_baggage)->toBeTrue()
         ->and($result['tickets'][0]->priority_type)->toBe('pwd');
 });

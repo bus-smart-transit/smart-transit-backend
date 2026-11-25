@@ -5,6 +5,7 @@ use App\Http\Controllers\AdminGpsSimulationController;
 use App\Http\Controllers\AdminOverviewController;
 use App\Http\Controllers\AssignmentController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BaggageChargeController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\CalendarSummaryController;
 use App\Http\Controllers\ConductorShiftController;
@@ -276,6 +277,9 @@ Route::prefix('operator')
 
         // Fare rules
         Route::get('fare-rules', [FareRuleController::class, 'listRules']);
+        // 2026-11-25 (user): the company's baggage prices by size (paid in cash on board); same extra check as fares.
+        Route::get('baggage-fees', [BaggageChargeController::class, 'operatorFees']);
+        Route::put('baggage-fees', [BaggageChargeController::class, 'updateFees'])->middleware(['company.admin', 'step-up', 'throttle:20,1,mgmt-baggage-fees-put']);
         Route::post('fare-rules', [FareRuleController::class, 'storeRule'])->middleware(['company.admin', 'step-up']);        // Route::post('fare/recalculate/{fleetRouteId}', [FareRuleController::class, 'recalculate']);
         // 2026-11-06: edit (end, stop, or change a rule not yet started) and copy to a later date; same extra check.
         Route::patch('fare-rules/{fareRuleId}', [FareRuleController::class, 'updateRule'])->whereNumber('fareRuleId')->middleware(['company.admin', 'step-up', 'throttle:20,1,mgmt-fare-rules-patch']);
@@ -464,6 +468,8 @@ Route::prefix('conductor')
         Route::patch('availability', [StaffAuthController::class, 'updateAvailability']);
         // 2026-10-27: the onsite discounts on for this Chauffeur's bus.
         Route::get('discount-types', [DiscountTypeController::class, 'conductorIndex']);
+        // 2026-11-25 (user): the baggage prices by size for this Chauffeur's bus.
+        Route::get('baggage-fees', [BaggageChargeController::class, 'conductorFees']);
 
         // Batch 18: Shift Block Hand-off System
         Route::get('shift-blocks', [ShiftBlockController::class, 'myBlocksAsConductor']);
@@ -495,6 +501,9 @@ Route::prefix('conductor')
             Route::get('trips/current/check-ins', [TicketController::class, 'checkIns'])->middleware('throttle:120,1,conductor-trips-current-check-ins');
             Route::post('tickets/{ticketId}/alight', [TicketController::class, 'recordAlighting']);
             // Batch 75: a discount claimed online, approved or rejected after the Chauffeur checks the ID.
+            // 2026-11-25 (user): baggage paid in cash on board, and taking one back (same shift only).
+            Route::post('tickets/{ticketId}/baggage', [BaggageChargeController::class, 'store'])->whereNumber('ticketId')->middleware(['throttle:60,1,conductor-baggage-post', 'boarding.open']);
+            Route::patch('baggage/{chargeId}/void', [BaggageChargeController::class, 'void'])->whereNumber('chargeId')->middleware('throttle:30,1,conductor-baggage-void');
             Route::post('tickets/{ticketId}/discount-claim', [TicketController::class, 'reviewDiscountClaim'])->whereNumber('ticketId')->middleware(['throttle:60,1,conductor-discount-claim', 'boarding.open']);
             // 2026-10-27 (§7): a destination group gets off in one action (the single-ticket drop-off above stays as the exception path).
             Route::post('trips/current/drop-off-groups/confirm', [TicketController::class, 'confirmDropOffGroup'])->middleware('throttle:60,1,conductor-trips-current-drop-off-groups-confirm-post');

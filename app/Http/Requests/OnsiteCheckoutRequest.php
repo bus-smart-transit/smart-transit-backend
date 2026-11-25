@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Support\BaggageFee;
 use App\Support\PriorityBoarding;
 use App\Support\TripCapacity;
 use Illuminate\Foundation\Http\FormRequest;
@@ -30,9 +31,11 @@ class OnsiteCheckoutRequest extends FormRequest
             // 2026-10-27: one onsite discount per ticket, only after the Chauffeur checked the ID (OnsiteDiscountService).
             'items.*.discount_type_key' => 'nullable|string|max:32',
             'items.*.discount_id_checked' => 'nullable|boolean',
-            // Batch 76: a priority seat and baggage in the compartment (its own fee), per ticket.
+            // Batch 76: a priority seat per ticket. 2026-11-25 (user): baggage by size, paid with the sale as its own cash
+            // payment (BaggageChargeService), with the paper baggage stub's number if one is given.
             'items.*.priority_type' => ['nullable', 'string', Rule::in(array_keys(PriorityBoarding::types()))],
-            'items.*.baggage' => ['sometimes', 'boolean'],
+            'items.*.baggage_size' => ['nullable', 'string', Rule::in(BaggageFee::sizeKeys())],
+            'items.*.baggage_stub' => ['nullable', 'string', 'max:30'],
             'items.*.origin_stop_id' => 'required_without_all:items.*.boarding_mode,items.*.pending_boarding_id|nullable|integer|exists:stops,stop_id',
             // Task 7: the destination is a stop or a custom drop-off pin (coordinates re-validated and snapped server-side).
             'items.*.destination_stop_id' => 'required_without_all:items.*.destination_lat,items.*.alighting_point_id|nullable|integer|exists:stops,stop_id',

@@ -562,7 +562,7 @@ class TicketService
             'original_amount' => $reserved['original_amount'] ?? null,
             'discount_amount' => $reserved['discount_amount'] ?? null,
             'discount_id_checked_at' => $reserved['discount_id_checked_at'] ?? null,
-            // Batch 76: priority seat, and whether there is baggage (its fee is already in the amount).
+            // Batch 76: priority seat, and whether there is baggage (2026-11-25: paid on board, apart from the amount).
             'priority_type' => $reserved['priority_type'] ?? null,
             'has_baggage' => ! empty($reserved['has_baggage']),
         ]);
@@ -616,8 +616,9 @@ class TicketService
     }
 
     /**
-     * Batch 76: a cash sale's priority seat (chosen, or implied by a senior or PWD discount) and baggage. The fee is worked
-     * out on the full fare, before any discount (BaggageFee), and added to the amount.
+     * Batch 76: a cash sale's priority seat (chosen, or implied by a senior or PWD discount). 2026-11-25 (user): baggage
+     * is no longer part of the ticket's amount: its size is paid as its own cash payment (BaggageChargeService), and the
+     * ticket only notes that there is baggage.
      *
      * @param  array<string, mixed>  $reserved
      * @param  array<string, mixed>  $item
@@ -626,10 +627,7 @@ class TicketService
     public function withExtras(array $reserved, array $item): array
     {
         $reserved['priority_type'] = PriorityBoarding::resolve($item['priority_type'] ?? null, $reserved['discount_type_key'] ?? ($item['discount_type_key'] ?? null));
-        $fullFare = (float) ($reserved['original_amount'] ?? $reserved['amount'] ?? 0);
-        $reserved['baggage_fee'] = ! empty($item['baggage']) ? BaggageFee::forFare($fullFare) : 0.0;
-        $reserved['has_baggage'] = $reserved['baggage_fee'] > 0;
-        $reserved['amount'] = round((float) ($reserved['amount'] ?? 0) + $reserved['baggage_fee'], 2);
+        $reserved['has_baggage'] = BaggageFee::isSize($item['baggage_size'] ?? null);
 
         return $reserved;
     }
@@ -807,9 +805,22 @@ class TicketService
         $collection = $tickets->getCollection();
         TripRunInfo::attach($collection->pluck('trip')->filter()->unique('trip_id'));
 
+        $this->attachBaggagePaid($collection);
         $tickets->setCollection($collection->map(fn (Ticket $ticket) => $this->appendValidityWindow($ticket)));
 
         return $tickets;
+    }
+
+    /**
+     * 2026-11-25 (user): the baggage each ticket has paid on board (`baggage_paid`, 0 when none), for the e-ticket.
+     *
+     * @param  iterable<int, Ticket>  $tickets
+     */
+    private function attachBaggagePaid(iterable $tickets): void
+    {
+        $list = collect($tickets);
+        $paid = app(BaggageChargeService::class)->presentForTickets($list->pluck('ticket_id')->map(fn ($id) => (int) $id)->all());
+        $list->each(fn (Ticket $ticket) => $ticket->setAttribute('baggage_paid', round(collect($paid[(int) $ticket->ticket_id] ?? [])->sum('amount'), 2)));
     }
 
     public function getPassengerDashboardFacts(int $passengerId): array
@@ -818,6 +829,7 @@ class TicketService
         $featured = $facts['featured_ticket'];
         if ($featured) {
             TripRunInfo::attach([$featured->trip]);
+            $this->attachBaggagePaid([$featured]);
             $facts['featured_ticket'] = $this->appendValidityWindow($featured);
         }
 

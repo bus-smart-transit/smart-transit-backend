@@ -191,7 +191,6 @@ class PaymentService
                     ]);
 
                     $total = 0;
-                    $baggageTotal = 0.0;
                     $priorityByTrip = [];
                     $reservedItems = [];
                     $lineItems = [];
@@ -239,16 +238,14 @@ class PaymentService
                         if ($claim !== null) {
                             $template['discount_claim'] = $claim;
                         }
-                        // Batch 76: a priority seat (a senior or PWD claim asks for one) and the baggage fee, on the full fare.
+                        // Batch 76: a priority seat (a senior or PWD claim asks for one).
                         $template['priority_type'] = PriorityBoarding::resolve($group['item']['priority_type'] ?? null, $group['item']['discount_claim_key'] ?? null);
-                        // The baggage fee is added to the ticket's amount (one sale for Finance); a claimed discount is
-                        // worked out later on the fare without it.
-                        $template['baggage_fee'] = ! empty($group['item']['baggage']) ? BaggageFee::forFare((float) $template['amount']) : 0.0;
-                        $template['has_baggage'] = $template['baggage_fee'] > 0;
+                        // 2026-11-25 (user): baggage is only declared online; its size is priced and paid in cash on
+                        // board (BaggageChargeService). The online payment is the seat fare only.
+                        $template['has_baggage'] = ! empty($group['item']['baggage']);
                         if (isset($template['discount_claim'])) {
                             $template['discount_claim']['fare'] = (float) $template['amount'];
                         }
-                        $template['amount'] = round((float) $template['amount'] + $template['baggage_fee'], 2);
                         if ($template['priority_type'] !== null) {
                             $priorityByTrip[(int) $template['trip_id']] = ($priorityByTrip[(int) $template['trip_id']] ?? 0) + (int) $group['count'];
                         }
@@ -256,7 +253,6 @@ class PaymentService
                         for ($i = 0; $i < (int) $group['count']; $i++) {
                             $reserved = $template;
                             $total += $reserved['amount'];
-                            $baggageTotal += $reserved['baggage_fee'];
                             $reserved['passenger_id'] = $passengerId;
                             $reservedItems[] = $reserved;
                         }
@@ -314,23 +310,12 @@ class PaymentService
                     }
 
                     $targetCentavos = max(100, (int) round($netTotal * 100));
-                    // Batch 76: the baggage fee is its own line on PayMongo's page when the fares line keeps at least PHP 1.
-                    $baggageCentavos = (int) round($baggageTotal * 100);
-                    $splitBaggage = $baggageCentavos > 0 && $targetCentavos - $baggageCentavos >= 100;
                     $lineItems = [[
                         'name' => 'Smart Transit Ticket Purchase',
-                        'amount' => $splitBaggage ? $targetCentavos - $baggageCentavos : $targetCentavos,
+                        'amount' => $targetCentavos,
                         'currency' => 'PHP',
                         'quantity' => 1,
                     ]];
-                    if ($splitBaggage) {
-                        $lineItems[] = [
-                            'name' => 'Baggage compartment',
-                            'amount' => $baggageCentavos,
-                            'currency' => 'PHP',
-                            'quantity' => 1,
-                        ];
-                    }
 
                     // Batch 45 Feature A: the fee is its own line on PayMongo's page and its own column here;
                     // payments.amount stays the fares (after reward points), so revenue and rewards never include it.
@@ -664,9 +649,12 @@ class PaymentService
                     // Set here, never read from the request: only the cash flow may sell while the bus is moving.
                     $item['channel'] = 'onsite';
                     $ticket = $this->ticketService->issueTicket($item, $passengerId, $payment->payment_id);
-                    // Batch 76: the ticket's amount already includes any baggage fee.
                     $total += $ticket->amount;
                     $tickets[] = $ticket;
+                    // 2026-11-25 (user): baggage taken with the sale is its own cash payment, at its size's price.
+                    if (BaggageFee::isSize($item['baggage_size'] ?? null)) {
+                        app(BaggageChargeService::class)->record($conductorCompanyUserId, $ticket, (string) $item['baggage_size'], $item['baggage_stub'] ?? null);
+                    }
                 }
 
                 $payment->amount = $total;
@@ -717,12 +705,12 @@ class PaymentService
         // Set here, never read from the request, exactly as the sale does.
         $item['channel'] = 'onsite';
         $priced = $this->ticketService->priceItem($item);
-        $extras = $this->ticketService->withExtras($priced, $item);
+        $size = $item['baggage_size'] ?? null;
 
         return [
             'amount' => round((float) $priced['amount'], 2),
-            // Batch 76: the baggage fee the sale adds to the fare (0 without baggage).
-            'baggage_fee' => (float) $extras['baggage_fee'],
+            // 2026-11-25 (user): the price of the baggage size chosen, paid with the fare (0 without baggage).
+            'baggage_fee' => BaggageFee::isSize($size) ? app(BaggageChargeService::class)->priceForTrip((int) $item['trip_id'], (string) $size) : 0.0,
             'distance_km' => isset($priced['distance_km']) ? (float) $priced['distance_km'] : null,
             'seat_type' => (string) $priced['seat_type'],
             // 2026-10-27: with an onsite discount, the fare before it and the discount (null without one).

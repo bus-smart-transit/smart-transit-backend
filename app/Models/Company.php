@@ -16,7 +16,8 @@ class Company extends Model
 {
     protected $primaryKey = 'company_id';
 
-    protected $fillable = ['company_name'];
+    /** 2026-11-25: baggage_fee_* are the Operator's baggage prices by size (null = the default, App\Support\BaggageFee). */
+    protected $fillable = ['company_name', 'baggage_fee_small', 'baggage_fee_medium', 'baggage_fee_large'];
 
     public function staff(): HasMany
     {

@@ -220,8 +220,10 @@ class OccupancyService
 
         // Batch 75: each passenger's discount claimed online, for the Chauffeur's "Review discount" button.
         $claims = app(DiscountClaimService::class)->presentForTickets($passengers->pluck('ticket_id')->map(fn ($id) => (int) $id)->all());
+        // 2026-11-25 (user): the baggage each passenger has paid on board (not voided).
+        $baggagePaid = app(BaggageChargeService::class)->presentForTickets($passengers->pluck('ticket_id')->map(fn ($id) => (int) $id)->all());
 
-        $rows = $passengers->map(function ($ticket) use ($payloadStopNames, $legContext, $claims) {
+        $rows = $passengers->map(function ($ticket) use ($payloadStopNames, $legContext, $claims, $baggagePaid) {
             $matchedItem = $this->matchPaymentItemForTicket($ticket);
             $payloadOriginId = isset($matchedItem['origin_stop_id']) ? (int) $matchedItem['origin_stop_id'] : null;
             $payloadDestinationId = isset($matchedItem['destination_stop_id']) ? (int) $matchedItem['destination_stop_id'] : null;
@@ -274,6 +276,8 @@ class OccupancyService
                 'priority_type' => $ticket->priority_type,
                 'priority_label' => PriorityBoarding::label($ticket->priority_type),
                 'baggage' => (bool) $ticket->has_baggage,
+                'baggage_charges' => $baggagePaid[(int) $ticket->ticket_id] ?? [],
+                'baggage_paid' => round(collect($baggagePaid[(int) $ticket->ticket_id] ?? [])->sum('amount'), 2),
                 // 2026-10-27 (§7): which destination group this passenger gets off with.
                 'destination_stop_id' => $ticket->destination_stop_id !== null ? (int) $ticket->destination_stop_id : $payloadDestinationId,
                 'destination_key' => DropOffGroups::key(

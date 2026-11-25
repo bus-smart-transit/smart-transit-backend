@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Repositories\BaggageChargeRepository;
 use App\Repositories\DiscountClaimRepository;
 use App\Support\BusLabel;
 use App\Support\ClockTime;
@@ -101,6 +102,8 @@ class FinancialReportService
                 'boarded' => $sales->filter(fn ($s) => $s['boarded'])->count(),
                 'cash' => $this->split($sales, $refunds, 'cash', $gross),
                 'online' => $this->split($sales, $refunds, 'online', $gross),
+                // 2026-11-25 (user): baggage paid in cash to the Chauffeur on board, apart from ticket sales.
+                'baggage' => $this->baggage($ownerCompanyUserId, $filters),
             ],
             'discounts' => $this->discounts($sales),
             'channels' => $this->channels($sales, $refunds, $gross),
@@ -519,6 +522,22 @@ class FinancialReportService
         $labels = (array) config('financial.channel_labels');
 
         return $labels[$channel] ?? ($method === 'cash' ? 'Cash' : Str::headline($channel));
+    }
+
+    /**
+     * 2026-11-25 (user): the baggage cash collected on board in the range (not part of the ticket figures). Baggage is
+     * always cash, so it is zero when the report shows online payments only or one online channel.
+     *
+     * @return array{collected: float, count: int}
+     */
+    private function baggage(?int $owner, array $filters): array
+    {
+        if ($filters['payment_method'] === 'online' || ($filters['channel'] !== null && $filters['channel'] !== 'onsite')) {
+            return ['collected' => 0.0, 'count' => 0];
+        }
+        $totals = app(BaggageChargeRepository::class)->totalsForReport($owner, FinancialClock::startOfDay($filters['from']), FinancialClock::endOfDay($filters['to']), $filters);
+
+        return ['collected' => $this->money($totals['cents']), 'count' => $totals['count']];
     }
 
     private function split(Collection $sales, Collection $refunds, string $method, int $gross): array

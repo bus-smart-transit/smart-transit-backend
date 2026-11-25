@@ -3,13 +3,18 @@
 namespace App\Services;
 
 use App\Models\ConductorShiftLog;
+use App\Repositories\BaggageChargeRepository;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
  * Batch 29, cash handling step 2: the cash of one Conductor shift.
  *
- *   expected cash = opening cash (declared at Start Shift) + cash sales of the shift - cash refunds of the shift
+ *   expected cash = opening cash (declared at Start Shift) + cash sales of the shift + baggage cash of the shift
+ *                   - cash refunds of the shift
+ *
+ * 2026-11-25 (user): baggage paid on board is its own cash (baggage_charges, not voided), counted in the shift it was
+ * collected in.
  *
  * A cash sale belongs to the shift it was made in (`onsite_payment.conductor_shift_log_id`, set at the sale). A cash refund
  * belongs to the shift that SOLD the refunded ticket, not to the shift open when the Operator pays it out
@@ -62,7 +67,7 @@ class ShiftCashService
     {
         $summary = $this->summary($shiftLogId);
 
-        return $summary['opening_cash'] > 0 || $summary['cash_sales_tickets'] > 0 || $summary['cash_refund_count'] > 0;
+        return $summary['opening_cash'] > 0 || $summary['cash_sales_tickets'] > 0 || $summary['cash_refund_count'] > 0 || $summary['baggage_count'] > 0;
     }
 
     /** @return array<string, mixed>|null */
@@ -98,6 +103,8 @@ class ShiftCashService
             ->get(['amount']);
         $refundCents = (int) $refunds->sum(fn ($r) => (int) round(((float) $r->amount) * 100));
 
+        $baggage = app(BaggageChargeRepository::class)->totalsForShift($shiftLogId);
+
         return [
             'shift_log_id' => (int) $shift->shift_log_id,
             'opening_cash' => $this->money($opening),
@@ -105,7 +112,9 @@ class ShiftCashService
             'cash_sales_tickets' => $sales->count(),
             'cash_refunds' => $this->money($refundCents),
             'cash_refund_count' => $refunds->count(),
-            'expected_cash' => $this->money($opening + $salesCents - $refundCents),
+            'baggage_cash' => $this->money($baggage['cents']),
+            'baggage_count' => $baggage['count'],
+            'expected_cash' => $this->money($opening + $salesCents + $baggage['cents'] - $refundCents),
         ];
     }
 

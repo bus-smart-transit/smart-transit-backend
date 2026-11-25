@@ -418,7 +418,7 @@ it('returns the booking window from one place, and a config change moves it', fu
     bkRoute($eastWest);
 
     $window = $this->getJson('/api/booking/window')->assertSuccessful()->json('data');
-    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03', 'transaction_fee_rates' => ['gcash' => 2.4976, 'maya' => 2.0048], 'max_seats_per_purchase' => 20, 'priority_types' => [['key' => 'senior', 'label' => 'Senior citizen'], ['key' => 'pwd', 'label' => 'Person with disability'], ['key' => 'pregnant', 'label' => 'Pregnant']], 'priority_seats_per_bus' => 4, 'baggage_percent' => 50]); // the fee: Batch 75; the limit: Batch 49; priority and baggage: Batch 76
+    expect($window)->toBe(['today' => '2026-10-04', 'max_advance_days' => 30, 'last_bookable_date' => '2026-11-03', 'transaction_fee_rates' => ['gcash' => 2.4976, 'maya' => 2.0048], 'max_seats_per_purchase' => 20, 'priority_types' => [['key' => 'senior', 'label' => 'Senior citizen'], ['key' => 'pwd', 'label' => 'Person with disability'], ['key' => 'pregnant', 'label' => 'Pregnant']], 'priority_seats_per_bus' => 4, 'baggage_paid_on_board' => true]); // the fee: Batch 75; the limit: Batch 49; priority: Batch 76; baggage paid on board: 2026-11-25
 
     $meta = $this->getJson('/api/booking/stops')->assertSuccessful()->json('data.meta');
     expect($meta['last_bookable_date'])->toBe('2026-11-03');

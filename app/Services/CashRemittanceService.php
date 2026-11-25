@@ -236,6 +236,9 @@ class CashRemittanceService
             'opening_cash' => $live['opening_cash'],
             'cash_sales' => $live['cash_sales'],
             'cash_refunds' => $live['cash_refunds'],
+            // 2026-11-25 (user): baggage paid on board, its own cash line (already in the expected cash).
+            'baggage_cash' => $live['baggage_cash'],
+            'baggage_count' => $live['baggage_count'],
             // Passenger In leakage check (2026-10-26): passengers checked in on this shift whose fare was never collected.
             'unpaid_check_ins' => app(PendingBoardingService::class)->unpaidCountsByShift([(int) $row->conductor_shift_log_id])[(int) $row->conductor_shift_log_id] ?? 0,
             // A pending batch shows the cash as it stands now (a late refund may still arrive); a confirmed one keeps the

@@ -14,7 +14,6 @@ use App\Services\BookingStopsService;
 use App\Services\DiscountClaimService;
 use App\Services\TripAreaService;
 use App\Services\TripResolverService;
-use App\Support\BaggageFee;
 use App\Support\BookingFee;
 use App\Support\BookingWindow;
 use App\Support\PriorityBoarding;
@@ -70,7 +69,7 @@ class BookingController extends Controller
     public function window()
     {
         // Batch 45 Feature A: the booking page shows the online booking fee before the passenger pays (BookingFee owns it).
-        return $this->success(BookingWindow::describe() + ['transaction_fee_rates' => BookingFee::ratesPercent(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase'), 'priority_types' => PriorityBoarding::options(), 'priority_seats_per_bus' => PriorityBoarding::seatsPerBus(), 'baggage_percent' => BaggageFee::percent()], 'Booking window retrieved successfully');
+        return $this->success(BookingWindow::describe() + ['transaction_fee_rates' => BookingFee::ratesPercent(), 'max_seats_per_purchase' => (int) config('booking.max_seats_per_purchase'), 'priority_types' => PriorityBoarding::options(), 'priority_seats_per_bus' => PriorityBoarding::seatsPerBus(), 'baggage_paid_on_board' => true], 'Booking window retrieved successfully');
     }
 
     /** Batch 75: GET booking/discount-types?trip_id= - the discounts that may be claimed online for this trip. */
