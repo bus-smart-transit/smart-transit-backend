@@ -81,14 +81,29 @@ class ShiftBlockRepository
             ->first();
     }
 
-    /** When the block ended: its last completed leg, else the last time the row changed. */
+    /**
+     * When the block ended: its last completed leg, else its last leg's planned departure.
+     *
+     * 2026-11-25 (production bug): the fallback was the time the block's row last changed, so reviewing or otherwise
+     * touching an old block (for example one whose legs were all cancelled) made its crew "not rested" for 12 hours.
+     */
     public function blockEndedAt(ShiftBlock $block): ?Carbon
     {
+        $tz = config('app.timezone', 'Asia/Manila');
         $lastLeg = $block->legs->where('status', 'completed')->max(fn ($leg) => $leg->completed_at?->getTimestamp());
+        if ($lastLeg) {
+            return Carbon::createFromTimestamp($lastLeg, $tz);
+        }
 
-        return $lastLeg
-            ? Carbon::createFromTimestamp($lastLeg, config('app.timezone', 'Asia/Manila'))
-            : $block->updated_at;
+        $planned = $block->legs
+            ->map(fn ($leg) => $leg->trip_date && $leg->departure_time
+                ? Carbon::parse(Carbon::parse($leg->trip_date)->toDateString().' '.$leg->departure_time, $tz)
+                : null)
+            ->filter()
+            ->sortByDesc(fn (Carbon $at) => $at->getTimestamp())
+            ->first();
+
+        return $planned ?? ($block->scheduled_date ? Carbon::parse($block->scheduled_date->toDateString().' 23:59:59', $tz) : $block->updated_at);
     }
 
     /**

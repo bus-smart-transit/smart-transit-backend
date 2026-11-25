@@ -231,6 +231,21 @@ it('counts a block that ended normally (all legs completed) for the Rest Rule', 
     $this->actingAs($operator)->postJson('/api/operator/shift-blocks', $payload + ['scheduled_date' => '2026-10-06'])->assertSuccessful();
 });
 
+// 2026-11-25 (production bug): an old block whose legs were all cancelled, touched today (for example reviewed), made
+// its crew "not rested" because the block's end fell back to the time its row last changed.
+it('dates a block with no completed leg by its planned legs, not by when its row last changed', function () {
+    [$block, $operator, $driver, $conductor, $fleetRoute] = scBlock($this, '2026-09-20');
+    scLegs($block, ['cancelled', 'cancelled', 'cancelled', 'cancelled']);
+    $block->forceFill(['status' => 'completed'])->save();
+    DB::table('shift_blocks')->where('shift_block_id', $block->shift_block_id)->update(['updated_at' => '2026-10-04 05:00:00']);
+
+    $payload = [
+        'fleet_route_id' => $fleetRoute->fleet_route_id, 'driver_id' => scCid($driver), 'conductor_id' => scCid($conductor),
+        'block_type' => config('shift_blocks.block_types')[0], 'leg_departure_times' => ['06:00', '09:00', '12:00', '15:00'],
+    ];
+    $this->actingAs($operator)->postJson('/api/operator/shift-blocks', $payload + ['scheduled_date' => '2026-10-04'])->assertSuccessful();
+});
+
 it('lists the Operator blocks by the derived status filter', function () {
     [$block, $operator] = scBlock($this, '2026-10-04');
     scLegs($block, ['completed', 'completed', 'completed', 'completed']); // stored status still "scheduled"
