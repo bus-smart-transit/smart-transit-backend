@@ -415,3 +415,49 @@ it('says the leg order from data: the current leg is the first unfinished one', 
     expect($svc->currentLeg($block->shift_block_id)->trip_id)->toBe($legs[2]->trip_id);
     expect($svc->pairingScopeTripId($legs[3]->trip_id))->toBe($legs[0]->trip_id);
 });
+
+// 2026-11-25 (production test): the Driver started a shift, the Operator cancelled the block and made a new one. The
+// old shift stayed open, so the Driver's screen skipped Start Shift on the new block while the Chauffeur's did not.
+it('closes the crew shift when the whole block is cancelled, so the next block starts with Start Shift', function () {
+    [$block, , $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
+    $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
+
+    $this->actingAs($crew['operator'])->patchJson("/api/operator/shift-blocks/{$block->shift_block_id}/cancel")->assertSuccessful();
+
+    expect(DriverShiftLog::whereNull('ended_at')->count())->toBe(0);
+    expect(ConductorShiftLog::whereNull('ended_at')->count())->toBe(0);
+    expect(DriverShiftLog::first()->end_source)->toBe('shift_cancelled');
+
+    [, $newLegs] = bpBlock($this, 2, '2026-10-04', $crew);
+    $this->actingAs($crew['driver'])->getJson('/api/driver/shift/status')->assertJsonPath('data.has_open_shift', false);
+    $this->actingAs($crew['conductor'])->getJson('/api/conductor/shift/status')->assertJsonPath('data.has_open_shift', false);
+    bpPair($this, $crew);
+    $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    expect(DriverShiftLog::whereNull('ended_at')->value('trip_id'))->toBe($newLegs[0]->trip_id);
+});
+
+it('does not report a shift as started when its block was cancelled earlier and the log was left open', function () {
+    [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
+    $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    // A log left open by the old code: every leg is cancelled, the log is not.
+    Trip::whereIn('trip_id', $legs->pluck('trip_id'))->update(['status' => 'cancelled']);
+
+    $this->actingAs($crew['driver'])->getJson('/api/driver/shift/status')->assertJsonPath('data.has_open_shift', false);
+    expect(DriverShiftLog::first()->fresh()->end_source)->toBe('shift_cancelled');
+});
+
+it('keeps the shift open when a leg ran and the rest were cancelled: the crew still ends it', function () {
+    [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
+    $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
+    bpRunLeg($this, $crew['driver'], $legs[0]);
+
+    $this->actingAs($crew['operator'])->patchJson("/api/operator/trips/{$legs[1]->trip_id}/cancel", ['reason' => 'Bus problem'])->assertSuccessful();
+
+    $this->actingAs($crew['driver'])->getJson('/api/driver/shift/status')->assertJsonPath('data.has_open_shift', true);
+    $this->actingAs($crew['conductor'])->getJson('/api/conductor/shift/status')->assertJsonPath('data.has_open_shift', true);
+});

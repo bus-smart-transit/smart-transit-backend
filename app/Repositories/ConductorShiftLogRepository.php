@@ -45,6 +45,12 @@ class ConductorShiftLogRepository
             ->first();
     }
 
+    /** @return Collection<int, ConductorShiftLog> the still-open shift logs on any of these trips */
+    public function openForTrips(array $tripIds): Collection
+    {
+        return ConductorShiftLog::whereIn('trip_id', $tripIds)->whereNull('ended_at')->get();
+    }
+
     public function latestByConductor(int $conductorCompanyUserId): ?ConductorShiftLog
     {
         return ConductorShiftLog::with(['trip.fleetRoute.route', 'fleet'])

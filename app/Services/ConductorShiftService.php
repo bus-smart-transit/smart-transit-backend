@@ -15,17 +15,27 @@ class ConductorShiftService
         private TripRepository $tripRepository,
         private LegProgressionService $legs,
         private FleetPairingService $pairing,
+        private ShiftCashService $shiftCash,
     ) {}
 
     public function getStatusForConductor(int $conductorCompanyUserId): array
     {
         $openShift = $this->conductorShiftLogRepository->findOpenByConductor($conductorCompanyUserId);
+        // A shift whose trip (or whole block) was cancelled is over: with no cash it closes here, so the next trip starts
+        // with Start Shift; with cash it stays open and is reported as cancelled, so the Chauffeur ends it with a count.
+        $cancelled = $openShift && $this->legs->isShiftCancelled($openShift->trip);
+        if ($cancelled && ! $this->shiftCash->hasCash((int) $openShift->shift_log_id)) {
+            $this->conductorShiftLogRepository->markEnded($openShift, 'shift_cancelled');
+            $openShift = null;
+            $cancelled = false;
+        }
         $latestShift = $openShift ?? $this->conductorShiftLogRepository->latestByConductor($conductorCompanyUserId);
 
         return [
             'open_shift' => $openShift,
             'latest_shift' => $latestShift,
             'has_open_shift' => $openShift !== null,
+            'shift_cancelled' => $cancelled,
             'end_blocked_reason' => $openShift ? $this->endBlockedReason($openShift) : null,
         ];
     }

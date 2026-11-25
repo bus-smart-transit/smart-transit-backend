@@ -184,6 +184,35 @@ class LegProgressionService
         return in_array(strtolower((string) $trip->status), self::TERMINAL, true);
     }
 
+    /**
+     * 2026-11-25 (production test: a Driver's screen skipped Start Shift on a new block): true when the shift will never
+     * run, because its trip is cancelled and, for a shift block, so is every leg. A block with a leg that ran is not
+     * cancelled here: its crew still ends the shift (and the Chauffeur hands over the cash) as usual.
+     */
+    public function isShiftCancelled(?Trip $trip): bool
+    {
+        if (! $trip) {
+            return false;
+        }
+        if ($trip->shift_block_id) {
+            $legs = $this->legsOfBlock((int) $trip->shift_block_id);
+
+            return $legs->isNotEmpty() && $legs->every(fn (Trip $leg) => $leg->status === 'cancelled');
+        }
+
+        return $trip->status === 'cancelled';
+    }
+
+    /** The trip ids of one shift: every leg of its block, or the trip alone. */
+    public function shiftTripIds(Trip $trip): array
+    {
+        if (! $trip->shift_block_id) {
+            return [(int) $trip->trip_id];
+        }
+
+        return $this->legsOfBlock((int) $trip->shift_block_id)->pluck('trip_id')->map(fn ($id) => (int) $id)->all();
+    }
+
     /** True when two trips are the same shift: the same trip, or two legs of one block. */
     public function sameShift(?object $a, ?object $b): bool
     {

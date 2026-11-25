@@ -29,6 +29,8 @@ class ConductorShiftController extends Controller
             'latest_shift' => $this->formatShift($status['latest_shift']),
             'has_open_shift' => (bool) $status['has_open_shift'],
             'end_blocked_reason' => $status['end_blocked_reason'],
+            // 2026-11-25: the open shift's trip (or whole block) was cancelled while it holds cash: End Shift comes first.
+            'shift_cancelled' => (bool) $status['shift_cancelled'],
             // Batch 29: the cash of the open shift (opening + cash sales - cash refunds). It does not depend on a trip being
             // active, so the End Shift dialog can show it when every leg is already finished.
             'shift_cash' => $status['open_shift'] ? app(ShiftCashService::class)->summary((int) $status['open_shift']->shift_log_id) : null,

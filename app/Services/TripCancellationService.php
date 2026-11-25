@@ -7,6 +7,8 @@ use App\Models\Payment;
 use App\Models\Ticket;
 use App\Models\Trip;
 use App\Models\TripCancellation;
+use App\Repositories\ConductorShiftLogRepository;
+use App\Repositories\DriverShiftLogRepository;
 use App\Repositories\FleetLocationRepository;
 use App\Repositories\RouteStopRepository;
 use App\Repositories\TripRepository;
@@ -43,7 +45,34 @@ class TripCancellationService
         private CustomDropoffService $customDropoffService,
         private FcmService $fcmService,
         private TripRepository $tripRepository,
+        private LegProgressionService $legs,
+        private DriverShiftLogRepository $driverShiftLogs,
+        private ConductorShiftLogRepository $conductorShiftLogs,
+        private ShiftCashService $shiftCash,
     ) {}
+
+    /**
+     * 2026-11-25: a shift block's shift logs stay open across its legs, so cancelling the whole block used to leave the
+     * crew's shift open. The Driver's screen then skipped Start Shift on the next block. Once the shift will never run,
+     * the Driver's open logs on its trips are closed, and so are the Chauffeur's when they hold no cash. A Chauffeur with
+     * cash (opening cash, a sale or a refund) still ends the shift with a count, which the status reports as cancelled.
+     */
+    private function closeCrewShiftsIfCancelled(Trip $trip): void
+    {
+        $trip = $trip->fresh() ?? $trip;
+        if (! $this->legs->isShiftCancelled($trip)) {
+            return;
+        }
+        $tripIds = $this->legs->shiftTripIds($trip);
+        foreach ($tripIds as $tripId) {
+            $this->driverShiftLogs->endOpenForTrip($tripId, 'shift_cancelled');
+        }
+        foreach ($this->conductorShiftLogs->openForTrips($tripIds) as $log) {
+            if (! $this->shiftCash->hasCash((int) $log->shift_log_id)) {
+                $this->conductorShiftLogs->markEnded($log, 'shift_cancelled');
+            }
+        }
+    }
 
     /**
      * @param  string  $previousStatus  the trip's status BEFORE it became cancelled (decides the stage)
@@ -82,6 +111,7 @@ class TripCancellationService
 
             return $cancellation;
         });
+        $this->closeCrewShiftsIfCancelled($trip);
         if ($existing) {
             return $existing; // already recorded: tickets, notices and refunds were handled the first time
         }

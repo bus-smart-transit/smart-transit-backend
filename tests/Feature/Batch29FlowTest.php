@@ -132,6 +132,8 @@ it('runs a whole working day: schedule, accept, start, pair, sell cash, cancel a
     // depend on a trip (the End Shift dialog needs it exactly then) and has fallen with the refund.
     $this->actingAs($conductor)->getJson('/api/conductor/trips/current/earnings')->assertNotFound();
     $status = $this->actingAs($conductor)->getJson('/api/conductor/shift/status')->assertSuccessful()->json('data');
+    // 2026-11-25: the block is cancelled but the shift holds cash, so it stays open and End Shift (with a count) comes first.
+    expect([$status['has_open_shift'], $status['shift_cancelled']])->toBe([true, true]);
     expect([$status['shift_cash']['cash_sales'], $status['shift_cash']['cash_refunds'], $status['shift_cash']['expected_cash']])->toEqual([$fare, $refund, 100]);
     $perTrip = app(TicketService::class)->getTripEarnings($legs[0]->trip_id);
     expect([$perTrip['refunded_amount'], $perTrip['net_total']])->toEqual([$refund, 0]);

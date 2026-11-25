@@ -21,6 +21,11 @@ class DriverShiftService
     public function getStatusForDriver(int $driverCompanyUserId): array
     {
         $openShift = $this->driverShiftLogRepository->findOpenByDriver($driverCompanyUserId);
+        // A shift whose trip (or whole block) was cancelled is over: close it, so the next trip starts with Start Shift.
+        if ($openShift && $this->legs->isShiftCancelled($openShift->trip)) {
+            $this->driverShiftLogRepository->markEnded($openShift, 'shift_cancelled');
+            $openShift = null;
+        }
         $latestShift = $openShift ?? $this->driverShiftLogRepository->latestByDriver($driverCompanyUserId);
 
         return [

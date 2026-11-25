@@ -57,6 +57,14 @@ class ShiftCashService
         return $id ? (int) $id : null;
     }
 
+    /** True when the shift has cash to hand over or account for: opening cash, a cash sale or a cash refund. */
+    public function hasCash(int $shiftLogId): bool
+    {
+        $summary = $this->summary($shiftLogId);
+
+        return $summary['opening_cash'] > 0 || $summary['cash_sales_tickets'] > 0 || $summary['cash_refund_count'] > 0;
+    }
+
     /** @return array<string, mixed>|null */
     public function summaryForOpenShift(int $conductorCompanyUserId): ?array
     {
