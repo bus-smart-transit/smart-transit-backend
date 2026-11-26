@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
 use App\Exceptions\PayMongoNotConfigured;
 use Illuminate\Support\Facades\Http;
@@ -9,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Paymongo\Exceptions\SignatureVerificationException;
 use Paymongo\PaymongoClient;
 
-class PayMongoService
+class PayMongoService implements PaymentGateway
 {
     private string $secretKey;
 

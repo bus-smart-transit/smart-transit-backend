@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Exceptions\CheckoutIdempotencyConflict;
 use App\Exceptions\PayMongoCheckoutOutcomeUnknown;
 use App\Exceptions\PayMongoNotConfigured;
@@ -35,7 +36,7 @@ class PaymentService
         private OnlinePaymentRepository $onlinePaymentRepository,
         private OnsitePaymentRepository $onsitePaymentRepository,
         private TicketService $ticketService,
-        private PayMongoService $payMongoService,
+        private PaymentGateway $payMongoService,
         private RewardService $rewardService,
         private TripRepository $tripRepository,
         private PassengerRepository $passengerRepository,

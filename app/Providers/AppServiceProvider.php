@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Contracts\PaymentGateway;
+use App\Services\PayMongoService;
+use App\Services\XenditService;
 use App\Support\ApiRequestMetrics;
 use App\Support\Database\RlsContext;
 use App\Support\ExpressStops;
@@ -30,6 +33,10 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // 2026-11-26 (user): the online payment provider, chosen by config (PayMongo or Xendit).
+        $this->app->bind(PaymentGateway::class, fn ($app) => config('services.payments.provider') === 'xendit'
+            ? $app->make(XenditService::class)
+            : $app->make(PayMongoService::class));
         $this->app->scoped(ApiRequestMetrics::class);
         // Batch 49 item 6: the stops are grouped into places once per request or job.
         $this->app->scoped(PlaceGroups::class);

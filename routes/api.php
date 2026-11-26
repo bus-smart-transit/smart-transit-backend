@@ -52,6 +52,7 @@ use App\Http\Controllers\TripNotificationController;
 use App\Http\Controllers\TripTimelineController;
 use App\Http\Controllers\UnfulfilledPaymentController;
 use App\Http\Controllers\UserNotificationController;
+use App\Http\Controllers\XenditController;
 use Illuminate\Support\Facades\Route;
 
 // PUBLIC — no auth required
@@ -182,6 +183,8 @@ Route::post('checkout', [PaymentController::class, 'checkoutOnline'])
     ->middleware(['auth.optional', 'throttle:30,1,checkout']);
 Route::get('tickets/lookup', [TicketController::class, 'guestLookup'])->middleware('throttle:tickets-lookup');
 Route::post('webhooks/paymongo', [PayMongoController::class, 'handle']);
+// 2026-11-26 (user): Xendit's webhook (checked with the dashboard's verification token).
+Route::post('webhooks/xendit', [XenditController::class, 'handle'])->middleware('throttle:120,1,webhooks-xendit');
 Route::get('payments/status', [PaymentController::class, 'onlineStatus'])->middleware('throttle:payment-status'); // 30 a minute per payment reference and IP (AppServiceProvider)
 
 // PASSENGER

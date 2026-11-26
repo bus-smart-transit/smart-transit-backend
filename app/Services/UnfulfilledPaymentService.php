@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Models\PassengerUser;
 use App\Models\Payment;
 use App\Models\Trip;
@@ -148,7 +149,7 @@ class UnfulfilledPaymentService
             }
 
             try {
-                $payMongo = app(PayMongoService::class);
+                $payMongo = app(PaymentGateway::class);
                 $payId = $payment->gateway_payment_id ?: ($payment->gateway_reference ? $payMongo->findPaymentIdForCheckoutSession($payment->gateway_reference) : null);
                 if (! $payId) {
                     throw new \RuntimeException('The payment could not be found at the payment provider.');

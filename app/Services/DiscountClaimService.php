@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Models\DiscountClaim;
 use App\Models\Payment;
 use App\Models\Ticket;
@@ -297,7 +298,7 @@ class DiscountClaimService
         $ticket = Ticket::with('payment')->findOrFail($claim->ticket_id);
         $payment = $ticket->payment;
         try {
-            $payMongo = app(PayMongoService::class);
+            $payMongo = app(PaymentGateway::class);
             $payId = $payment?->gateway_payment_id ?: ($payment?->gateway_reference ? $payMongo->findPaymentIdForCheckoutSession($payment->gateway_reference) : null);
             if (! $payId) {
                 throw new \RuntimeException('The payment could not be found at the payment provider.');
@@ -381,7 +382,7 @@ class DiscountClaimService
         $failed = 0;
 
         foreach ($this->claims->pendingGatewayRefunds($after) as $claim) {
-            $refund = app(PayMongoService::class)->retrieveRefund((string) $claim->gateway_refund_id);
+            $refund = app(PaymentGateway::class)->retrieveRefund((string) $claim->gateway_refund_id);
             $status = strtolower((string) ($refund['attributes']['status'] ?? ''));
             if ($refund && in_array($status, ['succeeded', 'failed'], true) && ($refund['id'] ?? null) === $claim->gateway_refund_id) {
                 $this->handleGatewayRefund($refund);

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Models\Payment;
 use App\Models\RouteStop;
 use App\Models\Ticket;
@@ -288,7 +289,7 @@ class TicketResolutionService
         $amountCentavos = (int) round(((float) $resolution->amount + (float) $resolution->fee_amount) * 100);
 
         try {
-            $payMongo = app(PayMongoService::class);
+            $payMongo = app(PaymentGateway::class);
             $payId = $payment->gateway_payment_id ?: ($payment->gateway_reference ? $payMongo->findPaymentIdForCheckoutSession($payment->gateway_reference) : null);
             if (! $payId) {
                 throw new \RuntimeException('The payment could not be found at the payment provider.');
@@ -434,7 +435,7 @@ class TicketResolutionService
             ->orderBy('id')
             ->get()
             ->each(function (TicketResolution $resolution) use ($giveUp, &$settled, &$review) {
-                $refund = app(PayMongoService::class)->retrieveRefund((string) $resolution->gateway_refund_id);
+                $refund = app(PaymentGateway::class)->retrieveRefund((string) $resolution->gateway_refund_id);
                 $status = strtolower((string) ($refund['attributes']['status'] ?? ''));
                 if ($refund && in_array($status, ['succeeded', 'failed'], true) && ($refund['id'] ?? null) === $resolution->gateway_refund_id) {
                     $this->handleGatewayRefund($refund);

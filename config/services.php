@@ -35,6 +35,19 @@ return [
         ],
     ],
 
+    // 2026-11-26 (user): which online payment provider is used: 'paymongo' or 'xendit' (App\Contracts\PaymentGateway).
+    'payments' => [
+        'provider' => env('PAYMENT_PROVIDER', 'paymongo'),
+    ],
+
+    // 2026-11-26 (user): Xendit (Payment Sessions for GCash and Maya, Refunds v3). The webhook token is the dashboard's
+    // verification token, sent back by Xendit in x-callback-token.
+    'xendit' => [
+        'secret_key' => env('XENDIT_SECRET_KEY'),
+        'webhook_token' => env('XENDIT_WEBHOOK_TOKEN'),
+        'base_url' => env('XENDIT_BASE_URL', 'https://api.xendit.co'),
+    ],
+
     'paymongo' => [
         'secret_key' => env('PAYMONGO_SECRET_KEY'),
         'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
