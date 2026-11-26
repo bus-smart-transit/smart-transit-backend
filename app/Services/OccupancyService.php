@@ -335,7 +335,10 @@ class OccupancyService
     }
 
     /**
-     * Record passenger alighting (mark as alighted, not removed yet)
+     * Record passenger alighting (mark as alighted, not removed yet).
+     *
+     * 2026-11-26 (user): the passenger's seat is given back, so it can be sold again (online from a stop the bus has not
+     * passed, or on the bus). trips.current_*_capacity is the seats taken now; the tickets sold are counted from tickets.
      */
     public function recordAlighting(int $ticketId, ?int $tripId = null): void
     {
@@ -352,7 +355,9 @@ class OccupancyService
             ]);
         }
 
-        $this->ticketRepository->markAlighted($ticketId);
+        if ($this->ticketRepository->markAlighted($ticketId)) {
+            app(TripService::class)->releaseBoarding((int) $ticket->trip_id, (string) $ticket->seat_type);
+        }
     }
 
     /**

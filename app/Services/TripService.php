@@ -854,7 +854,8 @@ class TripService
     /**
      * Inverse of recordBoarding() — releases a previously held seat/standing
      * slot. Called when a pending online payment fails or its hold expires
-     * without ever becoming a ticket.
+     * without ever becoming a ticket, and (2026-11-26) when a passenger gets off,
+     * so the seat can be sold again from a stop ahead.
      */
     public function releaseBoarding(int $tripId, string $seatType): object
     {

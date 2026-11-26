@@ -50,8 +50,11 @@ class DropOffGroupService
                 throw ValidationException::withMessages(['ticket_ids' => ['The passenger list has changed. Refresh and confirm again.']]);
             }
 
-            foreach ($ticketIds as $ticketId) {
-                $this->tickets->markAlighted($ticketId);
+            // 2026-11-26 (user): each passenger who got off gives their seat back (OccupancyService::recordAlighting).
+            foreach ($locked as $ticket) {
+                if ($this->tickets->markAlighted((int) $ticket->ticket_id)) {
+                    app(TripService::class)->releaseBoarding($tripId, (string) $ticket->seat_type);
+                }
             }
 
             $confirmation = DropOffConfirmation::create([
