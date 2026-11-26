@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\Trip;
+use App\Support\BaggageFee;
 use App\Support\BookingWindow;
 use App\Support\PriorityBoarding;
 use App\Support\TravellerContact;
@@ -36,6 +37,8 @@ class OnlineCheckoutRequest extends FormRequest
             // Batch 76: a priority seat (checked on the bus) and baggage in the compartment (its own fee), per ticket.
             'items.*.priority_type' => ['nullable', 'string', Rule::in(array_keys(PriorityBoarding::types()))],
             'items.*.baggage' => ['sometimes', 'boolean'],
+            // 2026-11-26 (user): how many pieces of baggage (paid by size in cash on board).
+            'items.*.baggage_count' => ['nullable', 'integer', 'min:1', 'max:'.BaggageFee::MAX_PIECES],
             'items.*.trip_id' => 'required|integer|exists:trips,trip_id',
             // Online tickets are for seats; standing places are sold only on the bus (TicketService::priceItem).
             'items.*.seat_type' => 'required|string|in:seated',

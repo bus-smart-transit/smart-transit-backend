@@ -165,6 +165,20 @@ it('marks a declared online ticket as bringing baggage, and a discount is only o
         ->and((float) DiscountClaim::where('ticket_id', $ticket->ticket_id)->value('refund_amount'))->toBe(9.0);
 });
 
+// 2026-11-26 (user): the passenger says how many pieces of baggage they bring (1 to 10); the fare stays the same.
+it('keeps how many pieces of baggage were declared online, and refuses more than 10', function () {
+    $f = b76Fixture();
+    $ticket = b76Paid($this, b76Passenger(), $f, ['baggage' => true, 'baggage_count' => 3]);
+    expect($ticket->has_baggage)->toBeTrue()->and($ticket->baggage_count)->toBe(3)->and((float) $ticket->amount)->toBe(47.0);
+
+    $plain = b76Paid($this, b76Passenger(), $f, ['baggage' => true]);
+    expect($plain->baggage_count)->toBe(1);
+    $none = b76Paid($this, b76Passenger(), $f);
+    expect($none->baggage_count)->toBe(0);
+
+    b76Checkout($this, b76Passenger(), $f, ['baggage' => true, 'baggage_count' => 11])->assertStatus(422);
+});
+
 it('refunds only the fare of a ticket that declared baggage', function () {
     $f = b76Fixture();
     $ticket = b76Paid($this, b76Passenger(), $f, ['baggage' => true]);

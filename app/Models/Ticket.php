@@ -100,6 +100,7 @@ class Ticket extends Model
         // Batch 76: priority seat, baggage in the compartment (its fee is in the amount), missed at the boarding stop.
         'priority_type',
         'has_baggage',
+        'baggage_count', // 2026-11-26: pieces of baggage declared (0 = none)
         'missed_at',
     ];
 
@@ -132,6 +133,7 @@ class Ticket extends Model
             'discount_amount' => 'float',
             'discount_id_checked_at' => 'datetime',
             'has_baggage' => 'boolean',
+            'baggage_count' => 'integer',
             'missed_at' => 'datetime',
         ];
     }

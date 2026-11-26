@@ -726,6 +726,7 @@ class TicketResolutionService
             'alighting_distance_m' => $ticket->alighting_distance_m,
             // Batch 76: the baggage and priority seat move with the passenger.
             'has_baggage' => (bool) $ticket->has_baggage,
+            'baggage_count' => (int) $ticket->baggage_count,
             'priority_type' => $ticket->priority_type,
         ]);
 

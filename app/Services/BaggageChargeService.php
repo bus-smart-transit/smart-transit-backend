@@ -77,8 +77,10 @@ class BaggageChargeService
             'collected_at' => now(),
         ]);
 
-        if (! $ticket->has_baggage) {
-            $ticket->forceFill(['has_baggage' => true])->save();
+        // 2026-11-26: the ticket shows at least as many pieces as were paid for.
+        $paidPieces = $this->charges->activeByTicket([(int) $ticket->ticket_id])->get((int) $ticket->ticket_id)?->count() ?? 1;
+        if (! $ticket->has_baggage || (int) $ticket->baggage_count < $paidPieces) {
+            $ticket->forceFill(['has_baggage' => true, 'baggage_count' => max((int) $ticket->baggage_count, $paidPieces)])->save();
         }
 
         return $charge;

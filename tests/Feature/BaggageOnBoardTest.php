@@ -202,3 +202,48 @@ it('lets the Operator set the company\'s prices with the extra check, and shows 
     $this->actingAs($f['operator'])->putJson('/api/operator/baggage-fees', ['small' => -1, 'medium' => 55, 'large' => 120])->assertStatus(422);
     $this->actingAs($f['operator'])->getJson('/api/operator/baggage-fees')->assertSuccessful()->assertJsonPath('data.1.amount', 55)->assertJsonPath('data.1.is_default', false);
 });
+
+// 2026-11-26 (user): the scan pop-up shows the destination, priority seat and baggage of the passenger just boarded,
+// for one ticket and for a group ticket.
+it('gives the scan pop-up the priority seat, the pieces of baggage and what was paid', function () {
+    $f = bobFixture($this);
+    $ticket = bobOnlineTicket($f);
+    $ticket->update(['priority_type' => 'senior', 'baggage_count' => 2]);
+    $this->actingAs($f['conductor'])->postJson("/api/conductor/tickets/{$ticket->ticket_id}/baggage", ['size' => 'small'])->assertCreated();
+
+    $this->actingAs($f['conductor'])->postJson('/api/conductor/tickets/scan', ['ticket_uuid' => $ticket->ticket_uuid])
+        ->assertSuccessful()
+        ->assertJsonPath('data.destination', 'Stop C')
+        ->assertJsonPath('data.priority_label', 'Senior citizen')
+        ->assertJsonPath('data.has_baggage', true)
+        ->assertJsonPath('data.baggage_count', 2)
+        ->assertJsonPath('data.baggage_paid', 20)
+        ->assertJsonPath('data.baggage_charges.0.size_label', 'Small');
+});
+
+it('lists each boarded passenger of a group ticket with their priority seat and baggage', function () {
+    $f = bobFixture($this);
+    $first = bobOnlineTicket($f);
+    $second = bobOnlineTicket($f, false);
+    $second->update(['payment_id' => $first->payment_id, 'priority_type' => 'pwd']);
+    $first->update(['baggage_count' => 3]);
+    $reference = Payment::find($first->payment_id)->transaction_reference;
+
+    $rows = collect($this->actingAs($f['conductor'])->postJson('/api/conductor/tickets/scan-group', ['transaction_reference' => $reference])
+        ->assertSuccessful()->assertJsonPath('data.boarded_count', 2)->json('data.tickets'))->keyBy('ticket_id');
+
+    expect($rows[$first->ticket_id]['baggage_count'])->toBe(3)
+        ->and($rows[$first->ticket_id]['origin'])->toBe('Stop A')
+        ->and($rows[$second->ticket_id]['priority_label'])->toBe('Person with disability')
+        ->and($rows[$second->ticket_id]['has_baggage'])->toBeFalse();
+});
+
+it('raises the pieces on the ticket to what was paid for on board', function () {
+    $f = bobFixture($this);
+    $ticket = bobOnlineTicket($f);
+    foreach (['small', 'medium'] as $size) {
+        $this->actingAs($f['conductor'])->postJson("/api/conductor/tickets/{$ticket->ticket_id}/baggage", ['size' => $size])->assertCreated();
+    }
+
+    expect($ticket->fresh()->baggage_count)->toBe(2);
+});

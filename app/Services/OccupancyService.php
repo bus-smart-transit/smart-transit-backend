@@ -276,6 +276,7 @@ class OccupancyService
                 'priority_type' => $ticket->priority_type,
                 'priority_label' => PriorityBoarding::label($ticket->priority_type),
                 'baggage' => (bool) $ticket->has_baggage,
+                'baggage_count' => (int) $ticket->baggage_count,
                 'baggage_charges' => $baggagePaid[(int) $ticket->ticket_id] ?? [],
                 'baggage_paid' => round(collect($baggagePaid[(int) $ticket->ticket_id] ?? [])->sum('amount'), 2),
                 // 2026-10-27 (§7): which destination group this passenger gets off with.

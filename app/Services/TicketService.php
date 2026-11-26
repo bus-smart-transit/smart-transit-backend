@@ -565,6 +565,8 @@ class TicketService
             // Batch 76: priority seat, and whether there is baggage (2026-11-25: paid on board, apart from the amount).
             'priority_type' => $reserved['priority_type'] ?? null,
             'has_baggage' => ! empty($reserved['has_baggage']),
+            // 2026-11-26: pieces declared online (a cash sale with baggage: 1; more are added as they are paid).
+            'baggage_count' => ! empty($reserved['has_baggage']) ? max(1, (int) ($reserved['baggage_count'] ?? 1)) : 0,
         ]);
 
         if ($passengerId) {
@@ -782,7 +784,7 @@ class TicketService
         $originLabel = $boardedTicket->originStop?->stop_name
             ?? (TicketBoarding::isSnapped($boardedTicket) ? TicketBoarding::BETWEEN_STOPS : null);
 
-        return (object) [
+        return (object) ([
             'ticket_id' => $boardedTicket->ticket_id,
             'ticket_uuid' => $boardedTicket->ticket_uuid,
             'passenger_name' => $boardedTicket->passenger?->user?->name ?? 'Guest',
@@ -796,6 +798,26 @@ class TicketService
             'boarded_at' => $boardedTicket->boarded_at,
             // Batch 75: a discount claimed online that the Chauffeur should check now (null when none was claimed).
             'discount_claim' => app(DiscountClaimService::class)->presentForTickets([(int) $boardedTicket->ticket_id])[(int) $boardedTicket->ticket_id] ?? null,
+        ] + $this->boardingDetails($boardedTicket));
+    }
+
+    /**
+     * 2026-11-26 (user): what the Chauffeur's scan pop-up shows about a boarded passenger: the priority seat, the
+     * baggage declared and what was already paid for it on board.
+     *
+     * @return array<string, mixed>
+     */
+    private function boardingDetails(Ticket $ticket): array
+    {
+        $charges = app(BaggageChargeService::class)->presentForTickets([(int) $ticket->ticket_id])[(int) $ticket->ticket_id] ?? [];
+
+        return [
+            'priority_type' => $ticket->priority_type,
+            'priority_label' => PriorityBoarding::label($ticket->priority_type),
+            'has_baggage' => (bool) $ticket->has_baggage,
+            'baggage_count' => (int) $ticket->baggage_count,
+            'baggage_charges' => $charges,
+            'baggage_paid' => round(collect($charges)->sum('amount'), 2),
         ];
     }
 
@@ -981,8 +1003,10 @@ class TicketService
 
         foreach ($tickets as $ticket) {
             $base = [
+                'ticket_id' => (int) $ticket->ticket_id,
                 'ticket_uuid' => $ticket->ticket_uuid,
                 'passenger_name' => $ticket->passenger?->user?->name ?? 'Guest',
+                'origin' => $ticket->originStop?->stop_name,
                 'destination' => $ticket->destinationStop?->stop_name,
                 'seat_type' => $ticket->seat_type,
                 'amount' => (float) $ticket->amount,
@@ -1051,7 +1075,8 @@ class TicketService
             $boardedCount++;
             $boardedIds[] = (int) $ticket->ticket_id;
             $boardedTripId = (int) $ticket->trip_id;
-            $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => false]);
+            // 2026-11-26 (user): the scan pop-up lists each boarded passenger's priority seat and baggage.
+            $results[] = array_merge($base, ['status' => 'boarded', 'skipped' => false], $this->boardingDetails($ticket->fresh()));
         }
         // 2026-11-20: the passengers' open ticket screens show "Boarded" at once (live updates).
         if ($boardedIds !== []) {

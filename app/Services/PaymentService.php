@@ -215,7 +215,7 @@ class PaymentService
                             'destination_lng' => isset($item['destination_lng']) ? (float) $item['destination_lng'] : null,
                             'discount_claim_key' => isset($item['discount_claim_key']) && $item['discount_claim_key'] !== '' ? (string) $item['discount_claim_key'] : null,
                             'priority_type' => PriorityBoarding::resolve($item['priority_type'] ?? null, $item['discount_claim_key'] ?? null),
-                            'baggage' => ! empty($item['baggage']),
+                            'baggage' => BaggageFee::piecesDeclared($item),
                         ]);
 
                         if (! isset($groupedItems[$itemKey])) {
@@ -243,6 +243,7 @@ class PaymentService
                         // 2026-11-25 (user): baggage is only declared online; its size is priced and paid in cash on
                         // board (BaggageChargeService). The online payment is the seat fare only.
                         $template['has_baggage'] = ! empty($group['item']['baggage']);
+                        $template['baggage_count'] = BaggageFee::piecesDeclared($group['item']);
                         if (isset($template['discount_claim'])) {
                             $template['discount_claim']['fare'] = (float) $template['amount'];
                         }

@@ -24,6 +24,19 @@ final class BaggageFee
 
     public const MAX_PRICE = 5000;
 
+    /** 2026-11-26 (user): the most pieces of baggage one ticket can declare online. */
+    public const MAX_PIECES = 10;
+
+    /** The pieces a booking item declares: 0 without baggage, else 1 to MAX_PIECES (1 when no number was sent). */
+    public static function piecesDeclared(array $item): int
+    {
+        if (empty($item['baggage'])) {
+            return 0;
+        }
+
+        return max(1, min(self::MAX_PIECES, (int) ($item['baggage_count'] ?? 1)));
+    }
+
     public static function isSize(?string $size): bool
     {
         return $size !== null && array_key_exists($size, self::SIZES);
