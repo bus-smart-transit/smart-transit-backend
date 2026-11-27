@@ -23,6 +23,60 @@ class ReportingRepository
     }
 
     /**
+     * 2026-11-27 (production test): the fare refunded per payment, from refunds that SUCCEEDED, at the stored amount,
+     * the rule FinancialReportService uses. A refunded payment keeps its "paid" status, so it must be subtracted here.
+     *
+     * @param  array<int, int>  $paymentIds
+     * @return array<int, float> payment_id => refunded
+     */
+    private function refundedByPayment(array $paymentIds): array
+    {
+        if ($paymentIds === []) {
+            return [];
+        }
+
+        return DB::table('ticket_resolutions as res')
+            ->join('tickets', 'tickets.ticket_id', '=', 'res.ticket_id')
+            ->whereIn('tickets.payment_id', $paymentIds)
+            ->where('res.resolution', 'refund')
+            ->where('res.status', 'succeeded')
+            ->whereNotNull('res.amount')
+            ->groupBy('tickets.payment_id')
+            ->selectRaw('tickets.payment_id as payment_id, SUM(res.amount) as refunded')
+            ->pluck('refunded', 'payment_id')
+            ->map(fn ($value) => (float) $value)
+            ->all();
+    }
+
+    /** What a payment brought in after its refunds (never below zero). */
+    private function netAmount(Payment $payment, array $refunded): float
+    {
+        return max(0.0, (float) $payment->amount - ($refunded[$payment->payment_id] ?? 0.0));
+    }
+
+    /**
+     * 2026-11-27 (production test): passengers carried per trip, the tickets that boarded. `trips.total_occupancy` is the
+     * seats taken NOW, and seats are given back at drop-off, so a finished trip reads 0 there.
+     *
+     * @param  array<int, int>  $tripIds
+     * @return array<int, int> trip_id => passengers
+     */
+    private function carriedByTrip(array $tripIds): array
+    {
+        if ($tripIds === []) {
+            return [];
+        }
+
+        return Ticket::whereIn('trip_id', $tripIds)
+            ->whereNotNull('boarded_at')
+            ->groupBy('trip_id')
+            ->selectRaw('trip_id, COUNT(*) as carried')
+            ->pluck('carried', 'trip_id')
+            ->map(fn ($value) => (int) $value)
+            ->all();
+    }
+
+    /**
      * Get financial summary for a fleet within a date range
      */
     public function getFleetFinancialSummary(int $fleetId, string $startDate, string $endDate): array
@@ -39,12 +93,15 @@ class ReportingRepository
                 ->whereIn('trip_id', $fleetTripIds);
         })->whereIn('status', ['paid', 'completed', 'success', 'succeeded'])->get();
 
-        $totalRevenue = $payments->sum('amount');
-        $onlineRevenue = $payments->where('payment_method', 'online')->sum('amount');
-        $onsiteRevenue = $payments->where('payment_method', 'cash')->sum('amount');
+        $refunded = $this->refundedByPayment($payments->pluck('payment_id')->all());
+        $net = fn ($list) => $list->sum(fn (Payment $payment) => $this->netAmount($payment, $refunded));
+        $totalRevenue = $net($payments);
+        $onlineRevenue = $net($payments->where('payment_method', 'online'));
+        $onsiteRevenue = $net($payments->where('payment_method', 'cash'));
 
         $totalTickets = Ticket::whereIn('trip_id', $fleetTripIds)
             ->whereIn('payment_id', $payments->pluck('payment_id'))
+            ->where('status', '!=', 'refunded')
             ->distinct('ticket_id')
             ->count('ticket_id');
 
@@ -86,6 +143,7 @@ class ReportingRepository
             ->get();
 
         $routeData = [];
+        $refunded = $this->refundedByPayment($trips->flatMap->tickets->pluck('payment_id')->filter()->unique()->values()->all());
 
         foreach ($trips as $trip) {
             $routeId = $trip->fleetRoute->route_id;
@@ -117,11 +175,13 @@ class ReportingRepository
                 }
 
                 $paymentMap[$payment->payment_id] = $payment;
-                $routeData[$routeId]['total_tickets']++;
+                if ($ticket->status !== 'refunded') {
+                    $routeData[$routeId]['total_tickets']++;
+                }
             }
 
             foreach ($paymentMap as $payment) {
-                $amount = $payment->amount;
+                $amount = $this->netAmount($payment, $refunded);
                 $routeData[$routeId]['total_revenue'] += $amount;
 
                 if ($payment->payment_method === 'online') {
@@ -317,9 +377,10 @@ class ReportingRepository
         $peakOccupancy = 0;
         $minOccupancy = PHP_INT_MAX;
         $occupancyByHour = [];
+        $carried = $this->carriedByTrip($trips->pluck('trip_id')->all());
 
         foreach ($trips as $trip) {
-            $occupancy = $trip->total_occupancy;
+            $occupancy = $carried[$trip->trip_id] ?? 0;
             if ($occupancy > 0) {  // Only count trips with passengers
                 $totalOccupancy += $occupancy;
                 $peakOccupancy = max($peakOccupancy, $occupancy);
@@ -331,7 +392,7 @@ class ReportingRepository
             }
         }
 
-        $tripsWithPassengers = count(array_filter($trips->pluck('total_occupancy')->toArray(), fn ($x) => $x > 0));
+        $tripsWithPassengers = count(array_filter($carried, fn ($x) => $x > 0));
         $averageOccupancy = $tripsWithPassengers > 0 ? $totalOccupancy / $tripsWithPassengers : 0;
 
         // Calculate average per hour
@@ -376,11 +437,13 @@ class ReportingRepository
         $totalOccupancy = 0;
         $completedTrips = 0;
         $activeTrips = 0;
+        $carried = $this->carriedByTrip($trips->pluck('trip_id')->all());
+        $refunded = $this->refundedByPayment($trips->flatMap->tickets->pluck('payment_id')->filter()->unique()->values()->all());
 
         foreach ($trips as $trip) {
             if ($trip->status === 'completed') {
                 $completedTrips++;
-                $totalOccupancy += $trip->total_occupancy;
+                $totalOccupancy += $carried[$trip->trip_id] ?? 0;
             } elseif (in_array($trip->status, ['boarding', 'departed'])) {
                 $activeTrips++;
             }
@@ -397,11 +460,13 @@ class ReportingRepository
                 }
 
                 $paymentMap[$payment->payment_id] = $payment;
-                $totalTickets++;
+                if ($ticket->status !== 'refunded') {
+                    $totalTickets++;
+                }
             }
 
             foreach ($paymentMap as $payment) {
-                $totalRevenue += $payment->amount;
+                $totalRevenue += $this->netAmount($payment, $refunded);
             }
         }
 
@@ -431,6 +496,7 @@ class ReportingRepository
 
         $channelData = [];
         $inScopePaymentIds = [];
+        $refunded = $this->refundedByPayment($trips->flatMap->tickets->pluck('payment_id')->filter()->unique()->values()->all());
 
         foreach ($trips as $trip) {
             $paymentMap = [];
@@ -458,7 +524,7 @@ class ReportingRepository
                     ];
                 }
 
-                $channelData[$channel]['total_amount'] += $payment->amount;
+                $channelData[$channel]['total_amount'] += $this->netAmount($payment, $refunded);
                 $channelData[$channel]['transaction_count']++;
                 $inScopePaymentIds[$payment->payment_id] = true;
             }
