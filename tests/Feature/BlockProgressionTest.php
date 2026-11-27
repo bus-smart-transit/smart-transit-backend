@@ -461,3 +461,58 @@ it('keeps the shift open when a leg ran and the rest were cancelled: the crew st
     $this->actingAs($crew['driver'])->getJson('/api/driver/shift/status')->assertJsonPath('data.has_open_shift', true);
     $this->actingAs($crew['conductor'])->getJson('/api/conductor/shift/status')->assertJsonPath('data.has_open_shift', true);
 });
+
+/** A paid online ticket on one leg (SAMPLE fare), with its own payment. */
+function bpPaidTicket(Trip $leg): Ticket
+{
+    $payment = Payment::create(['amount' => 35, 'payment_created' => now(), 'transaction_reference' => 'TXN-BP-'.Str::upper(Str::random(8)), 'payment_method' => 'online', 'payment_channel' => 'gcash', 'status' => 'paid', 'payment_uuid' => (string) Str::uuid(), 'is_valid' => true, 'items_payload' => []]);
+    $stops = app(RouteStopRepository::class)->getOrderedStopsForDirection($leg->fleetRoute->route_id, $leg->leg_direction);
+
+    return Ticket::create([
+        'fleet_route_id' => $leg->fleet_route_id, 'trip_id' => $leg->trip_id, 'payment_id' => $payment->payment_id, 'ticket_uuid' => (string) Str::uuid(),
+        'status' => 'valid', 'amount' => 35, 'distance_km' => 10, 'seat_type' => 'seated',
+        'origin_stop_id' => $stops->first()->stop_id, 'destination_stop_id' => $stops->last()->stop_id,
+    ]);
+}
+
+// 2026-11-27 (user): during the outbound leg, a ticket bought for the inbound leg of the same block must not board; it
+// boards once the inbound leg is the Chauffeur's current trip.
+it('refuses a ticket of the next leg while this leg is boarding, alone or in a group, and boards it on its own leg', function () {
+    [, $legs, $crew] = bpBlock($this, 2);
+    bpPair($this, $crew);
+    $this->actingAs($crew['driver'])->postJson('/api/driver/shift/start')->assertSuccessful();
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/shift/start')->assertSuccessful();
+    bpAtDeparture($legs[0]);
+    $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[0]->trip_id}/boarding")->assertSuccessful();
+
+    $inbound = bpPaidTicket($legs[1]->fresh('fleetRoute'));
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/tickets/scan', ['ticket_uuid' => $inbound->ticket_uuid])
+        ->assertStatus(422)->assertJsonFragment(['This ticket is for a different trip and cannot be scanned on your current trip.']);
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/tickets/scan-group', ['transaction_reference' => $inbound->payment->transaction_reference])
+        ->assertStatus(422);
+    expect($inbound->fresh()->status)->toBe('valid');
+
+    $outbound = bpPaidTicket($legs[0]->fresh('fleetRoute'));
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/tickets/scan', ['ticket_uuid' => $outbound->ticket_uuid])->assertSuccessful();
+
+    // The outbound leg ends; on the inbound leg the inbound ticket boards.
+    $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[0]->trip_id}/depart")->assertSuccessful();
+    bpAcknowledgeFinalStop($this, $crew['driver'], $legs[0]);
+    $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[0]->trip_id}/complete")->assertSuccessful();
+    bpAtDeparture($legs[1]);
+    $this->actingAs($crew['driver'])->patchJson("/api/driver/trips/{$legs[1]->trip_id}/boarding")->assertSuccessful();
+    $this->actingAs($crew['conductor'])->postJson('/api/conductor/tickets/scan', ['ticket_uuid' => $inbound->ticket_uuid])->assertSuccessful();
+    expect($inbound->fresh()->status)->toBe('boarded');
+});
+
+it('lists each trip of a block with its route and bus for the Operator, now that the Trips view is gone', function () {
+    [$block, $legs, $crew] = bpBlock($this, 2);
+
+    $row = collect($this->actingAs($crew['operator'])->getJson('/api/operator/shift-blocks')->assertSuccessful()->json('data'))
+        ->firstWhere('shift_block_id', $block->shift_block_id);
+
+    expect($row['legs'])->toHaveCount(2)
+        ->and($row['legs'][0]['fleet_route']['route']['route_name'])->toBe('Block Route')
+        ->and($row['legs'][0]['fleet_route']['fleet']['plate_number'])->toStartWith('BP-')
+        ->and(collect($row['legs'])->pluck('trip_id')->all())->toEqualCanonicalizing($legs->pluck('trip_id')->all());
+});

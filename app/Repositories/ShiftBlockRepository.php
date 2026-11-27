@@ -132,9 +132,13 @@ class ShiftBlockRepository
             ->get();
     }
 
+    /**
+     * 2026-11-27: each trip carries its route and bus, for the trip buttons and details in the block's pop-up
+     * (Schedule > Blocks replaced the Trips view).
+     */
     public function listForOperator(int $operatorCompanyUserId, ?string $statusFilter = null, ?int $limit = null): Collection
     {
-        $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
+        $query = ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs.fleetRoute.route', 'legs.fleetRoute.fleet'])
             ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->orderByDesc('scheduled_date');
 
@@ -150,7 +154,7 @@ class ShiftBlockRepository
 
     public function paginateForOperator(int $operatorCompanyUserId, int $page, int $perPage): LengthAwarePaginator
     {
-        return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs'])
+        return ShiftBlock::with(['fleet', 'driver.user', 'conductor.user', 'legs.fleetRoute.route', 'legs.fleetRoute.fleet'])
             ->tap(fn ($q) => CompanyScope::whereMadeByCompany($q, 'company_user_id', $operatorCompanyUserId))
             ->orderByDesc('scheduled_date')
             ->orderByDesc('shift_block_id')

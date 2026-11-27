@@ -459,3 +459,17 @@ it('moves the last bookable day with Manila midnight, not UTC', function () use 
     $this->getJson('/api/booking/resolve?'.http_build_query($q + ['date' => '2026-11-04']))->assertSuccessful();
     $this->getJson('/api/booking/resolve?'.http_build_query($q + ['date' => '2026-11-05']))->assertStatus(422);
 });
+
+// 2026-11-27 (user): today's Available trips with no From must list a trip of today that has not left yet, also while
+// it is boarding (before its time), with only a To, and by area; the same trip is listed when a From is chosen.
+it('lists a trip that is boarding today with no From, with only a To, by area, and with a From', function () use ($eastWest) {
+    [, $stops, $fleetRoute, $operator] = bkRoute($eastWest);
+    $trip = bkTrip($fleetRoute, $operator, '2026-10-04', '07:20');
+    $trip->update(['status' => 'boarding', 'boarding_at' => now()]);
+    $ids = fn (array $q) => array_column($this->getJson('/api/booking/trips?'.http_build_query($q + ['date' => '2026-10-04', 'seat_type' => 'seated']))->assertSuccessful()->json('data.trips'), 'trip_id');
+
+    expect($ids([]))->toBe([$trip->trip_id])
+        ->and($ids(['to' => $stops['E4']->stop_code]))->toBe([$trip->trip_id])
+        ->and($ids(['from' => $stops['E2']->stop_code]))->toBe([$trip->trip_id])
+        ->and($ids(['town' => 'Mati City']))->toBe([$trip->trip_id]);
+});
